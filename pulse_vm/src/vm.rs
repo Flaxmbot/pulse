@@ -30,6 +30,13 @@ pub enum VMStatus {
     WhereIs(String),
 }
 
+#[derive(Debug, Clone)]
+pub struct ExceptionFrame {
+    pub handler_ip: usize,   // Where to jump on exception
+    pub stack_depth: usize,  // Stack depth when try was entered
+    pub frame_depth: usize,  // Call frame depth when try was entered
+}
+
 pub struct VM {
     // chunk: Chunk, // Removed: Chunk is now in CallFrame (via Closure)
     // ip: usize,    // Removed: IP is now in CallFrame
@@ -40,6 +47,7 @@ pub struct VM {
     pub heap: Heap,
     pub open_upvalues: Vec<ObjHandle>, // Tracks upvalues still on stack
     pub loaded_modules: HashSet<String>,
+    pub exception_frames: Vec<ExceptionFrame>,
 }
 
 impl VM {
@@ -82,6 +90,7 @@ impl VM {
             heap,
             open_upvalues: Vec::new(),
             loaded_modules: HashSet::new(),
+            exception_frames: Vec::new(),
         };
         vm.push(Value::Obj(closure_handle)); // Push script closure to slot 0
 
@@ -127,6 +136,7 @@ impl VM {
             heap,
             open_upvalues: Vec::new(),
             loaded_modules: HashSet::new(),
+            exception_frames: Vec::new(),
         };
         vm.push(Value::Obj(closure_handle));
 
@@ -208,6 +218,147 @@ impl VM {
             Op::Dup => {
                 let val = self.peek(0).clone();
                 self.push(val);
+                Ok(VMStatus::Running)
+            }
+
+            Op::IsList => {
+                let is_list = match self.peek(0) {
+                    Value::Obj(h) => {
+                         let obj = self.heap.get(*h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
+                         matches!(obj, Object::List(_))
+                    },
+                    _ => false,
+                };
+                self.push(Value::Bool(is_list));
+                Ok(VMStatus::Running)
+            }
+
+            Op::IsMap => {
+                let is_map = match self.peek(0) {
+                    Value::Obj(h) => {
+                         let obj = self.heap.get(*h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
+                         matches!(obj, Object::Map(_))
+                    },
+                    _ => false,
+                };
+                self.push(Value::Bool(is_map));
+                Ok(VMStatus::Running)
+            }
+
+            Op::Len => {
+                let val = self.peek(0);
+                let len = match val {
+                     Value::Obj(h) => {
+                         let obj = self.heap.get(*h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
+                         match obj {
+                             Object::String(s) => s.len(),
+                             Object::List(l) => l.len(),
+                             Object::Map(m) => m.len(),
+                             _ => return Err(PulseError::TypeMismatch{expected: "collection".into(), got: val.type_name()}),
+                         }
+                     },
+                     _ => return Err(PulseError::TypeMismatch{expected: "collection".into(), got: val.type_name()}),
+                };
+                self.push(Value::Int(len as i64));
+                Ok(VMStatus::Running)
+            }
+
+            Op::MapContainsKey => {
+                let key_val = self.pop()?;
+                let map_val = self.peek(0);
+                
+                let key = match key_val {
+                    Value::Obj(h) => self.get_string(h)?,
+                    _ => return Err(PulseError::TypeMismatch{expected: "string key".into(), got: key_val.type_name()}),
+                };
+                
+                let found = match map_val {
+                     Value::Obj(h) => {
+                         let obj = self.heap.get(*h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
+                         matches!(obj, Object::Map(m) if m.contains_key(&key))
+                     },
+                     _ => false,
+                };
+                self.push(Value::Bool(found));
+                Ok(VMStatus::Running)
+            }
+
+            Op::Slide => {
+                 let count = self.read_byte() as usize; // Number of items to drop UNDER the top value
+                 // Stack: [..., Drop1, Drop2, Result]
+                 // We want: [..., Result]
+                 
+                 let result = self.pop()?;
+                 for _ in 0..count {
+                     self.pop()?;
+                 }
+                 self.push(result);
+                 Ok(VMStatus::Running)
+            }
+
+            Op::ToString => {
+                let val = self.pop()?;
+                let str_val = match val {
+                    Value::Int(i) => i.to_string(),
+                    Value::Float(f) => f.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Unit => "unit".to_string(),
+                    Value::Pid(p) => format!("<pid {}:{}>", p.node_id, p.sequence),
+                    Value::Obj(h) => {
+                        let obj = self.heap.get(h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
+                        match obj {
+                            Object::String(s) => {
+                                // Already a string, just return it
+                                self.push(val);
+                                return Ok(VMStatus::Running);
+                            }
+                            Object::List(_) => "<list>".to_string(),
+                            Object::Map(_) => "<map>".to_string(),
+                            Object::Closure(_) => "<closure>".to_string(),
+                            Object::NativeFn(n) => format!("<native fn {}>", n.name),
+                            Object::Upvalue(_) => "<upvalue>".to_string(),
+                            Object::Function(_) => "<function>".to_string(),
+                        }
+                    }
+                };
+                let handle = self.heap.alloc(Object::String(str_val));
+                self.push(Value::Obj(handle));
+                Ok(VMStatus::Running)
+            }
+
+            Op::Slice => {
+                // Slice: Pop list, push tail starting at index.
+                // Assuming arg is 1 byte index? Or popped off stack?
+                // For [head | tail], we want tail from index 1.
+                // Let's assume stack: [List, Index]. Pop Index, Pop List, Push Tail.
+                
+                let index_val = self.pop()?;
+                let list_val = self.pop()?;
+                
+                let start_index = match index_val {
+                    Value::Int(i) => i as usize,
+                    _ => return Err(PulseError::TypeMismatch{expected: "int index".into(), got: index_val.type_name()}),
+                };
+                
+                let tail_list = match list_val {
+                    Value::Obj(h) => {
+                        let obj = self.heap.get(h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
+                        if let Object::List(list) = obj {
+                            if start_index > list.len() {
+                                Vec::new() // Empty result
+                            } else {
+                                list[start_index..].to_vec()
+                            }
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "list".into(), got: "object".into()});
+                        }
+                    },
+                    _ => return Err(PulseError::TypeMismatch{expected: "list".into(), got: list_val.type_name()}),
+                };
+                
+                let tail_obj = self.heap.alloc(Object::List(tail_list));
+                self.push(Value::Obj(tail_obj));
+                
                 Ok(VMStatus::Running)
             }
 
@@ -789,6 +940,33 @@ impl VM {
                 self.push(Value::Unit);
                 Ok(VMStatus::Running)
             }
+
+            Op::Try => {
+                // Read handler offset (u16)
+                let offset = self.read_u16() as usize;
+                let frame = self.frames.last().unwrap();
+                let handler_ip = frame.ip + offset;
+                
+                let exception_frame = ExceptionFrame {
+                    handler_ip,
+                    stack_depth: self.stack.len(),
+                    frame_depth: self.frames.len(),
+                };
+                self.exception_frames.push(exception_frame);
+                Ok(VMStatus::Running)
+            }
+
+            Op::EndTry => {
+                // Pop exception frame if present
+                self.exception_frames.pop();
+                Ok(VMStatus::Running)
+            }
+
+            Op::Throw => {
+                let exception_val = self.pop()?;
+                self.unwind_to_handler(exception_val)?;
+                Ok(VMStatus::Running)
+            }
         }
     }
 
@@ -860,6 +1038,34 @@ impl VM {
             } else {
                 i += 1;
             }
+        }
+    }
+
+    fn unwind_to_handler(&mut self, exception_val: Value) -> PulseResult<()> {
+        // Find the nearest exception handler
+        if let Some(exception_frame) = self.exception_frames.pop() {
+            // Unwind call frames
+            while self.frames.len() > exception_frame.frame_depth {
+                self.frames.pop();
+            }
+            
+            // Unwind stack
+            while self.stack.len() > exception_frame.stack_depth {
+                self.stack.pop();
+            }
+            
+            // Push exception value onto stack for catch block
+            self.push(exception_val);
+            
+            // Jump to handler
+            if let Some(frame) = self.frames.last_mut() {
+                frame.ip = exception_frame.handler_ip;
+            }
+            
+            Ok(())
+        } else {
+            // No handler, propagate error
+            Err(PulseError::RuntimeError(format!("Uncaught exception")))
         }
     }
 

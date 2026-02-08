@@ -22,9 +22,19 @@ pub enum Token {
     Actor, On, Message, Send, Spawn, Fn, Let, If, Else, While, For, Return, Print,
     True, False, Nil, And, Or, Receive, Break, Continue, Import, Link, Monitor, SpawnLink,
     Register, Unregister, WhereIs,
-    Match, FatArrow,
+    Match, FatArrow, Pipe,
+    Try, Catch, Throw,
+
+    // Interpolated String Parts
+    InterpolatedString(Vec<StringPart>),
 
     Eof,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    Literal(String),
+    Expr(String), // The expression source code inside ${}
 }
 
 pub struct Lexer<'a> {
@@ -105,7 +115,8 @@ impl<'a> Lexer<'a> {
                 }
                 Some('"') => return self.string(),
                 Some(c) if c.is_digit(10) => return self.number(),
-                Some(c) if c.is_alphabetic() || c == '_' => return self.identifier(), 
+                Some(c) if c.is_alphabetic() || c == '_' => return self.identifier(),
+                Some('|') => { self.advance(); return Ok(Token::Pipe); }
                 None => return Ok(Token::Eof),
                 Some(c) => return Err(PulseError::IoError(format!("Unexpected character: {}", c))),
             }
@@ -113,22 +124,84 @@ impl<'a> Lexer<'a> {
     }
 
     fn string(&mut self) -> Result<Token, PulseError> {
-        let mut s = String::new();
+        let mut parts: Vec<StringPart> = Vec::new();
+        let mut current_literal = String::new();
         self.advance(); // Skip opening quote
+        
         loop {
             match self.current {
                 Some('"') => {
                     self.advance();
                     break;
                 }
+                Some('$') => {
+                    self.advance();
+                    if self.current == Some('{') {
+                        // Save current literal if any
+                        if !current_literal.is_empty() {
+                            parts.push(StringPart::Literal(current_literal.clone()));
+                            current_literal.clear();
+                        }
+                        
+                        self.advance(); // Skip '{'
+                        let mut expr = String::new();
+                        let mut brace_depth = 1;
+                        
+                        while brace_depth > 0 {
+                            match self.current {
+                                Some('{') => { brace_depth += 1; expr.push('{'); self.advance(); }
+                                Some('}') => { 
+                                    brace_depth -= 1; 
+                                    if brace_depth > 0 { expr.push('}'); }
+                                    self.advance(); 
+                                }
+                                Some(c) => { expr.push(c); self.advance(); }
+                                None => return Err(PulseError::IoError("Unterminated interpolation".into())),
+                            }
+                        }
+                        
+                        parts.push(StringPart::Expr(expr));
+                    } else {
+                        current_literal.push('$');
+                    }
+                }
+                Some('\\') => {
+                    self.advance();
+                    match self.current {
+                        Some('n') => { current_literal.push('\n'); self.advance(); }
+                        Some('t') => { current_literal.push('\t'); self.advance(); }
+                        Some('\\') => { current_literal.push('\\'); self.advance(); }
+                        Some('"') => { current_literal.push('"'); self.advance(); }
+                        Some('$') => { current_literal.push('$'); self.advance(); }
+                        Some(c) => { current_literal.push(c); self.advance(); }
+                        None => return Err(PulseError::IoError("Unterminated escape sequence".into())),
+                    }
+                }
                 Some(c) => {
-                    s.push(c);
+                    current_literal.push(c);
                     self.advance();
                 }
                 None => return Err(PulseError::IoError("Unterminated string".into())),
             }
         }
-        Ok(Token::String(s))
+        
+        // Save remaining literal
+        if !current_literal.is_empty() {
+            parts.push(StringPart::Literal(current_literal));
+        }
+        
+        // If no interpolation, return simple string
+        if parts.len() == 1 {
+            if let StringPart::Literal(s) = &parts[0] {
+                return Ok(Token::String(s.clone()));
+            }
+        }
+        
+        if parts.is_empty() {
+            return Ok(Token::String(String::new()));
+        }
+        
+        Ok(Token::InterpolatedString(parts))
     }
 
     fn number(&mut self) -> Result<Token, PulseError> {
@@ -202,6 +275,9 @@ impl<'a> Lexer<'a> {
             "unregister" => Ok(Token::Unregister),
             "whereis" => Ok(Token::WhereIs),
             "match" => Ok(Token::Match),
+            "try" => Ok(Token::Try),
+            "catch" => Ok(Token::Catch),
+            "throw" => Ok(Token::Throw),
             _ => Ok(Token::Identifier(s)),
         }
     }

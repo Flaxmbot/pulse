@@ -13,6 +13,13 @@ pub enum Op {
     Not = 0x04,
     Unit = 0x05,
     Dup = 0x06,
+    IsList = 0x07,
+    IsMap = 0x08,
+    Slice = 0x09,
+    Len = 0x0A,
+    MapContainsKey = 0x0B,
+    Slide = 0x0C,
+    ToString = 0x0D,
 
     // Arithmetic
     Add = 0x10,
@@ -65,6 +72,11 @@ pub enum Op {
     
     // IO
     Print = 0x60,
+
+    // Error Handling
+    Try = 0x70,      // u16 handler offset. Push exception handler frame.
+    Throw = 0x71,    // Pop value, unwind to handler.
+    EndTry = 0x72,   // Pop exception handler frame.
 }
 
 impl From<u8> for Op {

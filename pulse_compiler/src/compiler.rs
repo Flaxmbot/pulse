@@ -261,6 +261,10 @@ impl<'a, 'b> Compiler<'a, 'b> {
             self.spawn_link_statement()?;
         } else if self.matches(Token::Return)? {
             self.return_statement()?;
+        } else if self.matches(Token::Try)? {
+            self.try_statement()?;
+        } else if self.matches(Token::Throw)? {
+            self.throw_statement()?;
         } else if self.matches(Token::LeftBrace)? {
             self.begin_scope();
             self.block()?;
@@ -309,6 +313,65 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.expression()?;
         self.consume(Token::Semicolon, "Expect ';' after value.")?;
         self.emit_byte(Op::Print as u8);
+        Ok(())
+    }
+
+    fn try_statement(&mut self) -> PulseResult<()> {
+        // try { ... } catch e { ... }
+        self.consume(Token::LeftBrace, "Expect '{' after 'try'.")?;
+        
+        // Emit Op::Try with placeholder for handler offset
+        self.emit_byte(Op::Try as u8);
+        let try_offset = self.chunk.code.len();
+        self.emit_byte(0xff); // Placeholder for handler offset (u16)
+        self.emit_byte(0xff);
+        
+        // Compile try block
+        self.begin_scope();
+        self.block()?;
+        self.end_scope();
+        
+        // Emit Op::EndTry after try block
+        self.emit_byte(Op::EndTry as u8);
+        
+        // Jump over catch block on success
+        let success_jump = self.emit_jump(Op::Jump as u8);
+        
+        // Patch try handler offset to point here (catch block)
+        let handler_ip = self.chunk.code.len();
+        let offset = handler_ip - try_offset - 2; // Offset from after Op::Try u16
+        if offset > u16::MAX as usize {
+            return Err(PulseError::CompileError("Try block too large".into(), 0));
+        }
+        self.chunk.code[try_offset] = ((offset >> 8) & 0xff) as u8;
+        self.chunk.code[try_offset + 1] = (offset & 0xff) as u8;
+        
+        // Consume catch
+        self.consume(Token::Catch, "Expect 'catch' after try block.")?;
+        
+        // Parse exception variable
+        self.consume_identifier("Expect exception variable name.")?;
+        
+        // Begin catch scope and define exception variable
+        self.begin_scope();
+        self.declare_variable()?;
+        self.mark_initialized();
+        
+        self.consume(Token::LeftBrace, "Expect '{' after catch variable.")?;
+        self.block()?;
+        self.end_scope();
+        
+        // Patch success jump
+        self.patch_jump(success_jump)?;
+        
+        Ok(())
+    }
+
+    fn throw_statement(&mut self) -> PulseResult<()> {
+        // throw expression;
+        self.expression()?;
+        self.consume(Token::Semicolon, "Expect ';' after throw expression.")?;
+        self.emit_byte(Op::Throw as u8);
         Ok(())
     }
 
@@ -575,133 +638,84 @@ impl<'a, 'b> Compiler<'a, 'b> {
         
         while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
             // Match Arm
+            self.begin_scope(); // Scope for pattern variables
+            self.emit_byte(Op::Dup as u8); // Dup Subject for this arm
             
-            // 1. Duplicate subject for test (unless variable pattern?)
-            // We check pattern type first.
+            let locals_before = self.locals.len();
+            let mut failure_jumps = self.compile_pattern()?;
+            let locals_after = self.locals.len();
             
-            // Pattern can be: Literal (Int, Float, String, Bool, Nil) or Identifier (Variable capture)
-            
-            let is_variable_pattern = if let Token::Identifier(_) = self.parser().current {
-                // Peek ahead to see if it is a variable pattern or something else?
-                // Just identifier.
-                // Note: If we had named constants, this would be ambiguous.
-                // For now, Identifier = Variable.
-                true
-            } else {
-                false
-            };
-            
-            if is_variable_pattern {
-                // Variable pattern: Catch-all (or bind)
-                // Consume identifier
-                // self.advance()?; -> inside variable logic
+            // Guard Clause
+            if self.matches(Token::If)? {
+                self.expression()?; // Compile Guard Condition
+                let fail_guard = self.emit_jump(Op::JumpIfFalse as u8);
+                self.emit_byte(Op::Pop as u8); // Pop True
                 
-                // Do NOT Dup. We use the subject as the variable.
-                self.begin_scope();
+                let success_jump = self.emit_jump(Op::Jump as u8); // Jump to Body
                 
-                // Declare variable from current token
-                // self.parser().current is the identifier
-                let name = self.parser().current.clone(); 
-                self.advance()?; // Consume identifier
+                // Handle Guard Failure
+                self.patch_jump(fail_guard)?;
+                self.emit_byte(Op::Pop as u8); // Pop False
                 
-                self.add_local(name)?;
-                self.mark_initialized(); // It holds the subject value
-                
-                self.consume(Token::FatArrow, "Expect '=>' after pattern.")?;
-                
-                // Body
-                if self.check(Token::LeftBrace) {
-                    self.consume(Token::LeftBrace, "Expect '{' start of arm body.")?;
-                    self.block()?; 
-                    // block consumes '}'
-                } else {
-                    self.expression()?;
-                    self.consume(Token::Comma, "Expect ',' after match arm.")?; 
-                    // Optional comma? Rust allows comma after expr, optional after block.
-                    // Let's implement comma requirement for exprs for now.
+                // Cleanup locals created by pattern (without result on stack yet)
+                let pop_count = locals_after - locals_before;
+                for _ in 0..pop_count {
+                    self.emit_byte(Op::Pop as u8);
                 }
                 
-                // End scope (pops subject/variable)
-                self.end_scope();
+                // Restore Subject for next arm (Original subject is below locals)
+                // But we just popped locals. So Original Subject is on top.
+                // We need to Dup it because next arm expects [Subject] and will Pop it on failure.
+                self.emit_byte(Op::Dup as u8); 
                 
-                // Jump to end
-                end_jumps.push(self.emit_jump(Op::Jump as u8));
+                failure_jumps.push(self.emit_jump(Op::Jump as u8));
                 
-                // Since variable pattern matches everything, we stop here?
-                // Unreachable code check? For now, just continue parsing to close brace.
-            } else {
-                // Literal Pattern
-                self.emit_byte(Op::Dup as u8);
-                
-                // Compile Pattern Literal
-                // I need a generic `pattern()` helper?
-                // Or just switch on token type.
-                
-                if matches!(self.parser().current, Token::Int(_) | Token::Float(_)) {
-                    self.advance()?;
-                    self.number(false)?;
-                } else if matches!(self.parser().current, Token::String(_)) {
-                    self.advance()?;
-                    self.string(false)?;
-                } else if matches!(self.parser().current, Token::True | Token::False | Token::Nil) {
-                    self.advance()?;
-                    self.literal(false)?;
-                } else {
-                     return Err(PulseError::CompileError("Expect pattern.".into(), 0));
-                }
-                
-                // Check Equality
-                self.emit_byte(Op::Eq as u8);
-                let next_jump = self.emit_jump(Op::JumpIfFalse as u8);
-                self.emit_byte(Op::Pop as u8); // Pop bool Result
-                
-                // If Match:
-                self.emit_byte(Op::Pop as u8); // Pop Subject
-                
-                self.consume(Token::FatArrow, "Expect '=>' after pattern.")?;
-                
-                // Body
-                 if self.check(Token::LeftBrace) {
-                    self.consume(Token::LeftBrace, "Expect '{' start of arm body.")?;
-                    self.block()?; 
-                } else {
-                    self.expression()?;
-                    // Optional Comma
-                    if self.matches(Token::Comma)? {} 
-                }
-                
-                // Jump to End
-                end_jumps.push(self.emit_jump(Op::Jump as u8));
-                
-                // Next Arm Label
-                self.patch_jump(next_jump)?;
-                self.emit_byte(Op::Pop as u8); // Pop Bool (from JumpIfFalse)
-                // Stack has Subject again (from Dup)
-                // Wait.
-                // `Dup` -> `[Subj, Subj]`.
-                // `Const` -> `[Subj, Subj, Pat]`.
-                // `Eq` -> `[Subj, Bool]`.
-                // `JumpIfFalse` -> consumes Bool?
-                // VM: `if !self.is_truthy(self.peek(0))`. It PEEKS.
-                // So Bool is still on stack.
-                // So `Pop` after JumpIfFalse (in Success path) pops Bool.
-                // Then `Pop` pops Subject.
-                
-                // In Failure path (Next Jump):
-                // Bool is STILL on stack.
-                // So `patch_jump` lands here.
-                // We must `Pop` the Bool.
-                // Stack: `[Subj]`.
-                // Ready for next arm. Correct.
+                self.patch_jump(success_jump)?;
             }
+            
+            self.consume(Token::FatArrow, "Expect '=>' after pattern.")?;
+            
+            // Body
+            if self.check(Token::LeftBrace) {
+                self.consume(Token::LeftBrace, "Expect '{' start of arm body.")?;
+                self.block()?; 
+            } else {
+                self.expression()?;
+                if self.matches(Token::Comma)? {} 
+            }
+            
+            // End Scope manually to preserve Result
+            self.scope_depth -= 1;
+            let pop_count = self.locals.len() - locals_before;
+            // Pop locals UNDER the result
+            self.emit_byte(Op::Slide as u8);
+            self.emit_byte(pop_count as u8);
+             
+            // Remove locals from compiler state
+            while self.locals.len() > locals_before {
+                self.locals.pop();
+            }
+            
+            // Jump to End
+            end_jumps.push(self.emit_jump(Op::Jump as u8));
+            
+            // Handle Failures
+            // All failure jumps land here.
+            // Stack state: [Subject] (Because compile_pattern contract guarantees Subject restoration on failure)
+            for jump in failure_jumps {
+                self.patch_jump(jump)?;
+            }
+            // Pop Subject (failed match for this arm)
+            self.emit_byte(Op::Pop as u8);
+            
+            // Loop continues to next arm
         }
         
         self.consume(Token::RightBrace, "Expect '}' after match arms.")?;
         
-        // If we fall through all arms (no match), we need to Pop Subject and return Unit (or crash).
-        // Stack: [Subj].
+        // Final fallback: Pop Subject (original) and return Unit
         self.emit_byte(Op::Pop as u8);
-        self.emit_byte(Op::Unit as u8); // Default result
+        self.emit_byte(Op::Unit as u8);
         
         // Patch End Jumps
         for jump in end_jumps {
@@ -709,6 +723,333 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
         
         Ok(())
+    }
+
+    // Contract: 
+    // Start: [Target]
+    // Success: [] (Target consumed)
+    // Failure (returns jumps): [Target] (Target preserved)
+    fn compile_pattern(&mut self) -> PulseResult<Vec<usize>> {
+        let mut failure_jumps = Vec::new();
+        
+        if self.matches(Token::LeftBracket)? {
+            // List Pattern: [a, b] or [h | t]
+            
+            // 1. IsList
+            self.emit_byte(Op::Dup as u8); // Dup Target for IsList check
+            self.emit_byte(Op::IsList as u8);
+            let fail_is_list = self.emit_jump(Op::JumpIfFalse as u8);
+            self.emit_byte(Op::Pop as u8); // Pop True
+            
+            // On Fail IsList: Stack [Target, False].
+            // We patch later to Pop False.
+            
+            let mut index = 0;
+            let mut has_tail = false;
+            
+            if !self.check(Token::RightBracket) {
+                loop {
+                    // Check for Tail
+                    if self.matches(Token::Pipe)? {
+                        has_tail = true;
+                        
+                        // Tail Pattern: [ ... | tail ]
+                        // Extract Tail from `index`
+                        self.emit_byte(Op::Dup as u8); // Dup List
+                        self.emit_byte(Op::Len as u8); // Push Len
+                        self.emit_constant(Constant::Int(index as i64));
+                        // Gte (>=) is Not Lt (<)
+                        self.emit_byte(Op::Lt as u8); 
+                        self.emit_byte(Op::Not as u8);
+                        let fail_len = self.emit_jump(Op::JumpIfFalse as u8);
+                        self.emit_byte(Op::Pop as u8); // Pop True
+
+                        // Extract Tail
+                        self.emit_byte(Op::Dup as u8); // Dup List
+                        self.emit_constant(Constant::Int(index as i64));
+                        self.emit_byte(Op::Slice as u8); // Pops List, Index. Pushes Tail.
+                        
+                        // Match Tail
+                        let sub_failures = self.compile_pattern()?;
+                        
+                        // Handle Sub-Failures (Stack: [List, Tail])
+                        // Tail match failure leaves Tail on stack.
+                        // We need to Pop Tail, then we have [List].
+                        
+                        let success_jump = self.emit_jump(Op::Jump as u8); // Jump over cleanup
+                        
+                        for jump in sub_failures {
+                            self.patch_jump(jump)?;
+                            self.emit_byte(Op::Pop as u8); // Pop Tail
+                            failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
+                        }
+
+                        // Handle Len Failure (Stack: [List, False])
+                        self.patch_jump(fail_len)?;
+                        self.emit_byte(Op::Pop as u8); // Pop False
+                        failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
+                        
+                        self.patch_jump(success_jump)?;
+                        
+                        break; 
+                    }
+                    
+                    // Element Match at `index`
+                    
+                    // 1. Check Len > index (i.e. >= index + 1)
+                    self.emit_byte(Op::Dup as u8);
+                    self.emit_byte(Op::Len as u8);
+                    self.emit_constant(Constant::Int((index + 1) as i64));
+                    // Gte (>=) is Not Lt (<)
+                    self.emit_byte(Op::Lt as u8);
+                    self.emit_byte(Op::Not as u8);
+                    let fail_len = self.emit_jump(Op::JumpIfFalse as u8);
+                    self.emit_byte(Op::Pop as u8); // Pop True
+                    
+                    // 2. Extract Item
+                    self.emit_byte(Op::Dup as u8); // Dup List
+                    self.emit_constant(Constant::Int(index as i64));
+                    self.emit_byte(Op::GetIndex as u8); // Pushes Item
+                    
+                    // 3. Match Item
+                    let sub_failures = self.compile_pattern()?;
+                    
+                    // 4. Handle Sub-Failures
+                    // Stack: [List, Item]
+                    
+                    let success_jump = self.emit_jump(Op::Jump as u8);
+                    
+                    for jump in sub_failures {
+                        self.patch_jump(jump)?;
+                        self.emit_byte(Op::Pop as u8); // Pop Item
+                        failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure (stack [List])
+                    }
+                    
+                    self.patch_jump(fail_len)?; // Stack [List, False]
+                    self.emit_byte(Op::Pop as u8); // Pop False
+                    failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure (stack [List])
+                    
+                    self.patch_jump(success_jump)?;
+                    
+                    index += 1;
+                    
+                    if self.check(Token::RightBracket) {
+                        break;
+                    }
+                    
+                    if self.matches(Token::Comma)? {
+                        continue;
+                    }
+                    
+                    if self.check(Token::Pipe) {
+                        continue;
+                    }
+                    
+                    return Err(PulseError::CompileError("Expect ',' or ']' in list pattern.".into(), self.parser().line()));
+                }
+            }
+            self.consume(Token::RightBracket, "Expect ']' after list pattern.")?;
+            
+            // Exact Match Check (if no tail)
+            if !has_tail {
+                // Check Len == index
+                self.emit_byte(Op::Dup as u8);
+                self.emit_byte(Op::Len as u8);
+                self.emit_constant(Constant::Int(index as i64));
+                self.emit_byte(Op::Eq as u8);
+                let fail_exact = self.emit_jump(Op::JumpIfFalse as u8);
+                self.emit_byte(Op::Pop as u8); // Pop True
+                
+                // Success path falls through
+                let success_jump = self.emit_jump(Op::Jump as u8);
+                
+                self.patch_jump(fail_exact)?;
+                self.emit_byte(Op::Pop as u8); // Pop False
+                failure_jumps.push(self.emit_jump(Op::Jump as u8));
+                
+                self.patch_jump(success_jump)?;
+            }
+            
+            // Finally: Success. Pop List.
+            // Stack: [List].
+            self.emit_byte(Op::Pop as u8);
+            
+            // Handle IsList Failure (Stack: [Target, False])
+            let success_jump = self.emit_jump(Op::Jump as u8);
+            
+            self.patch_jump(fail_is_list)?;
+            self.emit_byte(Op::Pop as u8); // Pop False
+            failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Stack [Target]
+            
+            self.patch_jump(success_jump)?;
+            
+        } else if self.matches(Token::LeftBrace)? {
+            // Map Pattern: {key: pat, key2: pat}
+            
+            // 1. IsMap
+            self.emit_byte(Op::Dup as u8);
+            self.emit_byte(Op::IsMap as u8);
+            let fail_is_map = self.emit_jump(Op::JumpIfFalse as u8);
+            self.emit_byte(Op::Pop as u8); // Pop True
+            
+            while !self.check(Token::RightBrace) {
+                // Parse Key
+                let key_str = if let Token::Identifier(s) = &self.parser().current {
+                    s.clone()
+                } else if let Token::String(s) = &self.parser().current {
+                    s.clone()
+                } else {
+                     return Err(PulseError::CompileError("Expect identifier or string key in map pattern.".into(), 0));
+                };
+                self.advance()?; // Consume Key
+                
+                self.consume(Token::Colon, "Expect ':' after map key.")?;
+                
+                // 1. Check Key Exists
+                self.emit_byte(Op::Dup as u8); // Dup Map
+                self.emit_constant(Constant::String(key_str.clone()));
+                self.emit_byte(Op::MapContainsKey as u8); // Pops Key, Peeks Map -> Pushes Bool
+                let fail_key = self.emit_jump(Op::JumpIfFalse as u8);
+                self.emit_byte(Op::Pop as u8); // Pop True
+                
+                // 2. Extract Value
+                self.emit_byte(Op::Dup as u8); // Dup Map
+                self.emit_constant(Constant::String(key_str));
+                self.emit_byte(Op::GetIndex as u8); // Pushes Value
+                
+                // 3. Match Value
+                let sub_failures = self.compile_pattern()?;
+                
+                // 4. Handle Sub-Failures
+                let success_jump = self.emit_jump(Op::Jump as u8);
+                
+                for jump in sub_failures {
+                    self.patch_jump(jump)?;
+                    self.emit_byte(Op::Pop as u8); // Pop Value
+                    failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
+                }
+                
+                // Key Failure:
+                self.patch_jump(fail_key)?; // Stack [Map, False]
+                self.emit_byte(Op::Pop as u8); // Pop False
+                failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
+                
+                self.patch_jump(success_jump)?;
+                
+                if self.check(Token::RightBrace) {
+                    break;
+                }
+                self.consume(Token::Comma, "Expect ',' or '}' in map pattern.")?;
+            }
+            self.consume(Token::RightBrace, "Expect '}' after map pattern.")?;
+            
+            // Success. Pop Map.
+            self.emit_byte(Op::Pop as u8);
+            
+            // Handle IsMap Failure
+            let success_jump = self.emit_jump(Op::Jump as u8);
+            
+            self.patch_jump(fail_is_map)?;
+            self.emit_byte(Op::Pop as u8); // Pop False
+            failure_jumps.push(self.emit_jump(Op::Jump as u8));
+            
+            self.patch_jump(success_jump)?;
+        } else if let Token::Identifier(_) = self.parser().current {
+            // Variable Pattern
+            let name = self.parser().current.clone();
+            self.advance()?;
+            // Removed self.begin_scope(); to allow match arm to manage scope
+            self.add_local(name)?;
+            self.mark_initialized();
+            
+            // Variable consumes the value logically (binds it).
+            // But checking `match_expression`, it expects [Subject] to remain on FAILURE?
+            // On SUCCESS, `compile_pattern` consumes it?
+            
+            // Wait. `compile_pattern` contract:
+            // Success: [] (Target consumed)
+            // Failure (returns jumps): [Target] (Target preserved)
+            
+            // Variable match NEVER fails.
+            // So we just need to consume the stack value?
+            // `SetLocal` peaks.
+            // But `add_local` just marks the slot.
+            // The value is *already* on the stack (Subject).
+            // We just mark it as the local.
+            // So we do NOTHING at runtime!
+            // Just compiler bookkeeping.
+            
+            // Stack: [Target]. Target is now Local 'x'.
+            // Success!
+            
+            // Wait, we need to CONSUME the target from the "Expression Stack" view?
+            // The contract says Success = [].
+            // If we leave it on stack as local, it's "Consumed" from temp stack point of view
+            // but physically there.
+            // When scope ends, we Pop.
+            // Correct.
+        } else {
+            // Literal
+            self.emit_byte(Op::Dup as u8); // Dup Target
+            if matches!(self.parser().current, Token::Int(_) | Token::Float(_)) {
+                self.advance()?;
+                self.number(false)?;
+            } else if matches!(self.parser().current, Token::String(_)) {
+                self.advance()?;
+                self.string(false)?;
+            } else if matches!(self.parser().current, Token::True | Token::False | Token::Nil) {
+                self.advance()?;
+                self.literal(false)?;
+            } else {
+                 return Err(PulseError::CompileError("Expect pattern.".into(), 0));
+            }
+             
+            self.emit_byte(Op::Eq as u8);
+            let fail = self.emit_jump(Op::JumpIfFalse as u8);
+            self.emit_byte(Op::Pop as u8); // Pop True
+            self.emit_byte(Op::Pop as u8); // Pop Target
+            // Success: []
+            
+            // Fail Check:
+            // [Target, False] -> Pop False -> [Target]. Correct.
+            // But `fail_jumps` expect to land where we need to POP target?
+            // No, `compile_pattern` returns jumps where Stack is [Target].
+            
+            // So for `fail`:
+            // 1. Pop False. 
+            // 2. Jump to exit.
+            
+            // We can't insert code at `fail` target easily without block structure.
+            // Hand-code:
+            // JumpIfFalse -> FailBlock
+            // SuccessBlock: ...
+            // FailBlock: Pop, Return Fail.
+            
+            // Since we return `fail` offset, the caller will patch it.
+            // Caller patches `fail` -> `Next Arm`.
+            // `Next Arm` expects `[Subject]`.
+            
+             // At `fail` (JumpIfFalse target): Stack is `[Target, False]`.
+             // Caller expects `[Target]`.
+             // We MUST Pop False.
+             
+             // So we patch `fail` to `pop_false_block`.
+             // `pop_false_block`: Pop. Return.
+             
+             // We can emit this block at the end of `literal`?
+             // Yes.
+             let success_jump = self.emit_jump(Op::Jump as u8);
+             
+             // Fail Block
+             self.patch_jump(fail)?;
+             self.emit_byte(Op::Pop as u8); // Pop False
+             failure_jumps.push(self.emit_jump(Op::Jump as u8));
+             
+             // Success Block
+             self.patch_jump(success_jump)?;
+        }
+        
+        Ok(failure_jumps)
     }
     
     fn mark_initialized(&mut self) {
@@ -724,6 +1065,56 @@ impl<'a, 'b> Compiler<'a, 'b> {
             _ => return Err(PulseError::CompileError("Expected string".into(), 0)),
         };
         self.emit_constant(Constant::String(s));
+        Ok(())
+    }
+
+    fn interpolated_string(&mut self, _can_assign: bool) -> PulseResult<()> {
+        use crate::lexer::StringPart;
+        
+        let parts = match &self.parser().previous {
+            Token::InterpolatedString(p) => p.clone(),
+            _ => return Err(PulseError::CompileError("Expected interpolated string".into(), 0)),
+        };
+        
+        if parts.is_empty() {
+            self.emit_constant(Constant::String(String::new()));
+            return Ok(());
+        }
+        
+        // Compile first part
+        let mut first = true;
+        for part in parts {
+            match part {
+                StringPart::Literal(s) => {
+                    self.emit_constant(Constant::String(s));
+                }
+                StringPart::Expr(expr_src) => {
+                    // Parse and compile the expression
+                    let mut expr_parser = crate::parser::Parser::new(&expr_src);
+                    expr_parser.advance()?;
+                    
+                    // Save current parser
+                    let saved_parser = self.parser as *mut crate::parser::Parser<'a>;
+                    self.parser = &mut expr_parser as *mut crate::parser::Parser<'_> as *mut crate::parser::Parser<'a>;
+                    
+                    self.expression()?;
+                    
+                    // Restore parser
+                    self.parser = saved_parser;
+                    
+                    // Convert to string with Op::ToString (we'll add this)
+                    self.emit_byte(Op::ToString as u8);
+                }
+            }
+            
+            if first {
+                first = false;
+            } else {
+                // Concatenate with previous
+                self.emit_byte(Op::Add as u8);
+            }
+        }
+        
         Ok(())
     }
 
@@ -1196,6 +1587,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Comparison },
             Token::Int(_) | Token::Float(_) => ParseRule { prefix: Some(Self::number), infix: None, precedence: Precedence::None },
             Token::String(_) => ParseRule { prefix: Some(Self::string), infix: None, precedence: Precedence::None },
+            Token::InterpolatedString(_) => ParseRule { prefix: Some(Self::interpolated_string), infix: None, precedence: Precedence::None },
             Token::True | Token::False | Token::Nil => ParseRule { prefix: Some(Self::literal), infix: None, precedence: Precedence::None },
 
             Token::LeftBrace => ParseRule { prefix: Some(Self::map_literal), infix: None, precedence: Precedence::None },

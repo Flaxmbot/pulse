@@ -39,8 +39,11 @@ impl<'a> Parser<'a> {
         if self.current == expected {
             self.advance()
         } else {
-            Err(PulseError::TypeMismatch { expected: format!("{:?}", expected), got: format!("{:?}", self.current) })
-            // Todo: Better error reporting
+            Err(PulseError::CompileError(message.to_string(), self.lexer.line))
         }
+    }
+
+    pub fn line(&self) -> usize {
+        self.lexer.line
     }
 }
