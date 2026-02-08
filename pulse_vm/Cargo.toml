@@ -1,0 +1,12 @@
+[package]
+name = "pulse_vm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pulse_core = { path = "../pulse_core" }
+
+[dev-dependencies]
+pulse_compiler = { path = "../pulse_compiler" }
+
+

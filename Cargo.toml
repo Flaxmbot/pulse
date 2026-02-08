@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "pulse_core",
+    "pulse_vm",
+    "pulse_compiler",
+    "pulse_runtime",
+    "pulse_cli",
+]
