@@ -1,0 +1,58 @@
+// Test supervision functionality
+actor Parent {
+    on start {
+        println("Parent started");
+        let child = spawn Child();
+        link(child);  // Link to child - if child dies, parent dies too
+        send child, "work";
+    }
+    
+    on message {type: "exit", pid: pid, reason: reason} {
+        println("Parent received exit message from", pid, "reason:", reason);
+    }
+}
+
+actor Child {
+    on start {
+        println("Child started");
+    }
+    
+    on message "work" {
+        println("Child doing work");
+        // Simulate crash
+        // This would cause the parent to also die due to linking
+    }
+}
+
+actor Monitorer {
+    on start {
+        println("Monitorer started");
+        let target = spawn Target();
+        monitor(target);  // Monitor target - get notified when it dies
+        send target, "work";
+    }
+    
+    on message {type: "DOWN", pid: pid, reason: reason} {
+        println("Monitorer received DOWN message from", pid, "reason:", reason);
+    }
+}
+
+actor Target {
+    on start {
+        println("Target started");
+    }
+    
+    on message "work" {
+        println("Target doing work");
+        // Simulate crash
+    }
+}
+
+// Main actor to start the test
+actor Main {
+    on start {
+        println("Starting supervision test");
+        let parent = spawn Parent();
+        let monitorer = spawn Monitorer();
+    }
+}

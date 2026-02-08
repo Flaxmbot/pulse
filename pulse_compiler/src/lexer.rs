@@ -20,7 +20,9 @@ pub enum Token {
     
     // Keywords
     Actor, On, Message, Send, Spawn, Fn, Let, If, Else, While, For, Return, Print,
-    True, False, Nil, And, Or, Receive, Break, Continue,
+    True, False, Nil, And, Or, Receive, Break, Continue, Import, Link, Monitor, SpawnLink,
+    Register, Unregister, WhereIs,
+    Match, FatArrow,
 
     Eof,
 }
@@ -88,6 +90,7 @@ impl<'a> Lexer<'a> {
                 Some('=') => {
                     self.advance();
                     if self.current == Some('=') { self.advance(); return Ok(Token::EqualEqual); }
+                    if self.current == Some('>') { self.advance(); return Ok(Token::FatArrow); }
                     return Ok(Token::Equal);
                 }
                 Some('<') => {
@@ -191,6 +194,14 @@ impl<'a> Lexer<'a> {
             "and" => Ok(Token::And),
             "or" => Ok(Token::Or),
             "receive" => Ok(Token::Receive),
+            "import" => Ok(Token::Import),
+            "link" => Ok(Token::Link),
+            "monitor" => Ok(Token::Monitor),
+            "spawn_link" => Ok(Token::SpawnLink),
+            "register" => Ok(Token::Register),
+            "unregister" => Ok(Token::Unregister),
+            "whereis" => Ok(Token::WhereIs),
+            "match" => Ok(Token::Match),
             _ => Ok(Token::Identifier(s)),
         }
     }

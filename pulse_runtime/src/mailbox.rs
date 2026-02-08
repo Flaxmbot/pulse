@@ -1,15 +1,17 @@
+use serde::{Serialize, Deserialize};
 use pulse_core::{Value, Constant, ActorId};
 use std::collections::VecDeque;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     User(Constant),
     System(SystemMessage),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SystemMessage {
     Exit(ActorId, String),
+    MonitorExit(ActorId, String),
     Link(ActorId),
     Monitor(ActorId),
 }

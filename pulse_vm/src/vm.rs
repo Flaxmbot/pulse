@@ -1,7 +1,8 @@
 use pulse_core::{Chunk, Op, Value, PulseResult, PulseError, ActorId, NativeFn, Constant};
 use pulse_core::object::{Object, ObjHandle, HeapInterface, Function, Closure};
-use std::rc::Rc;
-use std::collections::HashMap;
+
+use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
 use crate::Heap;
 #[derive(Debug, Clone)]
 pub struct CallFrame {
@@ -20,6 +21,13 @@ pub enum VMStatus {
     // Effects
     Spawn(usize), // ip start (spawn SAME code at this offset)
     Send { target: ActorId, msg: Constant },
+    Import(String), // Path to import
+    Link(ActorId),      // Link to target actor
+    Monitor(ActorId),   // Monitor target actor
+    SpawnLink(usize),   // Spawn and link to new actor
+    Register(String, ActorId),
+    Unregister(String),
+    WhereIs(String),
 }
 
 pub struct VM {
@@ -30,6 +38,8 @@ pub struct VM {
     pub frames: Vec<CallFrame>,
     pub globals: HashMap<String, Value>,
     pub heap: Heap,
+    pub open_upvalues: Vec<ObjHandle>, // Tracks upvalues still on stack
+    pub loaded_modules: HashSet<String>,
 }
 
 impl VM {
@@ -39,8 +49,10 @@ impl VM {
         // Wrap script in Function/Closure
         let script_func = Function {
             arity: 0,
-            chunk: Rc::new(chunk),
+            chunk: Arc::new(chunk),
             name: "script".to_string(),
+            upvalue_count: 0,
+            module_path: None, // Default to None, Runtime sets it for main
         };
         let func_handle = heap.alloc(Object::Function(script_func.clone())); 
         // Note: Object::Function stores struct. 
@@ -51,6 +63,7 @@ impl VM {
         
         let closure = Closure {
             function: script_func,
+            upvalues: Vec::new(),
         };
         let closure_handle = heap.alloc(Object::Closure(closure));
         
@@ -67,6 +80,8 @@ impl VM {
             frames: vec![frame], // Start with script frame
             globals: HashMap::new(),
             heap,
+            open_upvalues: Vec::new(),
+            loaded_modules: HashSet::new(),
         };
         vm.push(Value::Obj(closure_handle)); // Push script closure to slot 0
 
@@ -79,18 +94,21 @@ impl VM {
         vm
     }
 
-    pub fn new_spawn(chunk: Rc<Chunk>, pid: ActorId, start_ip: usize) -> Self {
+    pub fn new_spawn(chunk: Arc<Chunk>, pid: ActorId, start_ip: usize) -> Self {
         let mut heap = Heap::new();
         
         let script_func = Function {
             arity: 0,
             chunk: chunk,
-            name: "spawned".to_string(), // Or keep original name?
+            name: "spawned".to_string(), 
+            upvalue_count: 0,
+            module_path: None,
         };
         let _ = heap.alloc(Object::Function(script_func.clone())); 
         
         let closure = Closure {
             function: script_func,
+            upvalues: Vec::new(),
         };
         let closure_handle = heap.alloc(Object::Closure(closure));
         
@@ -107,6 +125,8 @@ impl VM {
             frames: vec![frame],
             globals: HashMap::new(),
             heap,
+            open_upvalues: Vec::new(),
+            loaded_modules: HashSet::new(),
         };
         vm.push(Value::Obj(closure_handle));
 
@@ -119,7 +139,7 @@ impl VM {
         vm
     }
 
-    pub fn get_current_chunk(&self) -> Rc<Chunk> {
+    pub fn get_current_chunk(&self) -> Arc<Chunk> {
          let frame = self.frames.last().expect("No frame");
          let closure = self.heap.get(frame.closure).expect("Closure not found");
          match closure {
@@ -182,6 +202,12 @@ impl VM {
             
             Op::Pop => {
                 self.pop()?;
+                Ok(VMStatus::Running)
+            }
+
+            Op::Dup => {
+                let val = self.peek(0).clone();
+                self.push(val);
                 Ok(VMStatus::Running)
             }
 
@@ -351,6 +377,9 @@ impl VM {
                 let result = self.pop()?; 
                 let frame = self.frames.pop().ok_or(PulseError::RuntimeError("Return from top level".into()))?;
                 
+                // Close upvalues for this frame's locals
+                self.close_upvalues(frame.stack_start);
+
                 self.stack.truncate(frame.stack_start);
                 self.push(result);
 
@@ -368,11 +397,69 @@ impl VM {
                      _ => return Err(PulseError::TypeMismatch{expected: "function".into(), got: "other constant".into()}),
                 };
                 
+                let mut upvalues = Vec::new();
+                for _ in 0..function.upvalue_count {
+                    let is_local = self.read_byte() == 1;
+                    let index = self.read_byte();
+                    if is_local {
+                        let frame_start = self.frames.last().unwrap().stack_start;
+                        upvalues.push(self.capture_upvalue(frame_start + index as usize));
+                    } else {
+                        // Capture from current closure's upvalues
+                        let current_closure_handle = self.frames.last().unwrap().closure;
+                        if let Some(Object::Closure(c)) = self.heap.get(current_closure_handle) {
+                             upvalues.push(c.upvalues[index as usize]);
+                        }
+                    }
+                }
+
                 let closure = Closure {
-                    function: *function,
+                    function: *function.clone(),
+                    upvalues,
                 };
                 let handle = self.heap.alloc(Object::Closure(closure));
                 self.push(Value::Obj(handle));
+                Ok(VMStatus::Running)
+            }
+
+            Op::GetUpvalue => {
+                let slot = self.read_byte();
+                let closure_handle = self.frames.last().unwrap().closure;
+                let val = if let Some(Object::Closure(c)) = self.heap.get(closure_handle) {
+                    let uv_handle = c.upvalues[slot as usize];
+                    if let Some(Object::Upvalue(uv)) = self.heap.get(uv_handle) {
+                        if let Some(loc) = uv.location {
+                            self.stack[loc].clone()
+                        } else {
+                            uv.closed.as_ref().expect("Closed upvalue missing value").clone()
+                        }
+                    } else { return Err(PulseError::RuntimeError("Invalid upvalue".into())); }
+                } else { return Err(PulseError::RuntimeError("No closure in frame".into())); };
+                
+                self.push(val);
+                Ok(VMStatus::Running)
+            }
+
+            Op::SetUpvalue => {
+                let slot = self.read_byte();
+                let val = self.peek(0).clone();
+                let closure_handle = self.frames.last().unwrap().closure;
+                if let Some(Object::Closure(c)) = self.heap.get(closure_handle) {
+                    let uv_handle = c.upvalues[slot as usize];
+                    if let Some(Object::Upvalue(uv)) = self.heap.get_mut(uv_handle) {
+                        if let Some(loc) = uv.location {
+                            self.stack[loc] = val;
+                        } else {
+                            uv.closed = Some(val);
+                        }
+                    } else { return Err(PulseError::RuntimeError("Invalid upvalue".into())); }
+                } else { return Err(PulseError::RuntimeError("No closure in frame".into())); };
+                Ok(VMStatus::Running)
+            }
+
+            Op::CloseUpvalue => {
+                self.close_upvalues(self.stack.len() - 1);
+                self.pop()?;
                 Ok(VMStatus::Running)
             }
 
@@ -490,7 +577,7 @@ impl VM {
                     Value::Int(i) => Constant::Int(i),
                     Value::Float(f) => Constant::Float(f),
                     Value::Unit => Constant::Unit,
-                    Value::Pid(p) => return Err(PulseError::RuntimeError("Cannot send PIDs yet".into())), // TODO: Handle Pid in Constant?
+                    Value::Pid(_) => return Err(PulseError::RuntimeError("Cannot send PIDs yet".into())),
                     Value::Obj(handle) => {
                         if let Some(obj) = self.heap.get(handle) {
                             match obj {
@@ -498,6 +585,7 @@ impl VM {
                                 Object::NativeFn(_) => return Err(PulseError::RuntimeError("Cannot send native functions".into())),
                                 Object::List(_) | Object::Map(_) => return Err(PulseError::RuntimeError("Cannot send complex objects yet (TODO)".into())),
                                 Object::Function(_) | Object::Closure(_) => return Err(PulseError::RuntimeError("Cannot send functions yet (TODO)".into())),
+                                Object::Upvalue(_) => return Err(PulseError::RuntimeError("Cannot send upvalues".into())),
                             }
                         } else {
                             return Err(PulseError::RuntimeError("Cannot send freed object".into()));
@@ -516,6 +604,80 @@ impl VM {
             Op::Spawn => {
                 let offset = self.read_u16();
                 Ok(VMStatus::Spawn(offset as usize))
+            }
+
+            Op::SpawnLink => {
+                let offset = self.read_u16();
+                Ok(VMStatus::SpawnLink(offset as usize))
+            }
+
+            Op::Link => {
+                let target_val = self.pop()?;
+                let target = match target_val {
+                    Value::Pid(pid) => pid,
+                    _ => return Err(PulseError::TypeMismatch{expected: "pid".into(), got: target_val.type_name()}),
+                };
+                Ok(VMStatus::Link(target))
+            }
+
+            Op::Monitor => {
+                let target_val = self.pop()?;
+                let target = match target_val {
+                    Value::Pid(pid) => pid,
+                    _ => return Err(PulseError::TypeMismatch{expected: "pid".into(), got: target_val.type_name()}),
+                };
+                Ok(VMStatus::Monitor(target))
+            }
+
+            Op::Register => {
+                let pid_val = self.pop()?;
+                let name_val = self.pop()?;
+                
+                let pid = match pid_val {
+                    Value::Pid(p) => p,
+                    _ => return Err(PulseError::TypeMismatch{expected: "pid".into(), got: pid_val.type_name()}),
+                };
+                
+                let name = match name_val {
+                    Value::Obj(h) => self.get_string(h)?,
+                    _ => return Err(PulseError::TypeMismatch{expected: "string name".into(), got: name_val.type_name()}),
+                };
+                
+                Ok(VMStatus::Register(name, pid))
+            }
+
+            Op::Unregister => {
+                let name_val = self.pop()?;
+                let name = match name_val {
+                    Value::Obj(h) => self.get_string(h)?,
+                    _ => return Err(PulseError::TypeMismatch{expected: "string name".into(), got: name_val.type_name()}),
+                };
+                Ok(VMStatus::Unregister(name))
+            }
+
+            Op::WhereIs => {
+                let name_val = self.pop()?;
+                let name = match name_val {
+                    Value::Obj(h) => self.get_string(h)?,
+                    _ => return Err(PulseError::TypeMismatch{expected: "string name".into(), got: name_val.type_name()}),
+                };
+                Ok(VMStatus::WhereIs(name))
+            }
+
+            Op::Import => {
+                let path_idx = self.read_byte();
+                let constant = self.get_current_chunk_const(path_idx as usize);
+                let path = match constant {
+                    Constant::String(s) => s.clone(),
+                    _ => return Err(PulseError::TypeMismatch { expected: "string".into(), got: "other constant".into() }),
+                };
+
+                let resolved = self.resolve_path(&path)?;
+                if self.loaded_modules.contains(&resolved) {
+                    Ok(VMStatus::Running)
+                } else {
+                    Ok(VMStatus::Import(resolved))
+                }
             }
 
             Op::BuildList => {
@@ -658,6 +820,49 @@ impl VM {
         }
     }
 
+    fn capture_upvalue(&mut self, local_idx: usize) -> ObjHandle {
+        // 1. Search for existing open upvalue
+        for handle in &self.open_upvalues {
+            if let Some(Object::Upvalue(uv)) = self.heap.get(*handle) {
+                if uv.location == Some(local_idx) {
+                    return *handle;
+                }
+            }
+        }
+        
+        // 2. Create new open upvalue
+        let handle = self.heap.alloc(Object::Upvalue(pulse_core::object::Upvalue {
+            location: Some(local_idx),
+            closed: None,
+        }));
+        
+        // 3. Keep it in open_upvalues list
+        self.open_upvalues.push(handle);
+        handle
+    }
+
+    fn close_upvalues(&mut self, last_idx: usize) {
+        let mut i = 0;
+        while i < self.open_upvalues.len() {
+            let handle = self.open_upvalues[i];
+            let should_close = if let Some(Object::Upvalue(uv)) = self.heap.get(handle) {
+                uv.location.map_or(false, |loc| loc >= last_idx)
+            } else { false };
+
+            if should_close {
+                self.open_upvalues.remove(i);
+                // Move value from stack to upvalue object
+                if let Some(Object::Upvalue(uv)) = self.heap.get_mut(handle) {
+                    let loc = uv.location.expect("Upvalue missing location");
+                    uv.closed = Some(self.stack[loc].clone());
+                    uv.location = None;
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     pub fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
@@ -708,6 +913,7 @@ impl VM {
                         },
                         Object::Function(f) => print!("<fn {}>", f.name),
                         Object::Closure(c) => print!("<fn {}>", c.function.name),
+                        Object::Upvalue(_) => print!("<upvalue>"),
                     }
                 } else {
                     print!("<freed object>");
@@ -751,6 +957,30 @@ impl VM {
         for frame in &self.frames {
             self.heap.mark_object(frame.closure);
         }
+
+        // Open Upvalues
+        for handle in &self.open_upvalues {
+            self.heap.mark_object(*handle);
+        }
+    }
+
+    fn resolve_path(&self, path: &str) -> PulseResult<String> {
+        // Simple resolution: if relative, use current module path as base
+        if path.starts_with("./") || path.starts_with("../") {
+            let frame = self.frames.last().unwrap();
+            let closure = self.heap.get(frame.closure).unwrap();
+            if let Object::Closure(c) = closure {
+                if let Some(base) = &c.function.module_path {
+                   let base_path = std::path::Path::new(base);
+                   if let Some(parent) = base_path.parent() {
+                       let resolved = parent.join(path);
+                       return Ok(resolved.to_string_lossy().to_string());
+                   }
+                }
+            }
+        }
+        // Absolute or current dir
+        Ok(path.to_string())
     }
 }
 
@@ -840,6 +1070,7 @@ fn print_val_heap(heap: &dyn HeapInterface, val: &Value) {
                      },
                      Object::Function(f) => print!("<fn {}>", f.name),
                      Object::Closure(c) => print!("<fn {}>", c.function.name),
+                     Object::Upvalue(_) => print!("<upvalue>"),
                  }
              } else {
                  print!("<freed object>");

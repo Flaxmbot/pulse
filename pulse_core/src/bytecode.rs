@@ -1,7 +1,8 @@
+use serde::{Serialize, Deserialize};
 use crate::value::Constant;
 // use crate::value::Value; // No longer used in Chunk constants
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Op {
     // Basics
@@ -11,6 +12,7 @@ pub enum Op {
     Negate = 0x03,
     Not = 0x04,
     Unit = 0x05,
+    Dup = 0x06,
 
     // Arithmetic
     Add = 0x10,
@@ -30,7 +32,10 @@ pub enum Op {
     Call = 0x32,
     Loop = 0x33,
     Return = 0x34,
-    Closure = 0x35, // NEW: Create closure from function constant
+    Closure = 0x35,
+    GetUpvalue = 0x36,
+    SetUpvalue = 0x37,
+    CloseUpvalue = 0x38,
 
     // Variables
     GetLocal = 0x40,
@@ -45,10 +50,18 @@ pub enum Op {
     GetIndex = 0x47,  // Pops index, target. Pushes value.
     SetIndex = 0x48,  // Pops value, index, target. Sets value.
 
-    Spawn = 0x50, // u16 offset. Spawns new actor.
+    // Distribution
+    Spawn = 0x50,     // u8 constant index for function.
     Send = 0x51,
     Receive = 0x52,
     SelfId = 0x53,
+    Import = 0x54,
+    SpawnLink = 0x55,
+    Link = 0x56,
+    Monitor = 0x57,
+    Register = 0x58,
+    Unregister = 0x59,
+    WhereIs = 0x5A,
     
     // IO
     Print = 0x60,
@@ -60,7 +73,7 @@ impl From<u8> for Op {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub constants: Vec<Constant>,

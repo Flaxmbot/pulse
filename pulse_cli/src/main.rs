@@ -67,33 +67,49 @@ fn main() {
     chunk.write(Op::Halt as u8, 3);
 
     // 3. Spawn Initial Actor (Parent)
-    let pid = runtime.spawn(chunk);
+    let pid = runtime.spawn(chunk, None);
     println!("Spawned Root Actor: {:?}", pid);
 
     // 5. Standard Library Demo (Manual Bytecode for now as we don't have full parser integration in CLI yet)
     // Actually, we DO have full parser integration in `pulse_compiler`.
     // Let's use it!
-    
+
     let source = r#"
         println("--- Standard Library Demo ---");
         let start = clock();
         println("Start time:", start);
-        
+
         let msg = "Hello " + "World!";
         println(msg);
-        
+
         let end = clock();
         println("End time:", end);
         println("Duration:", end - start);
     "#;
-    
+
     println!("\nCompiling Std Lib Demo...");
-    match pulse_compiler::compile(source) {
+    match pulse_compiler::compile(source, None) {
         Ok(chunk) => {
-            let pid = runtime.spawn(chunk);
+            let pid = runtime.spawn(chunk, None);
             println!("Spawned Std Lib Demo Actor: {:?}", pid);
         },
         Err(e) => println!("Compilation failed: {}", e),
+    }
+
+    // 6. Test Supervision Features
+    let supervision_source = r#"
+        println("--- Testing Supervision Features ---");
+        // This would test link, monitor, and spawn_link functionality
+        // when we have actors implemented in the language
+    "#;
+
+    println!("\nCompiling Supervision Test...");
+    match pulse_compiler::compile(supervision_source, None) {
+        Ok(chunk) => {
+            let pid = runtime.spawn(chunk, None);
+            println!("Spawned Supervision Test Actor: {:?}", pid);
+        },
+        Err(e) => println!("Supervision compilation failed: {}", e),
     }
 
 

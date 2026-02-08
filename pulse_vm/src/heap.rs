@@ -108,13 +108,23 @@ impl Heap {
             let handles_to_mark = {
                 if let ObjectEntry::Allocated { object, .. } = &self.objects[idx] {
                     match object {
+                        Object::Closure(c) => {
+                            c.upvalues.clone()
+                        },
+                        Object::Upvalue(uv) => {
+                            if let Some(Value::Obj(h)) = &uv.closed {
+                                vec![*h]
+                            } else {
+                                Vec::new()
+                            }
+                        },
                         Object::List(vec) => {
                             vec.iter().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
                         },
                         Object::Map(map) => {
                             map.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
                         },
-                        Object::Function(_) | Object::Closure(_) | Object::String(_) | Object::NativeFn(_) => Vec::new(),
+                        Object::Function(_) | Object::String(_) | Object::NativeFn(_) => Vec::new(),
                     }
                 } else {
                     Vec::new()

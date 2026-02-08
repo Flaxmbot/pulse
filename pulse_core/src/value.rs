@@ -1,7 +1,8 @@
+use serde::{Serialize, Deserialize};
 use crate::error::{PulseError, PulseResult};
 use crate::object::{ObjHandle, HeapInterface, Function};
 
-#[derive(Clone, Debug, PartialEq)] 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)] 
 pub enum Constant {
     Bool(bool),
     Int(i64),
@@ -17,7 +18,7 @@ pub enum Constant {
     // Let's use Box just in case or simpler: `Function` struct.
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Bool(bool),
     Int(i64),
@@ -27,7 +28,7 @@ pub enum Value {
     Pid(ActorId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActorId {
     pub node_id: u128,
     pub sequence: u64,
