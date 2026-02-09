@@ -136,21 +136,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
     }
 
-    fn import_declaration(&mut self) -> PulseResult<()> {
-        self.consume_string("Expect string after 'import'.")?;
-        let path = if let Token::String(s) = &self.parser().previous {
-            s.clone()
-        } else {
-            "".into()
-        };
         
-        let idx = self.chunk.add_constant(Constant::String(path));
-        self.emit_byte(Op::Import as u8);
-        self.emit_byte(idx as u8);
-        
-        self.consume(Token::Semicolon, "Expect ';' after import.")?;
-        Ok(())
-    }
 
     fn fun_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect function name.")?;
@@ -1744,6 +1730,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> PulseResult<()> {
+        println!("DEBUG: Entering parse_precedence with {:?}", precedence);
         self.advance()?;
         
         let previous = self.parser().previous.clone();
@@ -1803,16 +1790,27 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     // --- Helpers ---
     fn advance(&mut self) -> PulseResult<()> {
-        self.parser().advance()
+        self.parser().advance()?;
+        println!("Token: {:?}", self.parser().current);
+        Ok(())
     }
 
     fn consume(&mut self, expected: Token, msg: &str) -> PulseResult<()> {
-        self.parser().consume(expected, msg)
+        if self.parser().current == expected {
+            self.parser().advance()?;
+            println!("Consumed Success: {:?}", expected);
+            Ok(())
+        } else {
+            println!("Consume Mismatch! Expected: {:?}, Got: {:?}", expected, self.parser().current);
+            self.parser().consume(expected, msg)
+        }
     }
 
     fn matches(&mut self, expected: Token) -> PulseResult<bool> {
+        // println!("DEBUG: Comparing {:?} == {:?}", self.parser().current, expected);
         if self.parser().current == expected {
             self.parser().advance()?;
+            println!("Matched Success: {:?}", expected);
             Ok(true)
         } else {
             Ok(false)
