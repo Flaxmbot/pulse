@@ -1,8 +1,10 @@
 pub mod vm;
 pub mod heap;
+pub mod debug;
 
 pub use vm::{VM, VMStatus, CallFrame};
 pub use heap::Heap;
+pub use debug::{DebugContext, StepMode};
 
 #[cfg(test)]
 mod tests {

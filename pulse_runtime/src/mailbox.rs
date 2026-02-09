@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use pulse_core::{Value, Constant, ActorId};
+use pulse_core::{Constant, ActorId};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 use pulse_core::{ActorId, Value, Constant};
-use pulse_core::object::{Object, Closure, Function};
+use pulse_core::object::{Object, Closure};
 use pulse_vm::VM;
 use crate::mailbox::{Mailbox, Message, SystemMessage};
 use std::collections::HashSet;

@@ -127,9 +127,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     // --- Declarations ---
     // --- Declarations ---
     fn declaration(&mut self) -> PulseResult<()> {
-        if self.matches(Token::Import)? {
-            self.import_declaration()
-        } else if self.matches(Token::Fn)? {
+        if self.matches(Token::Fn)? || self.matches(Token::Def)? {
             self.fun_declaration()
         } else if self.matches(Token::Let)? {
             self.var_declaration()
@@ -179,6 +177,12 @@ impl<'a, 'b> Compiler<'a, 'b> {
                 
                 let param_constant = compiler.parse_variable("Expect parameter name.")?;
                 compiler.define_variable(param_constant);
+                
+                // Optional type annotation: `: Type`
+                if compiler.matches(Token::Colon)? {
+                    // Parse and ignore type annotation for now (future: type checking pass)
+                    let _ = compiler.parse_type()?;
+                }
 
                 if !compiler.matches(Token::Comma)? {
                     break;
@@ -186,6 +190,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
             }
         }
         compiler.consume(Token::RightParen, "Expect ')' after parameters.")?;
+        
+        // Optional return type annotation: `-> Type`
+        if compiler.matches(Token::Arrow)? {
+            let _ = compiler.parse_type()?;
+        }
         
         compiler.consume(Token::LeftBrace, "Expect '{' before function body.")?;
         compiler.block()?;
@@ -430,9 +439,30 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn for_statement(&mut self) -> PulseResult<()> {
-        // for (init; cond; incr) body
+        // Check for Python-style: for x in iterable { }
+        // vs C-style: for (init; cond; incr) body
+        
         self.begin_scope();
-
+        
+        // Check if next is identifier followed by 'in' (Python style)
+        if let Token::Identifier(var_name) = &self.parser().current.clone() {
+            let name = var_name.clone();
+            self.advance()?;
+            
+            if self.matches(Token::In)? {
+                // Python-style: for x in iterable { }
+                return self.for_in_statement(name);
+            } else {
+                // Not Python-style, but we consumed identifier
+                // This is a syntax error for traditional for
+                return Err(PulseError::CompileError(
+                    "Expect '(' after 'for' or 'in' after identifier.".into(), 
+                    self.parser().line()
+                ));
+            }
+        }
+        
+        // C-style: for (init; cond; incr) body
         self.consume(Token::LeftParen, "Expect '(' after 'for'.")?;
         
         // Init
@@ -457,46 +487,6 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
         
         // Incr
-        // Incr
-        // let mut loop_vars_start = loop_start; // unused
-        // Actually, continue should jump to increment start if present, else loop_start.
-        // My implementation: 
-        // Loops push `start_ip: loop_start`.
-        // If we have increment, we change `loop_start` to `increment_start` BEFORE pushing loop context?
-        // NO.
-        // `for (init; cond; incr) { body }`
-        // Structure:
-        // [Init]
-        // LoopStart:
-        // [Cond] -> JumpIfFalse(Exit)
-        // BodyJump -> Jump(Body)
-        // IncrementStart:
-        // [Incr]
-        // Loop(LoopStart)
-        // Body:
-        // [Body]
-        // Loop(IncrementStart)  <-- Continue should go here?
-        // Patch BodyJump
-        
-        // My current implementation:
-        // [Init]
-        // LoopStart:
-        // [Cond] -> JumpIfFalse(Exit)
-        // BodyJump -> Jump(Body)
-        // IncrementStart:
-        // [Incr]
-        // Loop(LoopStart)
-        // Body:   <-- `loop_start` variable updated to `increment_start` in code
-        // [Body]
-        // Loop(IncrementStart)
-        
-        // When I push Loop context:
-        // self.loops.push(Loop { start_ip: loop_start, ... });
-        // `loop_start` IS `increment_start` if increment exists.
-        // So `continue` jumps to `increment_start`. Correct.
-        
-        // `loop_vars_start` was unused.
-        
         if !self.matches(Token::RightParen)? {
             let body_jump = self.emit_jump(Op::Jump as u8);
             
@@ -512,8 +502,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
         
         // Push Loop context
         self.loops.push(Loop {
-            start_ip: loop_start, // Continue goes to increment (if existing) or start
-            break_jumps: Vec::new(), // Breaks go to end
+            start_ip: loop_start,
+            break_jumps: Vec::new(),
         });
 
         self.statement()?;
@@ -532,6 +522,112 @@ impl<'a, 'b> Compiler<'a, 'b> {
             }
         }
         
+        self.end_scope();
+        Ok(())
+    }
+    
+    fn for_in_statement(&mut self, var_name: String) -> PulseResult<()> {
+        // for x in iterable { body }
+        // Compiles to:
+        // let __iter = iterable;
+        // let __idx = 0;
+        // while __idx < len(__iter) {
+        //     let x = __iter[__idx];
+        //     body
+        //     __idx = __idx + 1;
+        // }
+        
+        // Evaluate iterable
+        self.expression()?;
+        
+        // Store iterable in a hidden local
+        self.add_local(Token::Identifier("__iter".to_string()))?;
+        self.mark_initialized();
+        
+        // Store index (0) in a hidden local
+        self.emit_constant(Constant::Int(0));
+        self.add_local(Token::Identifier("__idx".to_string()))?;
+        self.mark_initialized();
+        
+        let loop_start = self.chunk.code.len();
+        
+        // Condition: __idx < len(__iter)
+        let idx_token = Token::Identifier("__idx".to_string());
+        let idx_slot = self.resolve_local(&idx_token)?;
+        let iter_token = Token::Identifier("__iter".to_string());
+        let iter_slot = self.resolve_local(&iter_token)?;
+        
+        // Stack order for __idx < len:
+        // 1. Push __idx
+        // 2. Push __iter
+        // 3. Len (peeks __iter, pushes len) -> stack: [__idx, __iter, len]
+        // 4. Slide(1) to remove __iter -> stack: [__idx, len]
+        // 5. Lt compares second-from-top < top -> __idx < len ✓
+        
+        self.emit_byte(Op::GetLocal as u8);
+        self.emit_byte(idx_slot);     // Stack: [..., __idx]
+        
+        self.emit_byte(Op::GetLocal as u8);
+        self.emit_byte(iter_slot);    // Stack: [..., __idx, __iter]
+        
+        self.emit_byte(Op::Len as u8); // Stack: [..., __idx, __iter, len]
+        
+        self.emit_byte(Op::Slide as u8);
+        self.emit_byte(1);             // Stack: [..., __idx, len]
+        
+        self.emit_byte(Op::Lt as u8);  // Stack: [..., __idx < len]
+        
+        let exit_jump = self.emit_jump(Op::JumpIfFalse as u8);
+        self.emit_byte(Op::Pop as u8); // Pop condition result
+        
+        // Push Loop context
+        self.loops.push(Loop {
+            start_ip: loop_start,
+            break_jumps: Vec::new(),
+        });
+        
+        // Get current element: __iter[__idx]
+        self.emit_byte(Op::GetLocal as u8);
+        self.emit_byte(iter_slot);
+        self.emit_byte(Op::GetLocal as u8);
+        self.emit_byte(idx_slot);
+        self.emit_byte(Op::GetIndex as u8);
+        
+        // Store in loop variable
+        self.add_local(Token::Identifier(var_name))?;
+        self.mark_initialized();
+        
+        // Body
+        self.consume(Token::LeftBrace, "Expect '{' after 'for ... in ...'.")?;
+        self.block()?;
+        
+        // Pop loop variable
+        self.emit_byte(Op::Pop as u8);
+        
+        // Increment: __idx = __idx + 1
+        self.emit_byte(Op::GetLocal as u8);
+        self.emit_byte(idx_slot);
+        self.emit_constant(Constant::Int(1));
+        self.emit_byte(Op::Add as u8);
+        self.emit_byte(Op::SetLocal as u8);
+        self.emit_byte(idx_slot);
+        self.emit_byte(Op::Pop as u8);
+        
+        // Loop back
+        self.emit_loop(loop_start)?;
+        
+        // Exit
+        self.patch_jump(exit_jump)?;
+        self.emit_byte(Op::Pop as u8);
+        
+        // Patch breaks
+        if let Some(loop_ctx) = self.loops.pop() {
+            for break_jump in loop_ctx.break_jumps {
+                self.patch_jump(break_jump)?;
+            }
+        }
+        
+        // end_scope() handles popping all locals including __iter, __idx, and loop var
         self.end_scope();
         Ok(())
     }
@@ -1385,6 +1481,72 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn check(&self, token: Token) -> bool {
         unsafe { (*self.parser).current == token }
     }
+    
+    /// Parse a type annotation (e.g., Int, String, List<Int>, Fn<(Int) -> Bool>)
+    fn parse_type(&mut self) -> PulseResult<crate::types::Type> {
+        use crate::types::Type;
+        
+        self.parser().advance()?;
+        
+        match &self.parser().previous.clone() {
+            Token::TypeInt => Ok(Type::Int),
+            Token::TypeFloat => Ok(Type::Float),
+            Token::TypeBool => Ok(Type::Bool),
+            Token::TypeString => Ok(Type::String),
+            Token::TypeUnit => Ok(Type::Unit),
+            Token::TypePid => Ok(Type::Pid),
+            Token::TypeAny => Ok(Type::Any),
+            Token::TypeList => {
+                // List<ElementType>
+                if self.matches(Token::Less)? {
+                    let elem_type = self.parse_type()?;
+                    self.consume(Token::Greater, "Expect '>' after List element type.")?;
+                    Ok(Type::List(Box::new(elem_type)))
+                } else {
+                    Ok(Type::List(Box::new(Type::Any)))
+                }
+            }
+            Token::TypeMap => {
+                // Map<KeyType, ValueType>
+                if self.matches(Token::Less)? {
+                    let key_type = self.parse_type()?;
+                    self.consume(Token::Comma, "Expect ',' between Map key and value types.")?;
+                    let val_type = self.parse_type()?;
+                    self.consume(Token::Greater, "Expect '>' after Map value type.")?;
+                    Ok(Type::Map(Box::new(key_type), Box::new(val_type)))
+                } else {
+                    Ok(Type::Map(Box::new(Type::Any), Box::new(Type::Any)))
+                }
+            }
+            Token::TypeFn => {
+                // Fn<(Param1, Param2) -> ReturnType>
+                if self.matches(Token::Less)? {
+                    self.consume(Token::LeftParen, "Expect '(' for Fn parameter types.")?;
+                    let mut params = Vec::new();
+                    if !self.check(Token::RightParen) {
+                        loop {
+                            params.push(self.parse_type()?);
+                            if !self.matches(Token::Comma)? {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(Token::RightParen, "Expect ')' after Fn parameters.")?;
+                    self.consume(Token::Arrow, "Expect '->' for Fn return type.")?;
+                    let ret_type = self.parse_type()?;
+                    self.consume(Token::Greater, "Expect '>' after Fn type.")?;
+                    Ok(Type::Fn(params, Box::new(ret_type)))
+                } else {
+                    Ok(Type::Fn(vec![], Box::new(Type::Any)))
+                }
+            }
+            Token::Identifier(name) => Ok(Type::Custom(name.clone())),
+            other => Err(PulseError::CompileError(
+                format!("Unexpected token in type annotation: {:?}", other),
+                self.parser().line()
+            )),
+        }
+    }
 
     fn binary(&mut self, _can_assign: bool) -> PulseResult<()> {
         let operator_type = self.parser().previous.clone();
@@ -1420,6 +1582,21 @@ impl<'a, 'b> Compiler<'a, 'b> {
             },
             _ => return Err(PulseError::CompileError("Invalid binary operator".into(), 0)),
         }
+        Ok(())
+    }
+
+    fn dot(&mut self, _can_assign: bool) -> PulseResult<()> {
+        self.consume_identifier("Expect property name after '.'.")?;
+        let name = self.parser().previous.clone();
+        let idx = self.identifier_constant(&name)?;
+        
+        // Stack: [Object]
+        // We want: [Object, "Property"]
+        // Then Op::GetIndex
+        self.emit_byte(Op::Const as u8);
+        self.emit_byte(idx);
+        
+        self.emit_byte(Op::GetIndex as u8);
         Ok(())
     }
 
@@ -1496,6 +1673,23 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn receive(&mut self, _can_assign: bool) -> PulseResult<()> {
         self.emit_byte(Op::Receive as u8);
+        Ok(())
+    }
+
+    fn import_expression(&mut self, _can_assign: bool) -> PulseResult<()> {
+        self.consume_string("Expect string after 'import'.")?;
+        let name = self.parser().previous.clone();
+        let idx = self.chunk.add_constant(Constant::String(match name {
+            Token::String(s) => s,
+            _ => unreachable!(),
+        }));
+        
+        if idx > u8::MAX as usize {
+            return Err(PulseError::CompileError("Too many constants.".into(), 0));
+        }
+        
+        self.emit_byte(Op::Import as u8);
+        self.emit_byte(idx as u8);
         Ok(())
     }
 
@@ -1579,6 +1773,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn get_rule(&self, token: &Token) -> ParseRule<'a, 'b> {
         match token {
             Token::LeftParen => ParseRule { prefix: Some(Self::grouping), infix: Some(Self::call), precedence: Precedence::Call },
+            Token::Dot => ParseRule { prefix: None, infix: Some(Self::dot), precedence: Precedence::Call },
             Token::Minus => ParseRule { prefix: Some(Self::unary), infix: Some(Self::binary), precedence: Precedence::Term },
             Token::Plus => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Term },
             Token::Slash => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Factor },
@@ -1599,6 +1794,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             Token::Unregister => ParseRule { prefix: Some(Self::unregister_expr), infix: None, precedence: Precedence::None },
             Token::WhereIs => ParseRule { prefix: Some(Self::whereis_expr), infix: None, precedence: Precedence::None },
             Token::Match => ParseRule { prefix: Some(Self::match_expression), infix: None, precedence: Precedence::None },
+            Token::Import => ParseRule { prefix: Some(Self::import_expression), infix: None, precedence: Precedence::None },
             Token::And => ParseRule { prefix: None, infix: Some(Self::and_), precedence: Precedence::And },
             Token::Or => ParseRule { prefix: None, infix: Some(Self::or_), precedence: Precedence::Or },
             _ => ParseRule { prefix: None, infix: None, precedence: Precedence::None },

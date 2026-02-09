@@ -121,10 +121,13 @@ impl Heap {
                         Object::List(vec) => {
                             vec.iter().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
                         },
-                        Object::Map(map) => {
-                            map.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
-                        },
-                        Object::Function(_) | Object::String(_) | Object::NativeFn(_) => Vec::new(),
+                         Object::Map(map) => {
+                             map.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
+                         },
+                         Object::Module(exports) => {
+                             exports.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
+                         },
+                         Object::Function(_) | Object::String(_) | Object::NativeFn(_) => Vec::new(),
                     }
                 } else {
                     Vec::new()

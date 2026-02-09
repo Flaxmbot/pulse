@@ -16,6 +16,7 @@ pub enum Object {
     Upvalue(Upvalue),
     List(Vec<Value>),
     Map(HashMap<String, Value>),
+    Module(HashMap<String, Value>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

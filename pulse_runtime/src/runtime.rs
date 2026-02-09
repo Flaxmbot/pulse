@@ -1,12 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::rc::Rc;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
 use std::thread;
 
-use pulse_core::{ActorId, PulseError, PulseResult, Value, Chunk, Constant};
-use pulse_core::object::{Object, ObjHandle, HeapInterface, Closure};
+use pulse_core::{ActorId, PulseError, PulseResult, Value, Chunk};
+use pulse_core::object::{Object, ObjHandle, Closure};
 use pulse_vm::{VM, VMStatus, CallFrame};
 use crate::actor::{Actor, ActorStatus};
 use crate::mailbox::Message;
@@ -21,6 +20,7 @@ pub struct Runtime {
     remote_queue: Arc<Mutex<VecDeque<MessageEnvelope>>>,
     registry: HashMap<String, ActorId>,
     reverse_registry: HashMap<ActorId, HashSet<String>>,
+    last_error: Option<String>,
 }
 
 impl Runtime {
@@ -34,7 +34,13 @@ impl Runtime {
             remote_queue: Arc::new(Mutex::new(VecDeque::new())),
             registry: HashMap::new(),
             reverse_registry: HashMap::new(),
+            last_error: None,
         }
+    }
+    
+    /// Get and clear the last runtime error (for test framework)
+    pub fn get_last_error(&mut self) -> Option<String> {
+        self.last_error.take()
     }
 
     pub fn spawn(&mut self, chunk: Chunk, module_path: Option<String>) -> ActorId {
@@ -170,34 +176,55 @@ impl Runtime {
                      self.run_queue.push_back(pid);
                  },
                  VMStatus::Import(path) => {
+                      if path.starts_with("std/") {
+                          let mut actor = actor_ref.lock().unwrap();
+                          if let Some(handle) = crate::stdlib::load_std_module(&path, &mut actor.vm) {
+                              actor.vm.push(pulse_core::Value::Obj(handle));
+                              // Cache it
+                              actor.vm.loaded_modules.insert(path, handle);
+                              self.run_queue.push_back(pid);
+                          } else {
+                              actor.status = ActorStatus::Terminated;
+                              println!("Actor {:?} failed to load std module: {}", pid, path);
+                          }
+                          // The `continue` here effectively means "finish processing this VMStatus and return true from step"
+                          // as `step` processes one actor at a time.
+                          return true; 
+                      }
                      match std::fs::read_to_string(&path) {
                          Ok(source) => {
                              match pulse_compiler::compile(&source, Some(path.clone())) {
-                                 Ok(chunk) => {
-                                     let mut actor = actor_ref.lock().unwrap();
-                                     actor.vm.loaded_modules.insert(path.clone());
-                                     
-                                     let function = pulse_core::object::Function {
-                                         arity: 0,
-                                         chunk: Arc::new(chunk),
-                                         name: format!("module_{}", path),
-                                         upvalue_count: 0,
-                                         module_path: Some(path),
-                                     };
-                                     let closure = Closure {
-                                         function,
-                                         upvalues: Vec::new(),
-                                     };
-                                     let closure_handle = actor.vm.heap.alloc(Object::Closure(closure));
-                                     
-                                     let frame = CallFrame {
-                                         closure: closure_handle,
-                                         ip: 0,
-                                         stack_start: actor.vm.stack.len(),
-                                     };
-                                     actor.vm.frames.push(frame);
-                                     self.run_queue.push_back(pid);
-                                 },
+                               Ok(chunk) => {
+                                   let mut actor = actor_ref.lock().unwrap();
+                                   
+                                   let function = pulse_core::object::Function {
+                                       arity: 0,
+                                       chunk: Arc::new(chunk),
+                                       name: format!("module_{}", path),
+                                       upvalue_count: 0,
+                                       module_path: Some(path.clone()),
+                                   };
+                                   let closure = Closure {
+                                       function,
+                                       upvalues: Vec::new(),
+                                   };
+                                   let closure_handle = actor.vm.heap.alloc(Object::Closure(closure));
+                                   
+                                   // Swap globals for the module
+                                   let current_globals = actor.vm.globals.clone();
+                                   actor.vm.globals.clear();
+                                   
+                                   let frame = CallFrame {
+                                       closure: closure_handle,
+                                       ip: 0,
+                                       stack_start: actor.vm.stack.len(),
+                                       is_module: true,
+                                       module_path: Some(path),
+                                       prev_globals: Some(current_globals),
+                                   };
+                                   actor.vm.frames.push(frame);
+                                   self.run_queue.push_back(pid);
+                               },
                                  Err(e) => {
                                      let mut actor = actor_ref.lock().unwrap();
                                      actor.status = ActorStatus::Terminated;
@@ -285,6 +312,10 @@ impl Runtime {
                      }
                      self.run_queue.push_back(pid);
                  },
+                 VMStatus::Paused => {
+                     // Debug: actor hit breakpoint, keep in queue but don't mark terminated
+                     self.run_queue.push_back(pid);
+                 },
                  VMStatus::Halted => {
                      let mut actor = actor_ref.lock().unwrap();
                      actor.status = ActorStatus::Terminated;
@@ -295,6 +326,7 @@ impl Runtime {
                      let mut actor = actor_ref.lock().unwrap();
                      actor.status = ActorStatus::Terminated;
                      let error_msg = format!("{}", e);
+                     self.last_error = Some(error_msg.clone());
                      drop(actor); // Release lock before calling propagate_exit
                      self.propagate_exit(pid, error_msg);
                  }
@@ -307,6 +339,10 @@ impl Runtime {
 
     pub fn get_actor_vm(&self, pid: ActorId) -> Option<Arc<Mutex<Actor>>> {
         self.actors.get(&pid).cloned()
+    }
+
+    pub fn actor_count(&self) -> usize {
+        self.actors.len()
     }
 
     pub fn add_peer(&mut self, node_id: u128, stream: TcpStream) {

@@ -19,11 +19,13 @@ pub enum Token {
     Float(f64),
     
     // Keywords
-    Actor, On, Message, Send, Spawn, Fn, Let, If, Else, While, For, Return, Print,
+    Actor, On, Message, Send, Spawn, Fn, Def, Let, If, Else, While, For, In, Return, Print,
     True, False, Nil, And, Or, Receive, Break, Continue, Import, Link, Monitor, SpawnLink,
     Register, Unregister, WhereIs,
-    Match, FatArrow, Pipe,
-    Try, Catch, Throw,
+    Match, FatArrow, Pipe, Arrow,
+    Try, Catch, Throw, Test, DocComment(String),
+    // Type keywords
+    TypeInt, TypeFloat, TypeBool, TypeString, TypeUnit, TypePid, TypeList, TypeMap, TypeFn, TypeAny,
 
     // Interpolated String Parts
     InterpolatedString(Vec<StringPart>),
@@ -38,6 +40,7 @@ pub enum StringPart {
 }
 
 pub struct Lexer<'a> {
+    #[allow(dead_code)]
     source: &'a str,
     chars: std::str::Chars<'a>,
     current: Option<char>,
@@ -70,9 +73,46 @@ impl<'a> Lexer<'a> {
                 Some('/') => {
                     self.advance();
                     if self.current == Some('/') {
-                        // Comment
-                        while self.current != Some('\n') && self.current != None {
+                        self.advance();
+                        // Check for doc comment ///
+                        if self.current == Some('/') {
                             self.advance();
+                            let mut doc = String::new();
+                            while self.current != Some('\n') && self.current != None {
+                                doc.push(self.current.unwrap());
+                                self.advance();
+                            }
+                            return Ok(Token::DocComment(doc.trim().to_string()));
+                        } else {
+                            // Regular comment
+                            while self.current != Some('\n') && self.current != None {
+                                self.advance();
+                            }
+                        }
+                    } else if self.current == Some('*') {
+                        // Block comment - check for /** doc */
+                        self.advance();
+                        let is_doc = self.current == Some('*');
+                        let mut doc = String::new();
+                        loop {
+                            if self.current == None {
+                                break;
+                            }
+                            if self.current == Some('*') {
+                                self.advance();
+                                if self.current == Some('/') {
+                                    self.advance();
+                                    break;
+                                }
+                                if is_doc { doc.push('*'); }
+                            } else {
+                                if self.current == Some('\n') { self.line += 1; }
+                                if is_doc { doc.push(self.current.unwrap()); }
+                                self.advance();
+                            }
+                        }
+                        if is_doc {
+                            return Ok(Token::DocComment(doc.trim().to_string()));
                         }
                     } else {
                         return Ok(Token::Slash);
@@ -88,7 +128,11 @@ impl<'a> Lexer<'a> {
                 Some(':') => { self.advance(); return Ok(Token::Colon); }
                 Some(',') => { self.advance(); return Ok(Token::Comma); }
                 Some('.') => { self.advance(); return Ok(Token::Dot); }
-                Some('-') => { self.advance(); return Ok(Token::Minus); }
+                Some('-') => { 
+                    self.advance(); 
+                    if self.current == Some('>') { self.advance(); return Ok(Token::Arrow); }
+                    return Ok(Token::Minus); 
+                }
                 Some('+') => { self.advance(); return Ok(Token::Plus); }
                 Some(';') => { self.advance(); return Ok(Token::Semicolon); }
                 Some('*') => { self.advance(); return Ok(Token::Star); }
@@ -278,6 +322,20 @@ impl<'a> Lexer<'a> {
             "try" => Ok(Token::Try),
             "catch" => Ok(Token::Catch),
             "throw" => Ok(Token::Throw),
+            "test" => Ok(Token::Test),
+            "def" => Ok(Token::Def),
+            "in" => Ok(Token::In),
+            // Type keywords (capitalized for types)
+            "Int" => Ok(Token::TypeInt),
+            "Float" => Ok(Token::TypeFloat),
+            "Bool" => Ok(Token::TypeBool),
+            "String" => Ok(Token::TypeString),
+            "Unit" => Ok(Token::TypeUnit),
+            "Pid" => Ok(Token::TypePid),
+            "List" => Ok(Token::TypeList),
+            "Map" => Ok(Token::TypeMap),
+            "Fn" => Ok(Token::TypeFn),
+            "Any" => Ok(Token::TypeAny),
             _ => Ok(Token::Identifier(s)),
         }
     }

@@ -4,11 +4,15 @@ use pulse_core::object::{Object, ObjHandle, HeapInterface, Function, Closure};
 use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use crate::Heap;
+use pulse_stdlib::utils::{clock_native, println_native, gc_native, len_native, push_native, pop_native};
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     pub closure: ObjHandle, 
     pub ip: usize,
     pub stack_start: usize,
+    pub is_module: bool,
+    pub module_path: Option<String>,
+    pub prev_globals: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -17,6 +21,7 @@ pub enum VMStatus {
     Yielded,
     Blocked, // Waiting for message
     Halted,
+    Paused,  // Debugger pause
     Error(PulseError),
     // Effects
     Spawn(usize), // ip start (spawn SAME code at this offset)
@@ -44,10 +49,12 @@ pub struct VM {
     pub stack: Vec<Value>,
     pub frames: Vec<CallFrame>,
     pub globals: HashMap<String, Value>,
+    pub builtins: HashMap<String, Value>,
     pub heap: Heap,
     pub open_upvalues: Vec<ObjHandle>, // Tracks upvalues still on stack
-    pub loaded_modules: HashSet<String>,
+    pub loaded_modules: HashMap<String, ObjHandle>,
     pub exception_frames: Vec<ExceptionFrame>,
+    pub debug_ctx: Option<crate::debug::DebugContext>,
 }
 
 impl VM {
@@ -62,7 +69,7 @@ impl VM {
             upvalue_count: 0,
             module_path: None, // Default to None, Runtime sets it for main
         };
-        let func_handle = heap.alloc(Object::Function(script_func.clone())); 
+        let _func_handle = heap.alloc(Object::Function(script_func.clone())); 
         // Note: Object::Function stores struct. 
         // Wait, Object::Function(Function).
         // Closure needs Function struct or handle? 
@@ -80,6 +87,9 @@ impl VM {
             closure: closure_handle,
             ip: 0,
             stack_start: 0,
+            is_module: false,
+            module_path: None,
+            prev_globals: None,
         };
         
         let mut vm = Self {
@@ -87,10 +97,12 @@ impl VM {
             stack: Vec::new(),
             frames: vec![frame], // Start with script frame
             globals: HashMap::new(),
+            builtins: HashMap::new(),
             heap,
             open_upvalues: Vec::new(),
-            loaded_modules: HashSet::new(),
+            loaded_modules: HashMap::new(),
             exception_frames: Vec::new(),
+            debug_ctx: None,
         };
         vm.push(Value::Obj(closure_handle)); // Push script closure to slot 0
 
@@ -100,6 +112,27 @@ impl VM {
         vm.define_native("len", len_native);
         vm.define_native("push", push_native);
         vm.define_native("pop", pop_native);
+        
+        // Standard Library v2 natives
+        vm.define_native("read_file", pulse_stdlib::io::read_file_native);
+        vm.define_native("write_file", pulse_stdlib::io::write_file_native);
+        vm.define_native("file_exists", pulse_stdlib::io::file_exists_native);
+        vm.define_native("delete_file", pulse_stdlib::io::delete_file_native);
+        vm.define_native("json_parse", pulse_stdlib::json::json_parse_native);
+        vm.define_native("json_stringify", pulse_stdlib::json::json_stringify_native);
+        vm.define_native("random", pulse_stdlib::utils::random_native);
+        vm.define_native("random_int", pulse_stdlib::utils::random_int_native);
+        vm.define_native("sleep", pulse_stdlib::utils::sleep_native);
+        vm.define_native("type_of", pulse_stdlib::utils::type_of_native);
+        vm.define_native("to_string", pulse_stdlib::utils::to_string_native);
+        vm.define_native("to_int", pulse_stdlib::utils::to_int_native);
+        vm.define_native("abs", pulse_stdlib::utils::abs_native);
+        
+        // Test framework natives
+        vm.define_native("assert", pulse_stdlib::testing::assert_native);
+        vm.define_native("assert_eq", pulse_stdlib::testing::assert_eq_native);
+        vm.define_native("assert_ne", pulse_stdlib::testing::assert_ne_native);
+        vm.define_native("fail", pulse_stdlib::testing::fail_native);
         vm
     }
 
@@ -125,6 +158,9 @@ impl VM {
             closure: closure_handle,
             ip: start_ip,
             stack_start: 0,
+            is_module: false,
+            module_path: None,
+            prev_globals: None,
         };
         
         // Define natives... (duplicate logic? Move to helper?)
@@ -133,10 +169,12 @@ impl VM {
             stack: Vec::new(),
             frames: vec![frame],
             globals: HashMap::new(),
+            builtins: HashMap::new(),
             heap,
             open_upvalues: Vec::new(),
-            loaded_modules: HashSet::new(),
+            loaded_modules: HashMap::new(),
             exception_frames: Vec::new(),
+            debug_ctx: None,
         };
         vm.push(Value::Obj(closure_handle));
 
@@ -146,6 +184,27 @@ impl VM {
         vm.define_native("len", len_native);
         vm.define_native("push", push_native);
         vm.define_native("pop", pop_native);
+        
+        // Standard Library v2 natives
+        vm.define_native("read_file", pulse_stdlib::io::read_file_native);
+        vm.define_native("write_file", pulse_stdlib::io::write_file_native);
+        vm.define_native("file_exists", pulse_stdlib::io::file_exists_native);
+        vm.define_native("delete_file", pulse_stdlib::io::delete_file_native);
+        vm.define_native("json_parse", pulse_stdlib::json::json_parse_native);
+        vm.define_native("json_stringify", pulse_stdlib::json::json_stringify_native);
+        vm.define_native("random", pulse_stdlib::utils::random_native);
+        vm.define_native("random_int", pulse_stdlib::utils::random_int_native);
+        vm.define_native("sleep", pulse_stdlib::utils::sleep_native);
+        vm.define_native("type_of", pulse_stdlib::utils::type_of_native);
+        vm.define_native("to_string", pulse_stdlib::utils::to_string_native);
+        vm.define_native("to_int", pulse_stdlib::utils::to_int_native);
+        vm.define_native("abs", pulse_stdlib::utils::abs_native);
+        
+        // Test framework natives
+        vm.define_native("assert", pulse_stdlib::testing::assert_native);
+        vm.define_native("assert_eq", pulse_stdlib::testing::assert_eq_native);
+        vm.define_native("assert_ne", pulse_stdlib::testing::assert_ne_native);
+        vm.define_native("fail", pulse_stdlib::testing::fail_native);
         vm
     }
 
@@ -167,17 +226,15 @@ impl VM {
         let native = NativeFn { name: name.to_string(), func };
         let handle = self.heap.alloc(Object::NativeFn(native));
         
-        // Put in globals
-        // Verify if `define_native` also puts in native_functions list?
-        // Old VM had `native_functions` map. Now we use Heap handles in Globals.
-        self.globals.insert(name.to_string(), Value::Obj(handle));
+        // Put in builtins
+        self.builtins.insert(name.to_string(), Value::Obj(handle));
     }
 
     pub fn run(&mut self, mut steps: usize) -> VMStatus {
         while steps > 0 {
             // Check bounds? read_byte will panic if out of bounds, or result in error?
             // Better to check.
-            {
+            let (current_ip, current_line, frame_depth) = {
                  let frame = self.frames.last().expect("No frame");
                  let closure = self.heap.get(frame.closure).expect("Closure not found");
                  let chunk = match closure {
@@ -187,6 +244,16 @@ impl VM {
                  if frame.ip >= chunk.code.len() {
                      return VMStatus::Halted; // Or Return from script?
                  }
+                 let line = chunk.lines.get(frame.ip).copied().unwrap_or(0);
+                 (frame.ip, line, self.frames.len())
+            };
+
+            // Debug: check breakpoints and step mode
+            if let Some(ref mut ctx) = self.debug_ctx {
+                if ctx.should_pause(current_ip, current_line, frame_depth) {
+                    ctx.mark_paused(current_ip);
+                    return VMStatus::Paused;
+                }
             }
 
             steps -= 1;
@@ -307,7 +374,7 @@ impl VM {
                     Value::Obj(h) => {
                         let obj = self.heap.get(h).ok_or(PulseError::RuntimeError("Invalid object handle".into()))?;
                         match obj {
-                            Object::String(s) => {
+                            Object::String(_s) => {
                                 // Already a string, just return it
                                 self.push(val);
                                 return Ok(VMStatus::Running);
@@ -318,6 +385,7 @@ impl VM {
                             Object::NativeFn(n) => format!("<native fn {}>", n.name),
                             Object::Upvalue(_) => "<upvalue>".to_string(),
                             Object::Function(_) => "<function>".to_string(),
+                            Object::Module(_) => "<module>".to_string(),
                         }
                     }
                 };
@@ -508,12 +576,14 @@ impl VM {
                              if arg_count != arity {
                                  return Err(PulseError::RuntimeError(format!("Expected {} args, got {}", arity, arg_count)));
                              }
-                             
-                             let frame = CallFrame {
-                                 closure: handle,
-                                 ip: 0,
-                                 stack_start: self.stack.len() - arg_count - 1,
-                             };
+                                                          let frame = CallFrame {
+                                  closure: handle,
+                                  ip: 0,
+                                  stack_start: self.stack.len() - arg_count - 1,
+                                  is_module: false,
+                                  module_path: None,
+                                  prev_globals: None,
+                              };
                              self.frames.push(frame);
                              Ok(VMStatus::Running)
                          } else {
@@ -525,12 +595,29 @@ impl VM {
             }
 
             Op::Return => {
-                let result = self.pop()?; 
+                let mut result = self.pop()?; 
                 let frame = self.frames.pop().ok_or(PulseError::RuntimeError("Return from top level".into()))?;
                 
+                if frame.is_module {
+                    // Capture exports
+                    let exports = self.globals.clone();
+                    let handle = self.heap.alloc(Object::Module(exports));
+                    result = Value::Obj(handle);
+                    
+                    if let Some(path) = frame.module_path {
+                        self.loaded_modules.insert(path, handle);
+                    }
+                    
+                    // Restore previous globals
+                    if let Some(prev) = frame.prev_globals {
+                        self.globals = prev;
+                    } else {
+                        self.globals.clear(); // Should not happen if is_module is true
+                    }
+                }
+
                 // Close upvalues for this frame's locals
                 self.close_upvalues(frame.stack_start);
-
                 self.stack.truncate(frame.stack_start);
                 self.push(result);
 
@@ -645,7 +732,10 @@ impl VM {
                     Constant::String(s) => s.clone(),
                     _ => return Err(PulseError::RuntimeError("Global name must be string".into())),
                 };
-                let val = self.globals.get(&name).ok_or(PulseError::UndefinedVariable(name.clone()))?.clone();
+                let val = self.globals.get(&name)
+                    .or_else(|| self.builtins.get(&name))
+                    .ok_or_else(|| PulseError::UndefinedVariable(name.clone()))?
+                    .clone();
                 self.push(val);
                 Ok(VMStatus::Running)
             }
@@ -661,6 +751,8 @@ impl VM {
                 if self.globals.contains_key(&name) {
                     self.globals.insert(name, val);
                     Ok(VMStatus::Running)
+                } else if self.builtins.contains_key(&name) {
+                    Err(PulseError::RuntimeError(format!("Cannot modify immutable builtin: {}", name)))
                 } else {
                     Err(PulseError::UndefinedVariable(name))
                 }
@@ -737,6 +829,7 @@ impl VM {
                                 Object::List(_) | Object::Map(_) => return Err(PulseError::RuntimeError("Cannot send complex objects yet (TODO)".into())),
                                 Object::Function(_) | Object::Closure(_) => return Err(PulseError::RuntimeError("Cannot send functions yet (TODO)".into())),
                                 Object::Upvalue(_) => return Err(PulseError::RuntimeError("Cannot send upvalues".into())),
+                                Object::Module(_) => return Err(PulseError::RuntimeError("Cannot send modules".into())),
                             }
                         } else {
                             return Err(PulseError::RuntimeError("Cannot send freed object".into()));
@@ -824,13 +917,15 @@ impl VM {
                 };
 
                 let resolved = self.resolve_path(&path)?;
-                if self.loaded_modules.contains(&resolved) {
+                if let Some(handle) = self.loaded_modules.get(&resolved) {
+                    // Module already loaded, push it to stack
+                    self.push(Value::Obj(*handle));
                     Ok(VMStatus::Running)
                 } else {
+                    // Trigger import
                     Ok(VMStatus::Import(resolved))
                 }
             }
-
             Op::BuildList => {
                 let count = self.read_byte() as usize;
                 let mut items = Vec::with_capacity(count);
@@ -890,7 +985,15 @@ impl VM {
                                 let val = map.get(&key).unwrap_or(&Value::Unit).clone();
                                 self.push(val);
                             },
-                            _ => return Err(PulseError::TypeMismatch{expected: "List or Map".into(), got: "other object".into()}),
+                            Object::Module(map) => {
+                                let key = match index_val {
+                                    Value::Obj(h) => self.get_string(h)?,
+                                    _ => return Err(PulseError::TypeMismatch{expected: "string key".into(), got: index_val.type_name()}),
+                                };
+                                let val = map.get(&key).unwrap_or(&Value::Unit).clone();
+                                self.push(val);
+                            },
+                            _ => return Err(PulseError::TypeMismatch{expected: "List, Map, or Module".into(), got: "other object".into()}),
                         }
                     },
                     _ => return Err(PulseError::TypeMismatch{expected: "List or Map".into(), got: target_val.type_name()}),
@@ -1120,6 +1223,7 @@ impl VM {
                         Object::Function(f) => print!("<fn {}>", f.name),
                         Object::Closure(c) => print!("<fn {}>", c.function.name),
                         Object::Upvalue(_) => print!("<upvalue>"),
+                        Object::Module(m) => print!("<module len={}>", m.len()),
                     }
                 } else {
                     print!("<freed object>");
@@ -1188,6 +1292,84 @@ impl VM {
         // Absolute or current dir
         Ok(path.to_string())
     }
+
+    /// Enable debugging mode
+    pub fn enable_debug(&mut self) {
+        if self.debug_ctx.is_none() {
+            self.debug_ctx = Some(crate::debug::DebugContext::new());
+        }
+    }
+
+    /// Set breakpoint at source line
+    pub fn set_breakpoint(&mut self, line: usize) {
+        self.enable_debug();
+        if let Some(ref mut ctx) = self.debug_ctx {
+            ctx.set_breakpoint_line(line);
+        }
+    }
+
+    /// Remove breakpoint at source line
+    pub fn remove_breakpoint(&mut self, line: usize) {
+        if let Some(ref mut ctx) = self.debug_ctx {
+            ctx.remove_breakpoint_line(line);
+        }
+    }
+
+    /// Continue execution from paused state
+    pub fn debug_continue(&mut self) {
+        if let Some(ref mut ctx) = self.debug_ctx {
+            ctx.resume();
+        }
+    }
+
+    /// Step one instruction
+    pub fn debug_step(&mut self) {
+        if let Some(ref mut ctx) = self.debug_ctx {
+            ctx.step_in();
+        }
+    }
+
+    /// Get stack contents for inspection
+    pub fn get_stack(&self) -> Vec<String> {
+        self.stack.iter().map(|v| self.format_value(v)).collect()
+    }
+
+    /// Get current frame info
+    pub fn get_frame_info(&self) -> Option<(usize, usize)> {
+        self.frames.last().map(|f| (f.ip, f.stack_start))
+    }
+
+    /// Format a value for display
+    fn format_value(&self, val: &Value) -> String {
+        match val {
+            Value::Int(i) => format!("Int({})", i),
+            Value::Float(f) => format!("Float({})", f),
+            Value::Bool(b) => format!("Bool({})", b),
+            Value::Unit => "Unit".to_string(),
+            Value::Pid(p) => format!("Pid({:?})", p),
+            Value::Obj(h) => {
+                if let Some(obj) = self.heap.get(*h) {
+                    match obj {
+                        Object::String(s) => format!("String({:?})", s),
+                        Object::List(_) => "<list>".to_string(),
+                        Object::Map(_) => "<map>".to_string(),
+                        Object::Closure(_) => "<closure>".to_string(),
+                        Object::Function(_) => "<function>".to_string(),
+                        Object::NativeFn(n) => format!("<native {}>", n.name),
+                        Object::Upvalue(_) => "<upvalue>".to_string(),
+                        Object::Module(_) => "<module>".to_string(),
+                    }
+                } else {
+                    "<invalid handle>".to_string()
+                }
+            }
+        }
+    }
+
+    /// List all breakpoints
+    pub fn list_breakpoints(&self) -> Vec<String> {
+        self.debug_ctx.as_ref().map(|c| c.list_breakpoints()).unwrap_or_default()
+    }
 }
 
 impl HeapInterface for VM {
@@ -1210,43 +1392,6 @@ impl HeapInterface for VM {
     fn collect_garbage(&mut self) {
         self.collect_garbage();
     }
-}
-
-// Updated NativeFn Signature: fn(&mut dyn HeapInterface, &[Value]) -> PulseResult<Value>
-fn clock_native(_heap: &mut dyn HeapInterface, _args: &[Value]) -> PulseResult<Value> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let start = SystemTime::now();
-    let since_the_epoch = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
-    Ok(Value::Float(since_the_epoch.as_secs_f64()))
-}
-
-fn println_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    for arg in args {
-        // Need helper to print value given heap
-        // Duplicating logic for now
-        match arg {
-            Value::Obj(handle) => {
-                if let Some(_obj) = heap.get_object(*handle) {
-                    // Start of recursion (cannot use self.print_value because we don't have VM, only HeapInterface)
-                    // But HeapInterface doesn't have print helper.
-                    // We need to implement a helper function that takes HeapInterface.
-                    print_val_heap(heap, arg);
-                } else {
-                    print!("<freed object>");
-                }
-            },
-            Value::Int(i) => print!("{}", i),
-            Value::Float(f) => print!("{}", f),
-            Value::Bool(b) => print!("{}", b),
-            Value::Unit => print!("unit"),
-            Value::Pid(pid) => print!("<actor {:?}>", pid),
-        }
-        print!(" ");
-    }
-    println!();
-    Ok(Value::Unit)
 }
 
 // Helper to print value with just HeapInterface
@@ -1277,6 +1422,7 @@ fn print_val_heap(heap: &dyn HeapInterface, val: &Value) {
                      Object::Function(f) => print!("<fn {}>", f.name),
                      Object::Closure(c) => print!("<fn {}>", c.function.name),
                      Object::Upvalue(_) => print!("<upvalue>"),
+                     Object::Module(m) => print!("<module len={}>", m.len()),
                  }
              } else {
                  print!("<freed object>");
@@ -1290,70 +1436,10 @@ fn print_val_heap(heap: &dyn HeapInterface, val: &Value) {
     }
 }
 
-fn gc_native(vm: &mut dyn HeapInterface, _args: &[Value]) -> PulseResult<Value> {
-    vm.collect_garbage();
-    Ok(Value::Unit)
-}
 
-fn len_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    if args.len() != 1 { return Err(PulseError::RuntimeError("len() expects 1 argument".into())); }
-    match args[0] {
-        Value::Obj(handle) => {
-            if let Some(obj) = heap.get_object(handle) {
-                match obj {
-                    Object::String(s) => Ok(Value::Int(s.len() as i64)),
-                    Object::List(vec) => Ok(Value::Int(vec.len() as i64)),
-                    Object::Map(map) => Ok(Value::Int(map.len() as i64)),
-                    _ => Err(PulseError::TypeMismatch{expected: "collection".into(), got: "other".into()}),
-                }
-            } else {
-                Err(PulseError::RuntimeError("Invalid handle".into()))
-            }
-        },
-        _ => Err(PulseError::TypeMismatch{expected: "collection".into(), got: args[0].type_name()}),
-    }
-}
 
-fn push_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    // push(list, val)
-    if args.len() != 2 { return Err(PulseError::RuntimeError("push() expects 2 arguments".into())); }
-    let val = args[1].clone(); // Value to push
-    
-    match args[0] {
-        Value::Obj(handle) => {
-            if let Some(obj) = heap.get_mut_object(handle) {
-                match obj {
-                    Object::List(vec) => {
-                        vec.push(val);
-                        Ok(Value::Unit)
-                    },
-                    _ => Err(PulseError::TypeMismatch{expected: "list".into(), got: "other".into()}),
-                }
-            } else {
-                Err(PulseError::RuntimeError("Invalid handle".into()))
-            }
-        },
-        _ => Err(PulseError::TypeMismatch{expected: "list".into(), got: args[0].type_name()}),
-    }
-}
 
-fn pop_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    // pop(list) -> val
-    if args.len() != 1 { return Err(PulseError::RuntimeError("pop() expects 1 argument".into())); }
-    
-    match args[0] {
-        Value::Obj(handle) => {
-            if let Some(obj) = heap.get_mut_object(handle) {
-                match obj {
-                    Object::List(vec) => {
-                         vec.pop().ok_or(PulseError::RuntimeError("Pop from empty list".into()))
-                    },
-                    _ => Err(PulseError::TypeMismatch{expected: "list".into(), got: "other".into()}),
-                }
-            } else {
-                Err(PulseError::RuntimeError("Invalid handle".into()))
-            }
-        },
-        _ => Err(PulseError::TypeMismatch{expected: "list".into(), got: args[0].type_name()}),
-    }
-}
+
+
+
+
