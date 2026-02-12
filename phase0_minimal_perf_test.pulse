@@ -1,0 +1,99 @@
+// Phase 0: Minimal Performance Benchmark
+// Measures basic performance within current limitations
+
+println("=== Phase 0: Minimal Performance Benchmark ===");
+
+// Test 1: Basic Operation Speed
+println("Test 1: Basic Operation Speed");
+
+let start_time = clock();
+let iterations = 10000;
+let i = 0;
+let result = 0;
+while (i < iterations) {
+    result = result + i * 2 - 1;
+    i = i + 1;
+}
+let end_time = clock();
+let duration = end_time - start_time;
+println("Time for", iterations, "arithmetic operations:", duration);
+println("Operations per second:", iterations / duration);
+
+// Test 2: Function Call Overhead
+println("Test 2: Function Call Overhead");
+
+fn simple_func(x) {
+    return x + 1;
+}
+
+let func_start = clock();
+let j = 0;
+while (j < 5000) {
+    result = simple_func(j);
+    j = j + 1;
+}
+let func_end = clock();
+let func_duration = func_end - func_start;
+println("Time for", j, "function calls:", func_duration);
+println("Calls per second:", j / func_duration);
+
+// Test 3: Array Operations
+println("Test 3: Array Operations");
+
+let arr_start = clock();
+let test_array = [];
+let l = 0;
+while (l < 1000) {
+    push(test_array, l);
+    l = l + 1;
+}
+let arr_mid = clock();
+
+// Test array access
+let sum = 0;
+let m = 0;
+while (m < len(test_array)) {
+    sum = sum + test_array[m];
+    m = m + 1;
+}
+let arr_end = clock();
+
+println("Time to populate", l, "element array:", arr_mid - arr_start);
+println("Time to iterate", m, "element array:", arr_end - arr_mid);
+
+// Test 4: Simple Compilation Readiness Test
+println("Test 4: Simple Compilation Readiness Test");
+
+let compile_start = clock();
+let lines_of_code = 100;  // Reduced to avoid constant limit
+let line = 0;
+while (line < lines_of_code) {
+    // Simulate simple processing
+    let processed = line * 2 + 1;
+    line = line + 1;
+}
+let compile_end = clock();
+let compile_duration = compile_end - compile_start;
+println("Simulated compilation of", lines_of_code, "lines:", compile_duration);
+println("Lines per second:", lines_of_code / compile_duration);
+
+println("=== Minimal Performance Benchmark Complete ===");
+
+// Performance Analysis
+println("Performance Analysis:");
+println("- Arithmetic ops/sec:", iterations / duration);
+println("- Function calls/sec:", j / func_duration);
+println("- Array ops/sec:", l / (arr_mid - arr_start));
+println("- Simulated compilation speed:", lines_of_code / compile_duration, "lines/sec");
+
+// Performance Goals for Self-Hosting
+println("Self-Hosting Performance Goals:");
+println("- Target: >1000 lines/sec for compilation tasks");
+let perf_ratio = lines_of_code / compile_duration;
+println("- Current: ", perf_ratio, "lines/sec");
+
+if (perf_ratio > 1000) {
+    println("- Status: MEETS THRESHOLD");
+} else {
+    println("- Status: BELOW THRESHOLD");
+}

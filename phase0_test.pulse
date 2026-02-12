@@ -1,0 +1,82 @@
+// Phase 0 Test: Large constant pool and enhanced data structures
+
+// Test 1: Large constant pool (more than 256 constants)
+let constants = [];
+
+// Add more than 256 constants to test the expanded pool
+for i in 0..300 {
+    push(constants, i * 2);  // Each multiplication creates a constant
+}
+
+println("Created", len(constants), "constants in list");
+
+// Test 2: Complex nested data structures
+let nested = {
+    "level1": {
+        "level2": {
+            "level3": [1, 2, 3, 4, 5],
+            "data": "deeply nested string"
+        },
+        "numbers": [10, 20, 30, 40, 50]
+    },
+    "top_level": "top level string"
+};
+
+println("Nested structure created:", nested);
+
+// Test 3: Large list operations
+let large_list = [];
+for i in 0..1000 {
+    push(large_list, i);
+}
+
+println("Large list length:", len(large_list));
+
+// Test 4: Map operations
+let map = {};
+for i in 0..100 {
+    map["key_" + i] = "value_" + i;
+}
+
+println("Map size:", len(map));
+
+// Test 5: Memory allocation and GC
+let allocations = [];
+for i in 0..500 {
+    let temp = {
+        "id": i,
+        "data": "temporary object " + i,
+        "nested": [i, i+1, i+2]
+    };
+    push(allocations, temp);
+}
+
+println("Created", len(allocations), "objects");
+
+// Test 6: Function with complex data
+def process_complex_data(data) {
+    if type_of(data) == "map" {
+        let keys = [];
+        for key in data {
+            push(keys, key);
+        }
+        return keys;
+    } else if type_of(data) == "list" {
+        let sum = 0;
+        for item in data {
+            if type_of(item) == "int" {
+                sum = sum + item;
+            }
+        }
+        return sum;
+    }
+    return "unknown";
+}
+
+let test_result1 = process_complex_data(nested);
+println("Processed nested structure keys:", test_result1);
+
+let test_result2 = process_complex_data(large_list);
+println("Sum of large list elements:", test_result2);
+
+println("Phase 0 tests completed successfully!");

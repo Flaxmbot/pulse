@@ -26,12 +26,17 @@ pub enum Op {
     Sub = 0x11,
     Mul = 0x12,
     Div = 0x13,
+    Mod = 0x14,
 
     // Comparison
     Eq = 0x20,
     Neq = 0x21,
     Gt = 0x22,
     Lt = 0x23,
+
+    // Logic
+    And = 0x24,
+    Or = 0x25,
 
     // Control Flow
     Jump = 0x30,
@@ -70,18 +75,100 @@ pub enum Op {
     Unregister = 0x59,
     WhereIs = 0x5A,
     
+    // Shared Memory
+    CreateSharedMemory = 0x5B,  // Create shared memory region
+    ReadSharedMemory = 0x5C,    // Read from shared memory
+    WriteSharedMemory = 0x5D,   // Write to shared memory
+    LockSharedMemory = 0x5E,    // Acquire lock on shared memory
+    UnlockSharedMemory = 0x5F,  // Release lock on shared memory
+    
     // IO
     Print = 0x60,
+    PrintMulti = 0x61,
 
     // Error Handling
     Try = 0x70,      // u16 handler offset. Push exception handler frame.
     Throw = 0x71,    // Pop value, unwind to handler.
     EndTry = 0x72,   // Pop exception handler frame.
+
+    // Object Oriented
+    BuildClass = 0x73,  // u8 name_idx, u8 has_super, [u8 super_idx if has_super], u8 method_count, [u8 method_name_idx for each method]
+    GetSuper = 0x74,    // u16 method_name_idx. Pops super, this. Pushes BoundMethod.
+    Method = 0x75,      // u16 name_idx. Pops closure, peeks class, adds method.
 }
 
 impl From<u8> for Op {
     fn from(byte: u8) -> Self {
-        unsafe { std::mem::transmute(byte) }
+        match byte {
+            0x00 => Op::Halt,
+            0x01 => Op::Const,
+            0x02 => Op::Pop,
+            0x03 => Op::Negate,
+            0x04 => Op::Not,
+            0x05 => Op::Unit,
+            0x06 => Op::Dup,
+            0x07 => Op::IsList,
+            0x08 => Op::IsMap,
+            0x09 => Op::Slice,
+            0x0A => Op::Len,
+            0x0B => Op::MapContainsKey,
+            0x0C => Op::Slide,
+            0x0D => Op::ToString,
+            0x10 => Op::Add,
+            0x11 => Op::Sub,
+            0x12 => Op::Mul,
+            0x13 => Op::Div,
+            0x14 => Op::Mod,
+            0x20 => Op::Eq,
+            0x21 => Op::Neq,
+            0x22 => Op::Gt,
+            0x23 => Op::Lt,
+            0x24 => Op::And,
+            0x25 => Op::Or,
+            0x30 => Op::Jump,
+            0x31 => Op::JumpIfFalse,
+            0x32 => Op::Call,
+            0x33 => Op::Loop,
+            0x34 => Op::Return,
+            0x35 => Op::Closure,
+            0x36 => Op::GetUpvalue,
+            0x37 => Op::SetUpvalue,
+            0x38 => Op::CloseUpvalue,
+            0x40 => Op::GetLocal,
+            0x41 => Op::SetLocal,
+            0x42 => Op::GetGlobal,
+            0x43 => Op::SetGlobal,
+            0x44 => Op::DefineGlobal,
+            0x45 => Op::BuildList,
+            0x46 => Op::BuildMap,
+            0x47 => Op::GetIndex,
+            0x48 => Op::SetIndex,
+            0x50 => Op::Spawn,
+            0x51 => Op::Send,
+            0x52 => Op::Receive,
+            0x53 => Op::SelfId,
+            0x54 => Op::Import,
+            0x55 => Op::SpawnLink,
+            0x56 => Op::Link,
+            0x57 => Op::Monitor,
+            0x58 => Op::Register,
+            0x59 => Op::Unregister,
+            0x5A => Op::WhereIs,
+            0x5B => Op::CreateSharedMemory,
+            0x5C => Op::ReadSharedMemory,
+            0x5D => Op::WriteSharedMemory,
+            0x5E => Op::LockSharedMemory,
+            0x5F => Op::UnlockSharedMemory,
+            0x60 => Op::Print,
+            0x61 => Op::PrintMulti,
+            0x70 => Op::Try,
+            0x71 => Op::Throw,
+            0x72 => Op::EndTry,
+            0x73 => Op::BuildClass,
+            0x74 => Op::GetSuper,
+            0x75 => Op::Method,
+            _ => Op::Halt, // Default to halt for invalid opcodes
+        }
     }
 }
 
@@ -109,5 +196,9 @@ impl Chunk {
     pub fn add_constant(&mut self, value: Constant) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
+    }
+    
+    pub fn get_constant(&self, index: usize) -> Option<&Constant> {
+        self.constants.get(index)
     }
 }

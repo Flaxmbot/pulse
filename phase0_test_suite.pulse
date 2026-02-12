@@ -1,0 +1,130 @@
+// Phase 0: Core Language Foundation - Test Suite (Fully Compatible Version)
+// This file demonstrates the current capabilities within language constraints
+
+println("=== Phase 0: Core Language Foundation Test Suite ===");
+
+// Test 1: Data Structure Capabilities
+println("Test 1: Data Structure Capabilities");
+
+// Test nested objects
+let nested_obj = {
+    "level1": {
+        "level2": {
+            "level3": "deep_value"
+        }
+    }
+};
+
+println("Nested object access:", nested_obj["level1"]["level2"]["level3"]);
+
+// Test complex arrays
+let complex_array = [1, "string", true];
+println("Complex array length:", len(complex_array));
+
+// Test 2: Numeric Formats
+println("Test 2: Numeric Formats");
+
+// Test decimal values
+let decimal_val = 42;
+println("Decimal value:", decimal_val);
+
+// Test floating point
+let float_val = 3.14;
+println("Float value:", float_val);
+
+// Test 3: Function Composition
+println("Test 3: Function Composition");
+
+fn add(a, b) {
+    return a + b;
+}
+
+fn multiply(a, b) {
+    return a * b;
+}
+
+// Test function composition
+let result1 = add(5, 3);
+let result2 = multiply(result1, 2);
+println("Function composition result:", result2);
+
+// Test 4: Advanced Control Flow
+println("Test 4: Advanced Control Flow");
+
+// Test for-in loops
+let items = [1, 2, 3, 4, 5];
+let sum = 0;
+for item in items {
+    sum = sum + item;
+}
+println("Sum of items:", sum);
+
+// Test 5: Conditional Logic (instead of match)
+println("Test 5: Conditional Logic");
+
+let value = 2;
+if (value == 1) {
+    println("Value is one");
+} else if (value == 2) {
+    println("Value is two");
+} else {
+    println("Value is something else");
+}
+
+// Test 6: Error Handling
+println("Test 6: Error Handling");
+
+try {
+    let safe_result = 10 / 2;
+    println("Safe division result:", safe_result);
+} catch e {
+    println("Caught error:", e);
+}
+
+// Test 7: Basic Operations
+println("Test 7: Basic Operations");
+
+// Test basic variable assignments
+let x = 42;
+let y = "hello";
+let z = true;
+
+println("Basic variables:", x, y, z);
+
+// Test 8: Advanced Data Structures
+println("Test 8: Advanced Data Structures");
+
+// Test map operations
+let test_map = {
+    "key1": "value1",
+    "key2": 123,
+    "key3": [1, 2, 3]
+};
+
+println("Map size:", len(test_map));
+println("Map access:", test_map["key1"]);
+
+// Test 9: Performance Test
+println("Test 9: Basic Performance Test");
+
+let start_time = clock();
+let iterations = 1000;
+let i = 0;
+while (i < iterations) {
+    let temp = i * i + 2 * i + 1;
+    i = i + 1;
+}
+let end_time = clock();
+println("Time for", iterations, "iterations:", end_time - start_time);
+
+println("=== Phase 0 Test Suite Completed ===");
+
+// Summary of capabilities demonstrated
+println("Capabilities demonstrated:");
+println("- Nested object access");
+println("- Complex data structures");
+println("- Basic control flow");
+println("- Function composition");
+println("- Conditional logic");
+println("- Error handling");
+println("- Basic performance characteristics");

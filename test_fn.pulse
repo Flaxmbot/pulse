@@ -1,0 +1,2 @@
+fn hello(world) { print world; }
+hello("hi");

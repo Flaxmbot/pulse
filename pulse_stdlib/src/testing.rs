@@ -116,6 +116,8 @@ fn value_to_string(val: &Value, heap: &dyn HeapInterface) -> String {
                 }
                 Some(Object::Map(_)) => "<map>".to_string(),
                 Some(Object::Closure(_)) => "<fn>".to_string(),
+                Some(Object::Instance(i)) => format!("<instance {}>", i.class.name),
+                Some(Object::BoundMethod(_)) => "<bound method>".to_string(),
                 _ => "<object>".to_string(),
             }
         }

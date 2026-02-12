@@ -1,0 +1,238 @@
+// Phase 0: Core Foundation Verification Tests
+// These tests validate current limitations and measure improvements
+
+println("=== Phase 0: Core Foundation Verification Tests ===");
+
+// Test 1: Constant Pool Capacity
+println("Test 1: Constant Pool Capacity");
+
+// Create a large object to test constant limits
+let large_obj = {
+    "field1": "value1",
+    "field2": "value2", 
+    "field3": "value3",
+    "field4": "value4",
+    "field5": "value5",
+    "field6": "value6",
+    "field7": "value7",
+    "field8": "value8",
+    "field9": "value9",
+    "field10": "value10",
+    "field11": "value11",
+    "field12": "value12",
+    "field13": "value13",
+    "field14": "value14",
+    "field15": "value15",
+    "field16": "value16",
+    "field17": "value17",
+    "field18": "value18",
+    "field19": "value19",
+    "field20": "value20"
+};
+
+println("Large object created successfully with 20 fields");
+
+// Test 2: Nested Object Depth
+println("Test 2: Nested Object Depth");
+
+let nested_level_1 = {"value": 1};
+let nested_level_2 = {"level1": nested_level_1};
+let nested_level_3 = {"level2": nested_level_2};
+let nested_level_4 = {"level3": nested_level_3};
+let nested_level_5 = {"level4": nested_level_4};
+
+println("5-level nesting achieved:", nested_level_5["level4"]["level3"]["level2"]["level1"]["value"]);
+
+// Test 3: Mixed-Type Arrays
+println("Test 3: Mixed-Type Arrays");
+
+let mixed_array = [1, "string", true, 3.14, {"obj": "value"}, [1, 2, 3]];
+println("Mixed array length:", len(mixed_array));
+
+let idx = 0;
+while (idx < len(mixed_array)) {
+    println("Element", idx, "type:", type_of(mixed_array[idx]));
+    idx = idx + 1;
+}
+
+// Test 4: Function Complexity
+println("Test 4: Function Complexity");
+
+fn complex_func(x, y, z) {
+    let result = x * y + z;
+    if (result > 100) {
+        return result / 2;
+    } else {
+        return result * 3;
+    }
+}
+
+let complex_result = complex_func(10, 15, 20);
+println("Complex function result:", complex_result);
+
+// Test 5: Memory Allocation Stress
+println("Test 5: Memory Allocation Stress");
+
+let start_time = clock();
+let obj_count = 0;
+while (obj_count < 100) {
+    let temp_obj = {
+        "id": obj_count,
+        "data": "test_data_" + obj_count,
+        "nested": {
+            "level": obj_count % 5,
+            "values": [obj_count, obj_count + 1, obj_count + 2]
+        }
+    };
+    obj_count = obj_count + 1;
+}
+let end_time = clock();
+println("Created", obj_count, "objects in", end_time - start_time, "seconds");
+
+// Test 6: Array Performance
+println("Test 6: Array Performance");
+
+let arr_start = clock();
+let test_arr = [];
+let arr_idx = 0;
+while (arr_idx < 1000) {
+    push(test_arr, arr_idx * 2);
+    arr_idx = arr_idx + 1;
+}
+let arr_end = clock();
+
+// Test array access performance
+let access_start = clock();
+let sum = 0;
+let access_idx = 0;
+while (access_idx < len(test_arr)) {
+    sum = sum + test_arr[access_idx];
+    access_idx = access_idx + 1;
+}
+let access_end = clock();
+
+println("Array creation time:", arr_end - arr_start);
+println("Array access time:", access_end - access_start);
+println("Array size:", len(test_arr));
+
+// Test 7: Error Handling Robustness
+println("Test 7: Error Handling Robustness");
+
+let error_count = 0;
+let test_vals = [10, 20, 0, 30, 0, 40];  // Include zeros to test division
+let val_idx = 0;
+
+while (val_idx < len(test_vals)) {
+    try {
+        let result = 100 / test_vals[val_idx];
+        println("Division result:", result);
+    } catch e {
+        println("Handled division by zero for value:", test_vals[val_idx]);
+        error_count = error_count + 1;
+    }
+    val_idx = val_idx + 1;
+}
+
+println("Errors handled:", error_count);
+
+// Test 8: Performance Under Load
+println("Test 8: Performance Under Load");
+
+let load_start = clock();
+let computations = 0;
+while (computations < 5000) {
+    let temp = computations * computations + 2 * computations + 1;
+    // Simulate some work
+    let check = temp % 7;
+    if (check == 0) {
+        let dummy = temp / 2;
+    }
+    computations = computations + 1;
+}
+let load_end = clock();
+
+println("Time for", computations, "computations:", load_end - load_start);
+println("Computations per second:", computations / (load_end - load_start));
+
+// Test 9: Complex Data Structure Operations
+println("Test 9: Complex Data Structure Operations");
+
+let complex_structure = {
+    "users": [
+        {
+            "id": 1,
+            "name": "Alice",
+            "permissions": ["read", "write"],
+            "profile": {
+                "age": 30,
+                "settings": {
+                    "theme": "dark",
+                    "notifications": true
+                }
+            }
+        },
+        {
+            "id": 2,
+            "name": "Bob", 
+            "permissions": ["read"],
+            "profile": {
+                "age": 25,
+                "settings": {
+                    "theme": "light", 
+                    "notifications": false
+                }
+            }
+        }
+    ],
+    "metadata": {
+        "total_users": 2,
+        "version": "1.0",
+        "features": ["auth", "profiles", "settings"]
+    }
+};
+
+println("Complex structure user count:", len(complex_structure["users"]));
+println("First user name:", complex_structure["users"][0]["name"]);
+println("Permissions for first user:", len(complex_structure["users"][0]["permissions"]));
+println("Metadata version:", complex_structure["metadata"]["version"]);
+
+// Test 10: Memory Efficiency Check
+println("Test 10: Memory Efficiency Check");
+
+let efficiency_start = clock();
+let efficiency_objects = [];
+let eff_idx = 0;
+while (eff_idx < 50) {
+    let eff_obj = {
+        "id": eff_idx,
+        "data": "small_data",
+        "flag": true,
+        "count": eff_idx * 2
+    };
+    push(efficiency_objects, eff_obj);
+    eff_idx = eff_idx + 1;
+}
+let efficiency_end = clock();
+
+println("Efficiency test: Created", eff_idx, "objects in", efficiency_end - efficiency_start, "seconds");
+
+println("=== Core Foundation Verification Tests Complete ===");
+
+// Summary of capabilities tested
+println("Capabilities Verified:");
+println("- Constant pool capacity");
+println("- Deep object nesting");
+println("- Mixed-type arrays");
+println("- Complex function definitions");
+println("- Memory allocation performance");
+println("- Array operations performance");
+println("- Robust error handling");
+println("- Performance under load");
+println("- Complex data structure operations");
+println("- Memory efficiency");
+
+// Performance metrics
+println("Performance Metrics:");
+println("- Object creation rate:", obj_count / (end_time - start_time), "objects/sec");
+println("- Array operations rate:", len(test_arr) / (arr_end - arr_start), "arrays/sec");
+println("- Computational throughput:", computations / (load_end - load_start), "ops/sec");

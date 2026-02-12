@@ -1,0 +1,209 @@
+// Final Lexer Verification Test (Inlined for reliability)
+
+// --- Token Types ---
+let TOKEN_TYPES = {
+    "LEFT_PAREN": "LEFT_PAREN", "RIGHT_PAREN": "RIGHT_PAREN", 
+    "LEFT_BRACE": "LEFT_BRACE", "RIGHT_BRACE": "RIGHT_BRACE", 
+    "LEFT_BRACKET": "LEFT_BRACKET", "RIGHT_BRACKET": "RIGHT_BRACKET",
+    "COMMA": "COMMA", "DOT": "DOT", "MINUS": "MINUS", "PLUS": "PLUS", 
+    "SEMICOLON": "SEMICOLON", "SLASH": "SLASH", "STAR": "STAR", 
+    "PERCENT": "PERCENT", "AMPERSAND": "AMPERSAND", "COLON": "COLON",
+    "BANG": "BANG", "BANG_EQUAL": "BANG_EQUAL",
+    "EQUAL": "EQUAL", "EQUAL_EQUAL": "EQUAL_EQUAL",
+    "GREATER": "GREATER", "GREATER_EQUAL": "GREATER_EQUAL",
+    "LESS": "LESS", "LESS_EQUAL": "LESS_EQUAL",
+    "IDENTIFIER": "IDENTIFIER", "STRING": "STRING", 
+    "INT": "INT", "FLOAT": "FLOAT",
+    "EOF": "EOF", "ERROR": "ERROR"
+};
+
+let KEYWORDS = {
+    "actor": "ACTOR", "on": "ON", "message": "MESSAGE", "send": "SEND", 
+    "spawn": "SPAWN", "fn": "FN", "def": "DEF", "let": "LET", "if": "IF", 
+    "else": "ELSE", "while": "WHILE", "for": "FOR", "in": "IN", 
+    "return": "RETURN", "print": "PRINT", "true": "TRUE", "false": "FALSE", 
+    "nil": "NIL", "and": "AND", "or": "OR", "receive": "RECEIVE", 
+    "break": "BREAK", "continue": "CONTINUE", "import": "IMPORT", 
+    "link": "LINK", "monitor": "MONITOR", "spawn_link": "SPAWN_LINK",
+    "class": "CLASS", "try": "TRY", "catch": "CATCH", "throw": "THROW",
+    "Int": "TYPE_INT", "Float": "TYPE_FLOAT", "Bool": "TYPE_BOOL", 
+    "String": "TYPE_STRING", "Unit": "TYPE_UNIT", "Pid": "TYPE_PID",
+    "List": "TYPE_LIST", "Map": "TYPE_MAP", "Fn": "TYPE_FN", "Any": "TYPE_ANY"
+};
+
+// --- Helpers ---
+
+fn is_digit(c) {
+    return c >= "0" and c <= "9";
+}
+
+fn is_alpha(c) {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_";
+}
+
+fn is_alphanumeric(c) {
+    return is_alpha(c) or is_digit(c);
+}
+
+fn substring(chars, start, end) {
+    let result = "";
+    let i = start;
+    while (i < end) {
+        result = result + chars[i];
+        i = i + 1;
+    }
+    return result;
+}
+
+// --- Lexer Logic ---
+
+fn make_lexer(source) {
+    let chars = string_to_list(source);
+    let lexer = {
+        "chars": chars,
+        "pos": 0,
+        "line": 1,
+        "length": len(chars),
+        "current": ""
+    };
+    if (lexer["length"] > 0) {
+        lexer["current"] = chars[0];
+    }
+    return lexer;
+}
+
+fn advance(lexer) {
+    if (lexer["pos"] < lexer["length"]) {
+        lexer["pos"] = lexer["pos"] + 1;
+        if (lexer["pos"] < lexer["length"]) {
+            lexer["current"] = lexer["chars"][lexer["pos"]];
+        } else {
+            lexer["current"] = "";
+        }
+    }
+    return lexer["current"];
+}
+
+fn peek(lexer) {
+    if (lexer["pos"] + 1 < lexer["length"]) {
+        return lexer["chars"][lexer["pos"] + 1];
+    }
+    return "";
+}
+
+fn skip_whitespace(lexer) {
+    while (lexer["current"] == " " or lexer["current"] == "\r" or lexer["current"] == "\t" or lexer["current"] == "\n") {
+        if (lexer["current"] == "\n") {
+            lexer["line"] = lexer["line"] + 1;
+        }
+        advance(lexer);
+    }
+}
+
+fn scan_number(lexer) {
+    let start_pos = lexer["pos"];
+    let is_float = false;
+    while (is_digit(lexer["current"])) advance(lexer);
+    if (lexer["current"] == "." and is_digit(peek(lexer))) {
+        is_float = true;
+        advance(lexer);
+        while (is_digit(lexer["current"])) advance(lexer);
+    }
+    let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
+    let type = TOKEN_TYPES["INT"];
+    if (is_float) type = TOKEN_TYPES["FLOAT"];
+    return { "type": type, "lexeme": lexeme };
+}
+
+fn scan_identifier(lexer) {
+    let start_pos = lexer["pos"];
+    while (is_alphanumeric(lexer["current"])) advance(lexer);
+    let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
+    if (type_of(KEYWORDS[lexeme]) != "Unit") {
+        return { "type": KEYWORDS[lexeme], "lexeme": lexeme };
+    }
+    return { "type": TOKEN_TYPES["IDENTIFIER"], "lexeme": lexeme };
+}
+
+fn scan_string(lexer) {
+    advance(lexer); 
+    let start_pos = lexer["pos"];
+    while (lexer["current"] != "\"" and lexer["current"] != "") {
+        if (lexer["current"] == "\n") lexer["line"] = lexer["line"] + 1;
+        advance(lexer);
+    }
+    if (lexer["current"] == "") return { "type": TOKEN_TYPES["ERROR"], "lexeme": "Unterminated string" };
+    let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
+    advance(lexer);
+    return { "type": TOKEN_TYPES["STRING"], "lexeme": lexeme };
+}
+
+fn next_token(lexer) {
+    skip_whitespace(lexer);
+    if (lexer["pos"] >= lexer["length"]) return { "type": TOKEN_TYPES["EOF"], "lexeme": "" };
+    let c = lexer["current"];
+    if (is_digit(c)) return scan_number(lexer);
+    if (is_alpha(c)) return scan_identifier(lexer);
+    if (c == "\"") return scan_string(lexer);
+    advance(lexer);
+    if (c == "(") return { "type": TOKEN_TYPES["LEFT_PAREN"], "lexeme": "(" };
+    if (c == ")") return { "type": TOKEN_TYPES["RIGHT_PAREN"], "lexeme": ")" };
+    if (c == "{") return { "type": TOKEN_TYPES["LEFT_BRACE"], "lexeme": "{" };
+    if (c == "}") return { "type": TOKEN_TYPES["RIGHT_BRACE"], "lexeme": "}" };
+    if (c == ";") return { "type": TOKEN_TYPES["SEMICOLON"], "lexeme": ";" };
+    if (c == "=") {
+        if (lexer["current"] == "=") { advance(lexer); return { "type": TOKEN_TYPES["EQUAL_EQUAL"], "lexeme": "==" }; }
+        return { "type": TOKEN_TYPES["EQUAL"], "lexeme": "=" };
+    }
+    if (c == ">") {
+        if (lexer["current"] == "=") { advance(lexer); return { "type": TOKEN_TYPES["GREATER_EQUAL"], "lexeme": ">=" }; }
+        return { "type": TOKEN_TYPES["GREATER"], "lexeme": ">" };
+    }
+    return { "type": TOKEN_TYPES["ERROR"], "lexeme": c };
+}
+
+// --- Tests ---
+
+print "Running Final Lexer Verification (Inlined)...";
+
+let source = "let x = 42.5; \"hello pulse\"; if (x > 10) { print x; } else { return nil; }";
+let lexer = make_lexer(source);
+
+fn assert_token(token, expected_type, expected_lexeme) {
+    if (token["type"] != expected_type) {
+        print "Type mismatch: expected " + expected_type + " got " + token["type"];
+        fail("token type mismatch");
+    }
+    if (expected_lexeme != nil and token["lexeme"] != expected_lexeme) {
+        print "Lexeme mismatch: expected " + expected_lexeme + " got " + token["lexeme"];
+        fail("token lexeme mismatch");
+    }
+}
+
+assert_token(next_token(lexer), "LET", "let");
+assert_token(next_token(lexer), "IDENTIFIER", "x");
+assert_token(next_token(lexer), "EQUAL", "=");
+assert_token(next_token(lexer), "FLOAT", "42.5");
+assert_token(next_token(lexer), "SEMICOLON", ";");
+assert_token(next_token(lexer), "STRING", "hello pulse");
+assert_token(next_token(lexer), "SEMICOLON", ";");
+assert_token(next_token(lexer), "IF", "if");
+assert_token(next_token(lexer), "LEFT_PAREN", "(");
+assert_token(next_token(lexer), "IDENTIFIER", "x");
+assert_token(next_token(lexer), "GREATER", ">");
+assert_token(next_token(lexer), "INT", "10");
+assert_token(next_token(lexer), "RIGHT_PAREN", ")");
+assert_token(next_token(lexer), "LEFT_BRACE", "{");
+assert_token(next_token(lexer), "PRINT", "print");
+assert_token(next_token(lexer), "IDENTIFIER", "x");
+assert_token(next_token(lexer), "SEMICOLON", ";");
+assert_token(next_token(lexer), "RIGHT_BRACE", "}");
+assert_token(next_token(lexer), "ELSE", "else");
+assert_token(next_token(lexer), "LEFT_BRACE", "{");
+assert_token(next_token(lexer), "RETURN", "return");
+assert_token(next_token(lexer), "NIL", "nil");
+assert_token(next_token(lexer), "SEMICOLON", ";");
+assert_token(next_token(lexer), "RIGHT_BRACE", "}");
+assert_token(next_token(lexer), "EOF", "");
+
+print "Final Lexer Verification Passed!";

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use pulse_core::{Value, NativeFn};
 use pulse_core::object::{Object, HeapInterface};
 use pulse_vm::VM;
-use pulse_stdlib::utils::{clock_native, println_native, gc_native, len_native, push_native, pop_native};
 
 pub fn load_std_module(name: &str, vm: &mut VM) -> Option<pulse_core::object::ObjHandle> {
     let mut exports = HashMap::new();

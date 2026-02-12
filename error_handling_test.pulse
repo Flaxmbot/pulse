@@ -1,0 +1,51 @@
+// Test error handling in Pulse
+
+// Test division by zero error
+try {
+    let result = 10 / 0;
+    print("This should not print:", result);
+} catch e {
+    print("Caught division by zero error:", e);
+}
+
+// Test modulo by zero error
+try {
+    let result = 10 % 0;
+    print("This should not print:", result);
+} catch e {
+    print("Caught modulo by zero error:", e);
+}
+
+// Test out of bounds access
+let list = [1, 2, 3];
+try {
+    let item = list[10];
+    print("This should not print:", item);
+} catch e {
+    print("Caught out of bounds error:", e);
+}
+
+// Test invalid type operations
+try {
+    let result = "string" + 42;  // This might cause an error depending on implementation
+    print("String-number addition result:", result);
+} catch e {
+    print("Caught type mismatch error:", e);
+}
+
+// Test general error handling
+try {
+    print("Testing general error handling");
+    // Simulate some operation that might fail
+    let x = 5;
+    if (x > 10) {
+        throw "x is unexpectedly large";
+    }
+    print("No error occurred");
+} catch e {
+    print("Caught general error:", e);
+} finally {
+    print("Finally block always executes");
+}
+
+print("Error handling tests completed");

@@ -20,18 +20,8 @@ impl<'a> Parser<'a> {
 
     pub fn advance(&mut self) -> PulseResult<()> {
         self.previous = self.current.clone();
-        self.previous_line = self.lexer.line; // Assuming lexer exposes line (it does, public field)
-        loop {
-            self.current = self.lexer.next_token()?;
-            if self.current != Token::Slash { // Skip comments (handled by lexer? No, lexer returns Slash for /)
-                // Actually lexer `Slash` might just be division. Lexer handles comments internally usually?
-                // In my lexer impl:
-                // if // -> skip line
-                // if / -> return Slash
-                // So here we don't need to skip comments, lexer does it.
-                break;
-            }
-        }
+        self.previous_line = self.lexer.line;
+        self.current = self.lexer.next_token()?;
         Ok(())
     }
 

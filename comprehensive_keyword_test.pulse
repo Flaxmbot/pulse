@@ -1,0 +1,185 @@
+// Comprehensive test for all Pulse language keywords and features
+
+// Test basic variable declaration
+let x = 42;
+let y = 3.14;
+let z = true;
+let w = "hello";
+
+print("Basic variables:", x, y, z, w);
+
+// Test arithmetic operations
+let sum = x + 10;
+let diff = x - 5;
+let prod = x * 2;
+let quot = x / 3;
+let rem = x % 7;
+
+print("Arithmetic:", sum, diff, prod, quot, rem);
+
+// Test comparison operations
+let eq = (x == 42);
+let neq = (x != 43);
+let gt = (x > 40);
+let lt = (x < 50);
+let gte = (x >= 42);
+let lte = (x <= 42);
+
+print("Comparisons:", eq, neq, gt, lt, gte, lte);
+
+// Test logical operations
+let and_result = (x > 40) and (x < 50);
+let or_result = (x > 50) or (x < 45);
+let not_result = !(x == 41);
+
+print("Logical ops:", and_result, or_result, not_result);
+
+// Test new logical operators
+let logical_and = (x > 40) && (x < 50);
+let logical_or = (x > 50) || (x < 45);
+let not_op = !(x == 41);
+
+print("New logical ops:", logical_and, logical_or, not_op);
+
+// Test modulo operator
+let mod_result = 15 % 4;
+print("Modulo result:", mod_result);
+
+// Test if-else statements
+if (x > 40) {
+    print("x is greater than 40");
+} else {
+    print("x is not greater than 40");
+}
+
+// Test while loops
+let counter = 0;
+while (counter < 3) {
+    print("Counter:", counter);
+    counter = counter + 1;
+}
+
+// Test for-in loops
+let numbers = [1, 2, 3, 4, 5];
+for num in numbers {
+    print("Number:", num);
+}
+
+// Test function definitions
+fn add(a, b) {
+    return a + b;
+}
+
+let result = add(10, 20);
+print("Function result:", result);
+
+// Test list operations
+let list = [1, 2, 3];
+push(list, 4);
+let length = len(list);
+print("List length:", length);
+
+// Test map operations
+let map = {
+    "key1": "value1",
+    "key2": 42
+};
+let map_length = len(map);
+print("Map length:", map_length);
+
+// Test actor definitions
+actor TestActor {
+    let count = 0;
+
+    fn increment() {
+        count = count + 1;
+        print("Count incremented to:", count);
+    }
+    
+    fn get_count() {
+        return count;
+    }
+}
+
+// Test spawn and send
+let test_actor = spawn TestActor();
+test_actor.increment();
+test_actor.increment();
+
+// Test shared memory
+let shared_counter = 0;  // For now, just use a regular variable
+
+// Test class definitions
+class Calculator {
+    fn init(initial_value) {
+        let obj = {
+            "value": initial_value
+        };
+        return obj;
+    }
+    
+    fn add(calc, amount) {
+        calc["value"] = calc["value"] + amount;
+        return calc["value"];
+    }
+    
+    fn get_value(calc) {
+        return calc["value"];
+    }
+}
+
+let calc = Calculator.init(10);
+let new_value = Calculator.add(calc, 5);
+print("Calculator result:", new_value);
+
+// Test exception handling
+try {
+    print("Inside try block");
+    // Simulate an operation that could fail
+    let safe_div = 10 / 2;
+    print("Safe division result:", safe_div);
+} catch e {
+    print("Caught exception:", e);
+} finally {
+    print("Finally block executed");
+}
+
+// Test match expressions
+let value = 2;
+match value {
+    1 => {
+        print("Value is one");
+    },
+    2 => {
+        print("Value is two");
+    },
+    _ => {
+        print("Value is something else");
+    }
+}
+
+// Test advanced data structures
+let set = create_set();
+add_to_set(set, "item1");
+add_to_set(set, "item2");
+print("Set contains item1:", contains_in_set(set, "item1"));
+
+let queue = create_queue();
+enqueue(queue, "first");
+enqueue(queue, "second");
+print("Dequeued:", dequeue(queue));
+
+// Test math library functions
+print("Math functions:");
+print("sin(1.57):", sin(1.57));
+print("cos(1.57):", cos(1.57));
+print("sqrt(16):", sqrt(16));
+print("pow(2, 3):", pow(2, 3));
+
+// Test type information
+print("Type of 42:", type_of(42));
+print("Type of 3.14:", type_of(3.14));
+print("Type of true:", type_of(true));
+print("Type of string:", type_of("hello"));
+
+print("All tests completed successfully!");

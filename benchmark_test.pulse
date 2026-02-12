@@ -1,0 +1,95 @@
+// Benchmark test for Pulse language performance
+
+print("Starting performance benchmark...");
+
+// Test 1: Arithmetic operations
+let start_time = clock();
+let iterations = 100000;
+let i = 0;
+while (i < iterations) {
+    let a = i + 1;
+    let b = a * 2;
+    let c = b - 3;
+    let d = c / 4;
+    let e = d % 5;
+    i = i + 1;
+}
+let end_time = clock();
+print("Arithmetic operations (", iterations, " iterations):", end_time - start_time, "ms");
+
+// Test 2: Function calls
+fn benchmark_func(x) {
+    return x * x + 2 * x + 1;
+}
+
+start_time = clock();
+i = 0;
+while (i < iterations) {
+    let result = benchmark_func(i);
+    i = i + 1;
+}
+end_time = clock();
+print("Function calls (", iterations, " iterations):", end_time - start_time, "ms");
+
+// Test 3: List operations
+start_time = clock();
+let big_list = [];
+i = 0;
+while (i < 10000) {
+    push(big_list, i);
+    i = i + 1;
+}
+end_time = clock();
+print("List operations (10000 items):", end_time - start_time, "ms");
+
+// Test 4: String operations
+start_time = clock();
+let str = "";
+i = 0;
+while (i < 1000) {
+    str = str + "test";
+    i = i + 1;
+}
+end_time = clock();
+print("String concatenation (1000 times):", end_time - start_time, "ms");
+
+// Test 5: Actor messaging
+start_time = clock();
+
+actor BenchActor {
+    on "work" {
+        // Do some computation
+        let j = 0;
+        while (j < 100) {
+            let temp = j * j;
+            j = j + 1;
+        }
+        send sender, "done";
+    }
+}
+
+let bench_actor = spawn BenchActor();
+i = 0;
+while (i < 1000) {
+    send bench_actor, "work";
+    i = i + 1;
+}
+
+end_time = clock();
+print("Actor messaging (1000 messages):", end_time - start_time, "ms");
+
+// Test 6: Shared memory operations
+start_time = clock();
+shared memory shared_data = 0;
+
+// Simulate concurrent access to shared memory
+i = 0;
+while (i < 10000) {
+    // In a real concurrent scenario, multiple actors would access this
+    shared_data = shared_data + 1;
+    i = i + 1;
+}
+end_time = clock();
+print("Shared memory operations (10000 updates):", end_time - start_time, "ms");
+
+print("Benchmark completed!");

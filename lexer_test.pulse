@@ -1,0 +1,150 @@
+// Comprehensive Lexer Test for Pulse
+// This version uses string_to_list for character access
+
+// --- Helper Functions ---
+
+fn is_digit(c) {
+    return c >= "0" and c <= "9";
+}
+
+fn is_alpha(c) {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_";
+}
+
+fn is_alphanumeric(c) {
+    return is_alpha(c) or is_digit(c);
+}
+
+print "Checking for string_to_list...";
+if (type_of(string_to_list) == "Unit") {
+   print "Error: string_to_list is not defined!";
+   fail("string_to_list missing");
+}
+
+fn substring(chars, start, end) {
+    let result = "";
+    let i = start;
+    while (i < end) {
+        result = result + chars[i];
+        i = i + 1;
+    }
+    return result;
+}
+
+// --- Lexer Logic ---
+
+let TOKEN_TYPES = {
+    "LEFT_PAREN": "LEFT_PAREN", "RIGHT_PAREN": "RIGHT_PAREN", 
+    "IDENTIFIER": "IDENTIFIER", "INT": "INT", "EQUAL": "EQUAL",
+    "PLUS": "PLUS", "EOF": "EOF", "ERROR": "ERROR"
+};
+
+fn make_lexer(source) {
+    let source_chars = string_to_list(source);
+    let lexer = {
+        "chars": source_chars,
+        "pos": 0,
+        "length": len(source_chars),
+        "current": ""
+    };
+    if (lexer["length"] > 0) {
+        lexer["current"] = source_chars[0];
+    }
+    return lexer;
+}
+
+fn advance(lexer) {
+    if (lexer["pos"] < lexer["length"]) {
+        lexer["pos"] = lexer["pos"] + 1;
+        if (lexer["pos"] < lexer["length"]) {
+            lexer["current"] = lexer["chars"][lexer["pos"]];
+        } else {
+            lexer["current"] = "";
+        }
+    }
+    return lexer["current"];
+}
+
+fn skip_whitespace(lexer) {
+    while (lexer["current"] == " " or lexer["current"] == "\r" or lexer["current"] == "\t" or lexer["current"] == "\n") {
+        advance(lexer);
+    }
+}
+
+fn scan_number(lexer) {
+    let start = lexer["pos"];
+    while (is_digit(lexer["current"])) {
+        advance(lexer);
+    }
+    let lexeme = substring(lexer["chars"], start, lexer["pos"]);
+    return { "type": TOKEN_TYPES["INT"], "lexeme": lexeme };
+}
+
+fn scan_identifier(lexer) {
+    let start = lexer["pos"];
+    while (is_alphanumeric(lexer["current"])) {
+        advance(lexer);
+    }
+    let lexeme = substring(lexer["chars"], start, lexer["pos"]);
+    return { "type": TOKEN_TYPES["IDENTIFIER"], "lexeme": lexeme };
+}
+
+fn next_token(lexer) {
+    skip_whitespace(lexer);
+    if (lexer["pos"] >= lexer["length"]) {
+        return { "type": TOKEN_TYPES["EOF"], "lexeme": "" };
+    }
+    
+    let c = lexer["current"];
+    if (is_digit(c)) return scan_number(lexer);
+    if (is_alpha(c)) return scan_identifier(lexer);
+    
+    advance(lexer);
+    if (c == "(") return { "type": TOKEN_TYPES["LEFT_PAREN"], "lexeme": "(" };
+    if (c == ")") return { "type": TOKEN_TYPES["RIGHT_PAREN"], "lexeme": ")" };
+    if (c == "=") return { "type": TOKEN_TYPES["EQUAL"], "lexeme": "=" };
+    if (c == "+") return { "type": TOKEN_TYPES["PLUS"], "lexeme": "+" };
+    
+    return { "type": TOKEN_TYPES["ERROR"], "lexeme": c };
+}
+
+// --- Tests ---
+
+print "Running Lexer verification with string_to_list...";
+
+let source = "let x = 42 + y";
+let lexer = make_lexer(source);
+
+// let
+let t1 = next_token(lexer);
+assert_eq(t1["type"], TOKEN_TYPES["IDENTIFIER"]);
+assert_eq(t1["lexeme"], "let");
+
+// x
+let t2 = next_token(lexer);
+assert_eq(t2["type"], TOKEN_TYPES["IDENTIFIER"]);
+assert_eq(t2["lexeme"], "x");
+
+// =
+let t3 = next_token(lexer);
+assert_eq(t3["type"], TOKEN_TYPES["EQUAL"]);
+
+// 42
+let t4 = next_token(lexer);
+assert_eq(t4["type"], TOKEN_TYPES["INT"]);
+assert_eq(t4["lexeme"], "42");
+
+// +
+let t5 = next_token(lexer);
+assert_eq(t5["type"], TOKEN_TYPES["PLUS"]);
+
+// y
+let t6 = next_token(lexer);
+assert_eq(t6["type"], TOKEN_TYPES["IDENTIFIER"]);
+assert_eq(t6["lexeme"], "y");
+
+// EOF
+let t7 = next_token(lexer);
+assert_eq(t7["type"], TOKEN_TYPES["EOF"]);
+
+print "Lexer verification passed!";

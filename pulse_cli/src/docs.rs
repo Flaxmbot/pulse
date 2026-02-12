@@ -15,9 +15,11 @@ pub struct DocItem {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum DocKind {
     Function,
     Actor,
+    /// Planned for future module documentation support
     Module,
 }
 

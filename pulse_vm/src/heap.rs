@@ -12,6 +12,9 @@ pub struct Heap {
     objects: Vec<ObjectEntry>,
     free_head: Option<usize>,
     gray_stack: Vec<usize>, // For marking
+    // For Phase 0: Enhanced memory management
+    bytes_allocated: usize,
+    next_gc: usize,  // When to trigger next GC
 }
 
 impl Heap {
@@ -20,15 +23,36 @@ impl Heap {
             objects: Vec::with_capacity(1024),
             free_head: None,
             gray_stack: Vec::new(),
+            bytes_allocated: 0,
+            next_gc: 1024 * 1024, // 1MB default
         }
     }
 
     pub fn alloc(&mut self, object: Object) -> ObjHandle {
+        // Estimate object size for GC triggering
+        let size_estimate = match &object {
+            Object::String(s) => s.len(),
+            Object::List(vec) => vec.len() * 8, // Rough estimate
+            Object::Map(map) => map.len() * 16, // Rough estimate
+            Object::Function(_) => 64, // Rough estimate
+            Object::Closure(_) => 32, // Rough estimate
+            Object::Upvalue(_) => 16, // Rough estimate
+            Object::NativeFn(_) => 16, // Rough estimate
+            Object::Module(exports) => exports.len() * 16, // Rough estimate
+            Object::Class(_) => 32, // Rough estimate
+            Object::Instance(i) => 32 + i.fields.len() * 16, // Rough estimate
+            Object::BoundMethod(_) => 32, // Rough estimate
+            Object::Set(set) => set.len() * 8, // Rough estimate
+            Object::Queue(q) => q.len() * 8, // Rough estimate
+            Object::SharedMemory(_) => 16, // Rough estimate
+        };
+        
         if let Some(idx) = self.free_head {
             // Re-use free slot
             if let ObjectEntry::Free { next_free } = self.objects[idx] {
                 self.free_head = next_free;
                 self.objects[idx] = ObjectEntry::Allocated { object, marked: false };
+                self.bytes_allocated += size_estimate;
                 return ObjHandle(idx);
             } else {
                 panic!("Corrupted free list");
@@ -37,6 +61,7 @@ impl Heap {
             // Append new slot
             let idx = self.objects.len();
             self.objects.push(ObjectEntry::Allocated { object, marked: false });
+            self.bytes_allocated += size_estimate;
             ObjHandle(idx)
         }
     }
@@ -57,6 +82,14 @@ impl HeapInterface for Heap {
 
     fn collect_garbage(&mut self) {
         panic!("Heap cannot collect garbage without root tracing (VM context needed).");
+    }
+    
+    fn get_allocation_stats(&self) -> (usize, usize) {
+        (self.bytes_allocated, self.next_gc)
+    }
+    
+    fn set_next_gc(&mut self, size: usize) {
+        self.next_gc = size;
     }
 }
 
@@ -127,6 +160,34 @@ impl Heap {
                          Object::Module(exports) => {
                              exports.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
                          },
+                         Object::Class(c) => {
+                             c.methods.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
+                         },
+                         Object::Set(_) => Vec::new(), // Sets contain only strings, no object references
+                         Object::Queue(q) => {
+                             q.iter().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
+                         },
+                         Object::SharedMemory(sm) => {
+                             // Check if the value in shared memory is an object
+                             if let Value::Obj(h) = &sm.value {
+                                 vec![*h]
+                             } else {
+                                 Vec::new()
+                             }
+                         },
+                         Object::Instance(i) => {
+                             let mut roots = i.fields.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>();
+                             // Mark class methods as well, as they might be closures on the heap
+                             roots.extend(i.class.methods.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }));
+                             roots
+                         },
+                         Object::BoundMethod(b) => {
+                             if let Value::Obj(h) = b.receiver {
+                                 vec![h]
+                             } else {
+                                 Vec::new()
+                             }
+                         },
                          Object::Function(_) | Object::String(_) | Object::NativeFn(_) => Vec::new(),
                     }
                 } else {
@@ -148,9 +209,30 @@ impl Heap {
                 ObjectEntry::Allocated { marked, .. } => !marked,
                 _ => false,
              };
-             
+
              if is_garbage {
                  // Free it
+                 if let ObjectEntry::Allocated { object, .. } = &self.objects[i] {
+                     // Subtract estimated size
+                     let size_estimate = match object {
+                         Object::String(s) => s.len(),
+                         Object::List(vec) => vec.len() * 8,
+                         Object::Map(map) => map.len() * 16,
+                         Object::Function(_) => 64,
+                         Object::Closure(_) => 32,
+                         Object::Upvalue(_) => 16,
+                         Object::NativeFn(_) => 16,
+                         Object::Module(exports) => exports.len() * 16,
+                         Object::Class(_) => 32,
+                         Object::Set(set) => set.len() * 8,
+                         Object::Queue(q) => q.len() * 8,
+                         Object::SharedMemory(_) => 16,
+                         Object::Instance(i) => 32 + i.fields.len() * 16,
+                         Object::BoundMethod(_) => 32,
+                     };
+                     self.bytes_allocated = self.bytes_allocated.saturating_sub(size_estimate);
+                 }
+                 
                  self.objects[i] = ObjectEntry::Free { next_free: self.free_head };
                  self.free_head = Some(i);
                  freed += 1;
@@ -162,5 +244,13 @@ impl Heap {
              }
         }
         freed
+    }
+    
+    pub fn get_allocation_stats(&self) -> (usize, usize) {
+        (self.bytes_allocated, self.next_gc)
+    }
+    
+    pub fn set_next_gc(&mut self, size: usize) {
+        self.next_gc = size;
     }
 }

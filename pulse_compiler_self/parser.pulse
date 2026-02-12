@@ -1,0 +1,156 @@
+// Recursive Descent Parser for Pulse self-hosting compiler
+
+println("Pulse Self-Hosting Compiler: Parser Started");
+
+// Parser state variables
+let current_token_index = 0;
+
+// Mock tokens for testing
+let mock_token_type_1 = "LET";
+let mock_token_lexeme_1 = "let";
+let mock_token_line_1 = 1;
+let mock_token_col_1 = 1;
+
+let mock_token_type_2 = "IDENTIFIER";
+let mock_token_lexeme_2 = "x";
+let mock_token_line_2 = 1;
+let mock_token_col_2 = 5;
+
+let mock_token_type_3 = "EQUAL";
+let mock_token_lexeme_3 = "=";
+let mock_token_line_3 = 1;
+let mock_token_col_3 = 7;
+
+let mock_token_type_4 = "NUMBER";
+let mock_token_lexeme_4 = "42";
+let mock_token_line_4 = 1;
+let mock_token_col_4 = 9;
+
+let mock_token_type_5 = "SEMICOLON";
+let mock_token_lexeme_5 = ";";
+let mock_token_line_5 = 1;
+let mock_token_col_5 = 11;
+
+let mock_token_type_6 = "EOF";
+let mock_token_lexeme_6 = "";
+let mock_token_line_6 = 1;
+let mock_token_col_6 = 12;
+
+let total_mock_tokens = 6;
+
+// Current token state
+let current_token_type = mock_token_type_1;
+let current_token_lexeme = mock_token_lexeme_1;
+let current_token_line = mock_token_line_1;
+let current_token_col = mock_token_col_1;
+
+// Function to advance to next token
+fn advance_parser() {
+    let next_index = current_token_index + 1;
+    
+    if (next_index == 1) {
+        current_token_type = mock_token_type_2;
+        current_token_lexeme = mock_token_lexeme_2;
+        current_token_line = mock_token_line_2;
+        current_token_col = mock_token_col_2;
+    } else if (next_index == 2) {
+        current_token_type = mock_token_type_3;
+        current_token_lexeme = mock_token_lexeme_3;
+        current_token_line = mock_token_line_3;
+        current_token_col = mock_token_col_3;
+    } else if (next_index == 3) {
+        current_token_type = mock_token_type_4;
+        current_token_lexeme = mock_token_lexeme_4;
+        current_token_line = mock_token_line_4;
+        current_token_col = mock_token_col_4;
+    } else if (next_index == 4) {
+        current_token_type = mock_token_type_5;
+        current_token_lexeme = mock_token_lexeme_5;
+        current_token_line = mock_token_line_5;
+        current_token_col = mock_token_col_5;
+    } else if (next_index == 5) {
+        current_token_type = mock_token_type_6;
+        current_token_lexeme = mock_token_lexeme_6;
+        current_token_line = mock_token_line_6;
+        current_token_col = mock_token_col_6;
+    }
+    
+    current_token_index = next_index;
+}
+
+// Function to check if we're at the end
+fn is_at_end() {
+    return current_token_index >= 5;  // 5 tokens before EOF
+}
+
+// Function to match a specific token type
+fn check_token_type(expected_type) {
+    return current_token_type == expected_type;
+}
+
+// Simple parsing function for variable declarations
+fn parse_variable_declaration() {
+    // Expect: let IDENTIFIER = expression ;
+    
+    // Consume 'let' token
+    if (check_token_type("LET")) {
+        advance_parser();
+    } else {
+        println("ERROR: Expected 'let', got:", current_token_type);
+        return "PARSE_ERROR";
+    }
+    
+    // Expect identifier
+    if (check_token_type("IDENTIFIER")) {
+        let var_name = current_token_lexeme;
+        advance_parser();
+        
+        // Expect '='
+        if (check_token_type("EQUAL")) {
+            advance_parser();
+            
+            // Parse expression (just consume the number for now)
+            if (check_token_type("NUMBER")) {
+                let value = current_token_lexeme;
+                advance_parser();
+                
+                // Expect semicolon
+                if (check_token_type("SEMICOLON")) {
+                    advance_parser();
+                    
+                    // Return a simple representation of the variable declaration
+                    return ["VAR_DECL", var_name, value];
+                } else {
+                    println("ERROR: Expected semicolon, got:", current_token_type);
+                    return "PARSE_ERROR";
+                }
+            } else {
+                println("ERROR: Expected number in assignment, got:", current_token_type);
+                return "PARSE_ERROR";
+            }
+        } else {
+            println("ERROR: Expected '=', got:", current_token_type);
+            return "PARSE_ERROR";
+        }
+    } else {
+        println("ERROR: Expected identifier after 'let', got:", current_token_type);
+        return "PARSE_ERROR";
+    }
+}
+
+// Parse a simple statement
+let result = parse_variable_declaration();
+
+if (result != "PARSE_ERROR") {
+    println("Parsed successfully:");
+    println("Type:", result[0]);  // VAR_DECL
+    println("Name:", result[1]);  // variable name
+    println("Value:", result[2]);  // value
+} else {
+    println("Parsing failed");
+}
+
+println("Current token index after parsing:", current_token_index);
+println("Is at end?", is_at_end());
+
+println("Parser test completed successfully");

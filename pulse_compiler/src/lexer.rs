@@ -4,13 +4,14 @@ use pulse_core::PulseError;
 pub enum Token {
     // Single-char
     LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket,
-    Comma, Dot, Minus, Plus, Semicolon, Slash, Star, Colon,
+    Comma, Dot, Minus, Plus, Semicolon, Slash, Star, Percent, Ampersand, Colon,
     
     // One or two char
     Bang, BangEqual,
     Equal, EqualEqual,
     Greater, GreaterEqual,
     Less, LessEqual,
+    LogicalAnd, LogicalOr,
     
     // Literals
     Identifier(String),
@@ -24,9 +25,14 @@ pub enum Token {
     Register, Unregister, WhereIs,
     Match, FatArrow, Pipe, Arrow,
     Try, Catch, Throw, Test, DocComment(String),
+    // Class/Object keywords
+    Class, Extends, Super, This,
     // Type keywords
     TypeInt, TypeFloat, TypeBool, TypeString, TypeUnit, TypePid, TypeList, TypeMap, TypeFn, TypeAny,
-
+    // Shared Memory keywords
+    Shared, Memory, Lock, Unlock,
+    
+    Error,
     // Interpolated String Parts
     InterpolatedString(Vec<StringPart>),
 
@@ -136,10 +142,21 @@ impl<'a> Lexer<'a> {
                 Some('+') => { self.advance(); return Ok(Token::Plus); }
                 Some(';') => { self.advance(); return Ok(Token::Semicolon); }
                 Some('*') => { self.advance(); return Ok(Token::Star); }
+                Some('%') => { self.advance(); return Ok(Token::Percent); }
                 Some('!') => {
                     self.advance();
                     if self.current == Some('=') { self.advance(); return Ok(Token::BangEqual); }
                     return Ok(Token::Bang);
+                }
+                Some('&') => {
+                    self.advance();
+                    if self.current == Some('&') { self.advance(); return Ok(Token::LogicalAnd); }
+                    return Ok(Token::Ampersand);
+                }
+                Some('|') => {
+                    self.advance();
+                    if self.current == Some('|') { self.advance(); return Ok(Token::LogicalOr); }
+                    return Ok(Token::Pipe);
                 }
                 Some('=') => {
                     self.advance();
@@ -160,7 +177,6 @@ impl<'a> Lexer<'a> {
                 Some('"') => return self.string(),
                 Some(c) if c.is_digit(10) => return self.number(),
                 Some(c) if c.is_alphabetic() || c == '_' => return self.identifier(),
-                Some('|') => { self.advance(); return Ok(Token::Pipe); }
                 None => return Ok(Token::Eof),
                 Some(c) => return Err(PulseError::IoError(format!("Unexpected character: {}", c))),
             }
@@ -325,6 +341,10 @@ impl<'a> Lexer<'a> {
             "test" => Ok(Token::Test),
             "def" => Ok(Token::Def),
             "in" => Ok(Token::In),
+            "class" => Ok(Token::Class),
+            "extends" => Ok(Token::Extends),
+            "super" => Ok(Token::Super),
+            "this" => Ok(Token::This),
             // Type keywords (capitalized for types)
             "Int" => Ok(Token::TypeInt),
             "Float" => Ok(Token::TypeFloat),
@@ -336,6 +356,11 @@ impl<'a> Lexer<'a> {
             "Map" => Ok(Token::TypeMap),
             "Fn" => Ok(Token::TypeFn),
             "Any" => Ok(Token::TypeAny),
+            // Shared memory keywords
+            "shared" => Ok(Token::Shared),
+            "memory" => Ok(Token::Memory),
+            "lock" => Ok(Token::Lock),
+            "unlock" => Ok(Token::Unlock),
             _ => Ok(Token::Identifier(s)),
         }
     }

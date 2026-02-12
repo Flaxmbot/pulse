@@ -30,6 +30,8 @@ enum Commands {
         /// Path to test file or directory (default: current dir)
         path: Option<PathBuf>,
     },
+    /// Run performance benchmarks
+    Benchmark,
     /// Initialize a new Pulse project
     Init {
         /// Project directory (default: current dir)
@@ -67,6 +69,7 @@ fn main() {
         Some(Commands::Repl) => repl::start(),
         Some(Commands::Demo) => run_demo(),
         Some(Commands::Test { path }) => run_tests(path),
+        Some(Commands::Benchmark) => run_benchmarks(),
         Some(Commands::Init { path, name }) => cmd_init(path, name),
         Some(Commands::Add { package, version }) => cmd_add(package, version),
         Some(Commands::Build) => cmd_build(),
@@ -380,6 +383,11 @@ fn run_scheduler(runtime: &mut pulse_runtime::Runtime) {
         if !runtime.step() {
             idle_cycles += 1;
             if idle_cycles > 5 {
+                // Check if we exited due to an error
+                if let Some(error) = runtime.get_last_error() {
+                    eprintln!("\nRuntime Error: {}", error);
+                    std::process::exit(1);
+                }
                 println!("System idle. Exiting.");
                 break;
             }
@@ -388,4 +396,77 @@ fn run_scheduler(runtime: &mut pulse_runtime::Runtime) {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+
+    // Final check for error if we broke out differently
+    if let Some(error) = runtime.get_last_error() {
+         eprintln!("\nRuntime Error: {}", error);
+         std::process::exit(1);
+    }
+}
+
+fn run_benchmarks() {
+    use std::time::Instant;
+    use std::fs;
+
+    println!("Pulse Language Performance Benchmark");
+    println!("===================================");
+
+    // List of benchmark files to run
+    let benchmark_files = [
+        "comprehensive_keyword_test.pulse",
+        "error_handling_test.pulse", 
+        "benchmark_test.pulse"
+    ];
+
+    for filename in &benchmark_files {
+        println!("\nRunning benchmark: {}...", filename);
+        let start = Instant::now();
+        
+        // Read the test file
+        if let Ok(source) = fs::read_to_string(filename) {
+            // Compile and run the test
+            match pulse_compiler::compile(&source, Some(filename.to_string())) {
+                Ok(chunk) => {
+                    let mut runtime = pulse_runtime::Runtime::new(1);
+                    runtime.spawn(chunk, None);
+                    
+                    // Run until complete or error
+                    let mut error_msg = None;
+                    let mut cycles = 0;
+                    loop {
+                        match runtime.step() {
+                            true => { cycles = 0; }
+                            false => {
+                                cycles += 1;
+                                if cycles > 3 { break; }
+                            }
+                        }
+                        // Check for runtime errors in actors
+                        if let Some(msg) = runtime.get_last_error() {
+                            error_msg = Some(msg);
+                            break;
+                        }
+                    }
+                    
+                    let duration = start.elapsed();
+                    match error_msg {
+                        None => {
+                            println!("  Completed in: {:?}", duration);
+                        }
+                        Some(e) => {
+                            println!("  Failed with error: {} (Duration: {:?})", e, duration);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let duration = start.elapsed();
+                    println!("  Failed to compile: {} (Duration: {:?})", e, duration);
+                }
+            }
+        } else {
+            println!("  Could not read file: {}", filename);
+        }
+    }
+
+    println!("\nAll benchmarks completed!");
 }

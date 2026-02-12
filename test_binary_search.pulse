@@ -1,0 +1,166 @@
+fn parse_unary(parser) {
+    return unary_expr(operator, right);
+}
+
+fn parse_binary(parser, left) {
+    return binary_expr(left, operator, right);
+}
+
+fn parse_logical(parser, left) {
+    return logical_expr(left, operator, right);
+}
+
+fn parse_variable(parser, can_assign) {
+    if (can_assign and matches(parser, "EQUAL")) {
+        return assignment_expr(name, value);
+    }
+    return variable_expr(name);
+}
+
+fn parse_list(parser) {
+    let elements = [];
+    if (!check(parser, "RIGHT_BRACKET")) {
+        loop {
+            push(elements, expression(parser));
+            if (!matches(parser, "COMMA")) break;
+        }
+    }
+    consume(parser, "RIGHT_BRACKET", "Expect ']' after list elements.");
+    return list_expr(elements);
+}
+
+fn parse_map(parser) {
+    let entries = {};
+    if (!check(parser, "RIGHT_BRACE")) {
+        loop {
+            let key = expression(parser);
+            consume(parser, "COLON", "Expect ':' after map key.");
+            let value = expression(parser);
+            entries[to_string(key)] = value;
+            if (!matches(parser, "COMMA")) break;
+        }
+    }
+    consume(parser, "RIGHT_BRACE", "Expect '}' after map entries.");
+    return map_expr(entries);
+}
+
+fn parse_call(parser, callee) {
+    let arguments = [];
+    if (!check(parser, "RIGHT_PAREN")) {
+        loop {
+            push(arguments, expression(parser));
+            if (!matches(parser, "COMMA")) break;
+        }
+    }
+    consume(parser, "RIGHT_PAREN", "Expect ')' after arguments.");
+    return call_expr(callee, arguments);
+}
+
+fn parse_index(parser, left) {
+    let index = expression(parser);
+    consume(parser, "RIGHT_BRACKET", "Expect ']' after index.");
+    return index_expr(left, index);
+}
+
+fn parse_dot(parser, left, can_assign) {
+    consume(parser, "IDENTIFIER", "Expect property name after '.'.");
+    let name = parser["previous"]["lexeme"];
+    if (can_assign and matches(parser, "EQUAL")) {
+        let value = expression(parser);
+        return set_expr(left, name, value);
+    }
+    return get_expr(left, name);
+}
+
+fn parse_declaration(parser) {
+    if (matches(parser, "FN")) return parse_fn_declaration(parser);
+    if (matches(parser, "LET")) return parse_let_declaration(parser);
+    if (matches(parser, "ACTOR")) return parse_actor_declaration(parser);
+    if (matches(parser, "CLASS")) return parse_class_declaration(parser);
+    return parse_statement(parser);
+}
+
+fn parse_fn_declaration(parser) {
+    consume(parser, "IDENTIFIER", "Expect function name.");
+    let name = parser["previous"]["lexeme"];
+    consume(parser, "LEFT_PAREN", "Expect '(' after function name.");
+    let params = [];
+    if (!check(parser, "RIGHT_PAREN")) {
+        loop {
+            consume(parser, "IDENTIFIER", "Expect parameter name.");
+            push(params, parser["previous"]["lexeme"]);
+            if (!matches(parser, "COMMA")) break;
+        }
+    }
+    consume(parser, "RIGHT_PAREN", "Expect ')' after parameters.");
+    let return_type = nil;
+    if (matches(parser, "ARROW")) {
+        consume(parser, "IDENTIFIER", "Expect return type name.");
+        return_type = parser["previous"]["lexeme"];
+    }
+    consume(parser, "LEFT_BRACE", "Expect '{' before function body.");
+    let body = parse_block(parser);
+    return fn_decl(name, params, body, return_type);
+}
+
+fn parse_let_declaration(parser) {
+    consume(parser, "IDENTIFIER", "Expect variable name.");
+    let name = parser["previous"]["lexeme"];
+    let type_annotation = nil;
+    if (matches(parser, "COLON")) {
+        consume(parser, "IDENTIFIER", "Expect type name.");
+        type_annotation = parser["previous"]["lexeme"];
+    }
+    let initializer = nil;
+    if (matches(parser, "EQUAL")) {
+        initializer = expression(parser);
+    }
+    consume(parser, "SEMICOLON", "Expect ';' after variable declaration.");
+    return let_stmt(name, initializer, type_annotation);
+}
+
+fn parse_actor_declaration(parser) {
+    consume(parser, "IDENTIFIER", "Expect actor name.");
+    let name = parser["previous"]["lexeme"];
+    consume(parser, "LEFT_BRACE", "Expect '{' before actor body.");
+    let members = [];
+    while (!check(parser, "RIGHT_BRACE") and !check(parser, "EOF")) {
+        push(members, parse_declaration(parser));
+    }
+    consume(parser, "RIGHT_BRACE", "Expect '}' after actor body.");
+    return actor_decl(name, [], members);
+}
+
+fn parse_class_declaration(parser) {
+    consume(parser, "IDENTIFIER", "Expect class name.");
+    let name = parser["previous"]["lexeme"];
+    consume(parser, "LEFT_BRACE", "Expect '{' before class body.");
+    let members = [];
+    while (!check(parser, "RIGHT_BRACE") and !check(parser, "EOF")) {
+        push(members, parse_declaration(parser));
+    }
+    consume(parser, "RIGHT_BRACE", "Expect '}' after class body.");
+    return class_decl(name, [], members);
+}
+
+fn parse_statement(parser) {
+    if (matches(parser, "IF")) return parse_if_statement(parser);
+    if (matches(parser, "WHILE")) return parse_while_statement(parser);
+    if (matches(parser, "FOR")) return parse_for_statement(parser);
+    if (matches(parser, "RETURN")) return parse_return_statement(parser);
+    if (matches(parser, "PRINT")) return parse_print_statement(parser);
+    if (matches(parser, "LEFT_BRACE")) return parse_block(parser);
+    return parse_expression_statement(parser);
+}
+
+fn parse_if_statement(parser) {
+    consume(parser, "LEFT_PAREN", "Expect '(' after 'if'.");
+    let condition = expression(parser);
+    consume(parser, "RIGHT_PAREN", "Expect ')' after condition.");
+    let then_branch = parse_statement(parser);
+    let else_branch = nil;
+    if (matches(parser, "ELSE")) {
+        else_branch = parse_statement(parser);
+    }
+    return if_stmt(condition, then_branch, else_branch);
+}

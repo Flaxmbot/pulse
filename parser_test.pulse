@@ -1,0 +1,58 @@
+let LexerMod = import "pulse_compiler_pulse/lexer.pulse";
+let ParserMod = import "pulse_compiler_pulse/parser.pulse";
+
+fn test_expression() {
+    print "--- Testing Expression Parsing ---";
+    let source = "1 + 2 * 3;";
+    let lexer = LexerMod["make_lexer"](source);
+    let parser = ParserMod["make_parser"](lexer);
+    
+    let ast = ParserMod["parse_program"](parser);
+    
+    // Expected AST: [ { type: stmt, kind: expression, expression: ... } ]
+    print "AST: " + to_string(ast);
+    
+    assert(len(ast) == 1, "Should have 1 statement");
+    let stmt = ast[0];
+    assert(stmt["kind"] == "expression", "Should be expression statement");
+}
+
+fn test_let_declaration() {
+    print "--- Testing Let Declaration ---";
+    let source = "let x = 10;";
+    let lexer = LexerMod["make_lexer"](source);
+    let parser = ParserMod["make_parser"](lexer);
+    
+    let ast = ParserMod["parse_program"](parser);
+    print "AST: " + to_string(ast);
+    
+    assert(len(ast) == 1, "Should have 1 statement");
+    let stmt = ast[0];
+    assert(stmt["kind"] == "let", "Should be let declaration");
+    assert(stmt["name"] == "x", "Variable name should be x");
+}
+
+fn test_fn_declaration() {
+    print "--- Testing Function Declaration ---";
+    let source = "fn add(a, b) { return a + b; }";
+    let lexer = LexerMod["make_lexer"](source);
+    let parser = ParserMod["make_parser"](lexer);
+    
+    let ast = ParserMod["parse_program"](parser);
+    print "AST: " + to_string(ast);
+    
+    assert(len(ast) == 1, "Should have 1 statement");
+    let stmt = ast[0];
+    assert(stmt["kind"] == "function", "Should be function declaration");
+    assert(stmt["name"] == "add", "Function name should be add");
+    assert(len(stmt["params"]) == 2, "Should have 2 parameters");
+}
+
+fn main() {
+    test_expression();
+    test_let_declaration();
+    test_fn_declaration();
+    print "✓ All parser tests passed!";
+}
+
+main();

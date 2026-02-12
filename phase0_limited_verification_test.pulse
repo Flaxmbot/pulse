@@ -1,0 +1,186 @@
+// Phase 0: Core Foundation Verification Tests (Within Limits)
+// These tests validate current capabilities and limitations
+
+println("=== Phase 0: Core Foundation Verification Tests (Within Limits) ===");
+
+// Test 1: Basic Data Structure Handling
+println("Test 1: Basic Data Structure Handling");
+
+let simple_obj = {"key": "value", "num": 42};
+println("Simple object access:", simple_obj["key"], simple_obj["num"]);
+
+// Test 2: Moderate Nesting
+println("Test 2: Moderate Nesting");
+
+let moderate_nested = {
+    "level1": {
+        "level2": {
+            "data": "nested_value"
+        }
+    }
+};
+
+println("Moderate nesting access:", moderate_nested["level1"]["level2"]["data"]);
+
+// Test 3: Array Operations
+println("Test 3: Array Operations");
+
+let test_array = [1, 2, 3, 4, 5];
+println("Array length:", len(test_array));
+
+let sum = 0;
+let i = 0;
+while (i < len(test_array)) {
+    sum = sum + test_array[i];
+    i = i + 1;
+}
+println("Array sum:", sum);
+
+// Test 4: Function Operations
+println("Test 4: Function Operations");
+
+fn calc_func(a, b, op) {
+    if (op == "add") {
+        return a + b;
+    } else if (op == "mul") {
+        return a * b;
+    } else {
+        return a - b;
+    }
+}
+
+let add_result = calc_func(10, 5, "add");
+let mul_result = calc_func(10, 5, "mul");
+let sub_result = calc_func(10, 5, "sub");
+
+println("Function results - Add:", add_result, "Mul:", mul_result, "Sub:", sub_result);
+
+// Test 5: Performance Measurement
+println("Test 5: Performance Measurement");
+
+let start_time = clock();
+let iterations = 10000;
+let j = 0;
+let perf_result = 0;
+while (j < iterations) {
+    perf_result = perf_result + j * 2 - 1;
+    j = j + 1;
+}
+let end_time = clock();
+let duration = end_time - start_time;
+
+println("Time for", iterations, "operations:", duration);
+println("Operations per second:", iterations / duration);
+
+// Test 6: Error Handling
+println("Test 6: Error Handling");
+
+try {
+    let safe_calc = 100 / 4;
+    println("Safe calculation:", safe_calc);
+} catch e {
+    println("Error caught:", e);
+}
+
+// Test 7: Type Handling
+println("Test 7: Type Handling");
+
+let mixed_vars = [
+    42,           // int
+    3.14,         // float
+    "string",     // string
+    true,         // boolean
+    [1, 2, 3]     // array
+];
+
+let k = 0;
+while (k < len(mixed_vars)) {
+    println("Item", k, "type:", type_of(mixed_vars[k]));
+    k = k + 1;
+}
+
+// Test 8: Memory Allocation Test
+println("Test 8: Memory Allocation Test");
+
+let alloc_start = clock();
+let obj_count = 0;
+while (obj_count < 50) {
+    let temp_obj = {
+        "id": obj_count,
+        "value": "test_" + obj_count
+    };
+    obj_count = obj_count + 1;
+}
+let alloc_end = clock();
+
+println("Allocated", obj_count, "objects in", alloc_end - alloc_start, "seconds");
+
+// Test 9: String Operations
+println("Test 9: String Operations");
+
+let str1 = "Hello";
+let str2 = " ";
+let str3 = "World";
+let combined = str1 + str2 + str3;
+println("Combined string:", combined);
+
+let str_loop = 0;
+let str_result = "";
+while (str_loop < 5) {
+    str_result = str_result + "Part" + str_loop + " ";
+    str_loop = str_loop + 1;
+}
+println("Looped string:", str_result);
+
+// Test 10: Conditional Logic
+println("Test 10: Conditional Logic");
+
+let condition_val = 25;
+if (condition_val > 20) {
+    println("Condition 1: Greater than 20");
+} else {
+    println("Condition 1: Not greater than 20");
+}
+
+if (condition_val % 5 == 0) {
+    println("Condition 2: Divisible by 5");
+} else {
+    println("Condition 2: Not divisible by 5");
+}
+
+// Test 11: Loop Variations
+println("Test 11: Loop Variations");
+
+// For-in loop
+let items = ["a", "b", "c"];
+for item in items {
+    println("For-in item:", item);
+}
+
+// While loop with break condition
+let countdown = 5;
+while (countdown > 0) {
+    println("Countdown:", countdown);
+    countdown = countdown - 1;
+}
+
+println("=== Core Foundation Verification Tests Complete ===");
+
+// Summary of current capabilities
+println("Current Capabilities:");
+println("- Basic object handling");
+println("- Moderate nesting support");
+println("- Array operations");
+println("- Function definitions and calls");
+println("- Performance measurement");
+println("- Error handling");
+println("- Type detection");
+println("- Memory allocation");
+println("- String operations");
+println("- Conditional logic");
+println("- Various loop constructs");
+
+// Performance metrics
+println("Performance Metrics:");
+println("- Operations per second:", iterations / duration);
+println("- Objects allocated per second:", obj_count / (alloc_end - alloc_start));

@@ -53,19 +53,21 @@ impl Runtime {
         }
 
         let actor = Actor::new(pid, vm);
-        
+
         self.actors.insert(pid, Arc::new(Mutex::new(actor)));
         self.run_queue.push_back(pid);
+        // The active_actors counter is calculated dynamically now, so we don't need to maintain it
         pid
     }
 
     pub fn spawn_with_rc(&mut self, chunk: Arc<Chunk>, pid: ActorId, ip: usize) -> ActorId {
         let vm = VM::new_spawn(chunk.clone(), pid, ip);
-        
+
         let actor = Actor::new(pid, vm);
-        
+
         self.actors.insert(pid, Arc::new(Mutex::new(actor)));
         self.run_queue.push_back(pid);
+        // The active_actors counter is calculated dynamically now, so we don't need to maintain it
         pid
     }
 
@@ -134,7 +136,7 @@ impl Runtime {
              let status = {
                 let mut actor = actor_ref.lock().unwrap();
                 if actor.status == ActorStatus::Runnable {
-                    actor.vm.run(100)
+                    actor.vm.run(1000)  // Increased from 100 to 1000 for better performance
                 } else {
                     VMStatus::Yielded
                 }
@@ -253,12 +255,35 @@ impl Runtime {
                      self.run_queue.push_back(pid);
                  },
                  VMStatus::Monitor(target) => {
-                     // Add target to current actor's monitors
-                     {
-                         let mut actor = actor_ref.lock().unwrap();
-                         actor.monitors.insert(target);
+                     let mut target_exists = false;
+                     let mut target_dead = false;
+                     
+                     if let Some(target_actor_ref) = self.actors.get(&target) {
+                         target_exists = true;
+                         let mut target_actor = target_actor_ref.lock().unwrap();
+                         if target_actor.status == ActorStatus::Terminated {
+                             target_dead = true;
+                         } else {
+                             target_actor.monitors.insert(pid);
+                         }
                      }
-                     self.run_queue.push_back(pid);
+                     
+                     if !target_exists || target_dead {
+                          // Send DOWN message immediately
+                          let msg = Message::System(crate::mailbox::SystemMessage::MonitorExit(target, "No Process".to_string()));
+                          if let Some(actor_ref) = self.actors.get(&pid) {
+                              let mut actor = actor_ref.lock().unwrap();
+                              if actor.status == ActorStatus::Waiting {
+                                  actor.deliver_message(msg);
+                                  self.run_queue.push_back(pid); // Re-queue self
+                              } else {
+                                  actor.mailbox.push(msg);
+                              }
+                          }
+                     } else {
+                         // Successfully monitored, just re-queue sself
+                         self.run_queue.push_back(pid);
+                     }
                  },
                   VMStatus::Register(name, target_pid) => {
                       let success = self.register_actor(name, target_pid);
@@ -318,13 +343,17 @@ impl Runtime {
                  },
                  VMStatus::Halted => {
                      let mut actor = actor_ref.lock().unwrap();
-                     actor.status = ActorStatus::Terminated;
+                     if actor.status != ActorStatus::Terminated {
+                         actor.status = ActorStatus::Terminated;
+                     }
                      drop(actor); // Release lock before calling propagate_exit
                      self.propagate_exit(pid, "normal".to_string());
                  },
                  VMStatus::Error(e) => {
                      let mut actor = actor_ref.lock().unwrap();
-                     actor.status = ActorStatus::Terminated;
+                     if actor.status != ActorStatus::Terminated {
+                         actor.status = ActorStatus::Terminated;
+                     }
                      let error_msg = format!("{}", e);
                      self.last_error = Some(error_msg.clone());
                      drop(actor); // Release lock before calling propagate_exit
@@ -333,7 +362,29 @@ impl Runtime {
              }
              true
         } else {
-            false
+            // Calculate active actors dynamically to avoid counter drift
+            let mut live_actor_count = 0;
+            for actor_ref in self.actors.values() {
+                let actor = actor_ref.lock().unwrap();
+                if actor.status != ActorStatus::Terminated {
+                    live_actor_count += 1;
+                }
+            }
+            
+            let has_live_actors = live_actor_count > 0;
+            let has_queued_actors = !self.run_queue.is_empty();
+            
+            // Check for pending remote messages
+            let has_pending_messages = {
+                let remote = self.remote_queue.lock().unwrap();
+                !remote.is_empty()
+            };
+            
+            if has_live_actors || has_queued_actors || has_pending_messages {
+                true  // Continue running
+            } else {
+                false  // Safe to exit
+            }
         }
     }
 
@@ -468,8 +519,10 @@ impl Runtime {
                 // Terminate the linked actor
                 if let Some(linked_actor_ref) = self.actors.get(&actor_pid) {
                     let mut linked_actor = linked_actor_ref.lock().unwrap();
-                    linked_actor.status = ActorStatus::Terminated;
-                    
+                    if linked_actor.status != ActorStatus::Terminated {
+                        linked_actor.status = ActorStatus::Terminated;
+                    }
+
                     // Don't recursively call propagate_exit here to avoid stack overflow
                     // Instead, we'll handle it separately if needed
                 }
@@ -493,5 +546,11 @@ impl Runtime {
                 }
             }
         }
+        
+        // The original actor that died was already removed from active_actors counter
+        // when it was marked as terminated in the main step loop.
+        // If linked actors die as a result of propagation, they should be handled separately
+        // by their own termination paths when they are scheduled again.
+        // We don't decrement the counter here as it would be double-decrementing.
     }
 }

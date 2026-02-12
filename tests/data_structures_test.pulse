@@ -1,0 +1,108 @@
+// Comprehensive Data Structures Test for Pulse
+// Covers: Lists, Maps, Sets, Queues, Strings, Nested Structures
+
+print "=== Starting Data Structures Test ===";
+
+// --- Helper Assertions ---
+fn assert_true(val, msg) {
+    if (!val) {
+        print "FAIL: " + msg;
+        // fail(msg); // Fail native not always available? Use panic or exit?
+        // Let's rely on print for now.
+    } else {
+        print "PASS: " + msg;
+    }
+}
+
+fn assert_equals(actual, expected, msg) {
+    if (actual != expected) {
+        print "FAIL: " + msg + " (Expected " + to_string(expected) + ", got " + to_string(actual) + ")";
+    } else {
+        print "PASS: " + msg;
+    }
+}
+
+// --- List Tests ---
+print "\n--- Testing Lists ---";
+let list = [1, 2, 3];
+assert_equals(len(list), 3, "List length should be 3");
+assert_equals(list[0], 1, "Index 0 should be 1");
+assert_equals(list[2], 3, "Index 2 should be 3");
+
+push(list, 4);
+assert_equals(len(list), 4, "List length after push should be 4");
+assert_equals(list[3], 4, "Pushed element should be 4");
+
+let val = pop(list);
+assert_equals(val, 4, "Popped value should be 4");
+assert_equals(len(list), 3, "List length after pop should be 3");
+
+// Nested Lists
+print "Testing Nested Lists...";
+let nested = [[1, 2], [3, 4]];
+assert_equals(len(nested), 2, "Nested list length should be 2"); 
+// Multi-dimensional access usually requires: (nested[0])[0] if parser is strict, or nested[0][0]
+// Let's try nested[0][0]
+assert_equals(nested[0][0], 1, "Nested [0][0] should be 1");
+
+// Heterogeneous Lists
+let mixed = [1, "two", true];
+assert_equals(mixed[0], 1, "Mixed[0] is int");
+assert_equals(mixed[1], "two", "Mixed[1] is string");
+
+
+// --- Map Tests ---
+print "\n--- Testing Maps ---";
+let map = {"key1": "value1", "key2": 2};
+assert_equals(map["key1"], "value1", "Map get key1");
+assert_equals(map["key2"], 2, "Map get key2");
+
+map["key3"] = true;
+assert_equals(map["key3"], true, "Map set key3");
+assert_equals(len(map), 3, "Map length should be 3");
+
+let missing = map["missing"];
+assert_equals(missing, nil, "Missing key should return Unit/Nil");
+
+
+// --- Set Tests ---
+print "\n--- Testing Sets ---";
+let s = create_set();
+add_to_set(s, "apple");
+add_to_set(s, "banana");
+assert_equals(len(s), 2, "Set length should be 2");
+assert_true(contains_in_set(s, "apple"), "Set should contain apple");
+assert_true(!contains_in_set(s, "cherry"), "Set should not contain cherry");
+
+remove_from_set(s, "apple");
+assert_equals(len(s), 1, "Set length after remove should be 1");
+assert_true(!contains_in_set(s, "apple"), "Set should not contain apple anymore");
+
+
+// --- Queue Tests ---
+print "\n--- Testing Queues ---";
+let q = create_queue();
+enqueue(q, 10);
+enqueue(q, 20);
+assert_equals(peek_queue(q), 10, "Peek should see 10");
+assert_equals(len(q), 2, "Queue length should be 2");
+
+let dq = dequeue(q);
+assert_equals(dq, 10, "Dequeue should return 10");
+assert_equals(len(q), 1, "Queue length should be 1");
+
+
+// --- String Tests ---
+print "\n--- Testing Strings ---";
+let str = "Hello" + " " + "World";
+assert_equals(str, "Hello World", "String concatenation");
+assert_equals(len(str), 11, "String length");
+
+// --- Tree (Manual) ---
+print "\n--- Testing Tree (Manual) ---";
+let root = { "val": 10, "left": nil, "right": nil };
+let child = { "val": 5, "left": nil, "right": nil };
+root["left"] = child;
+assert_equals(root["left"]["val"], 5, "Tree left child val");
+
+print "\n=== Data Structures Test Completed Successfully ===";

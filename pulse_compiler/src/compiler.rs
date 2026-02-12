@@ -65,6 +65,8 @@ struct CompilerUpvalue {
 pub enum FunctionType {
     Script,
     Function,
+    Method,
+    Initializer,
 }
 
 pub struct Compiler<'a, 'b> {
@@ -90,7 +92,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
         let mut locals = Vec::new();
         // Reserve slot 0
         locals.push(Local {
-            name: Token::Identifier("".to_string()),
+            name: if function_type == FunctionType::Method || function_type == FunctionType::Initializer {
+                Token::Identifier("this".to_string())
+            } else {
+                Token::Identifier("".to_string())
+            },
             depth: 0,
             is_captured: false,
         });
@@ -125,12 +131,17 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     // --- Declarations ---
-    // --- Declarations ---
     fn declaration(&mut self) -> PulseResult<()> {
         if self.matches(Token::Fn)? || self.matches(Token::Def)? {
             self.fun_declaration()
         } else if self.matches(Token::Let)? {
             self.var_declaration()
+        } else if self.matches(Token::Actor)? {
+            self.actor_declaration()
+        } else if self.matches(Token::Class)? {
+            self.class_declaration()
+        } else if self.matches(Token::Shared)? {
+            self.shared_memory_declaration()
         } else {
             self.statement()
         }
@@ -201,7 +212,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         // Add function to Parent (self) constants
         let idx = self.chunk.add_constant(Constant::Function(Box::new(function)));
         self.emit_byte(Op::Closure as u8);
-        self.emit_byte(idx as u8);
+        self.emit_u16(idx as u16);
         
         // Emit upvalue capturing info
         for i in 0..upvalue_count {
@@ -214,7 +225,12 @@ impl<'a, 'b> Compiler<'a, 'b> {
     
     // Helper to emit return
     fn emit_return(&mut self) {
-        self.emit_byte(Op::Unit as u8); // Default return
+        if self.function_type == FunctionType::Initializer {
+            self.emit_byte(Op::GetLocal as u8);
+            self.emit_byte(0); // Return 'this'
+        } else {
+            self.emit_byte(Op::Unit as u8); // Default return
+        }
         self.emit_byte(Op::Return as u8);
     }
 
@@ -231,7 +247,153 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.define_variable(global);
         Ok(())
     }
-    
+
+    fn actor_declaration(&mut self) -> PulseResult<()> {
+        let global = self.parse_variable("Expect actor name.")?;
+        let name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+
+        // Create a function that represents the actor behavior
+        // This is a simplified approach - in a real implementation, actors would be more complex
+        self.actor_function(FunctionType::Function, name)?;
+        self.define_variable(global);
+        Ok(())
+    }
+
+    fn class_declaration(&mut self) -> PulseResult<()> {
+        self.consume_identifier("Expected class name")?;
+        let class_name = if let Token::Identifier(s) = &self.parser().previous {
+            s.clone()
+        } else {
+            return Err(PulseError::CompileError("Expected class name".into(), 0));
+        };
+
+        let name_idx = self.identifier_constant(&Token::Identifier(class_name.clone()))? as u16;
+        
+        self.declare_variable()?;
+
+        self.emit_byte(Op::BuildClass as u8);
+        self.emit_u16(name_idx);
+        
+        // Parse superclass
+        if self.matches(Token::Extends)? {
+            self.consume_identifier("Expected superclass name")?;
+            let super_name = if let Token::Identifier(s) = &self.parser().previous {
+                s.clone()
+            } else {
+                return Err(PulseError::CompileError("Expected superclass name".into(), 0));
+            };
+            
+            // Push superclass onto stack?
+            // Op::BuildClass expects [Superclass] if has_super?
+            // Current VM Op::BuildClass doesn't pop superclass. It takes index?
+            // Let's check VM implementation...
+            // It reads has_super, super_idx.
+            // So we just emit index.
+            
+            self.emit_byte(1); // has_super
+            let super_idx = self.identifier_constant(&Token::Identifier(super_name))?;
+            self.emit_u16(super_idx);
+        } else {
+            self.emit_byte(0); // no superclass
+        }
+
+        self.define_variable(name_idx);
+
+        // Push class back on stack to attach methods
+        self.named_variable(Token::Identifier(class_name.clone()), false)?;
+
+        self.consume(Token::LeftBrace, "Expect '{' before class body.")?;
+
+        // Create scope for super
+        self.begin_scope();
+        // TODO: Register 'super' if inheritance exists
+
+        while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
+            if self.matches(Token::Fn)? || self.matches(Token::Def)? {
+                self.consume_identifier("Expected method name")?;
+                let method_name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+                let method_name_idx = self.identifier_constant(&Token::Identifier(method_name.clone()))? as u16;
+
+                if method_name == "init" {
+                   self.function(FunctionType::Initializer, format!("{}.{}", class_name, method_name))?;
+                } else {
+                   self.function(FunctionType::Method, format!("{}.{}", class_name, method_name))?;
+                }
+                
+                self.emit_byte(Op::Method as u8);
+                self.emit_u16(method_name_idx);
+            } else {
+                return Err(PulseError::CompileError("Expected method definition in class.".into(), 0));
+            }
+        }
+
+        self.consume(Token::RightBrace, "Expect '}' after class body.")?;
+        self.end_scope();
+        
+        self.emit_byte(Op::Pop as u8); // Pop class from stack
+
+        Ok(())
+    }
+
+    fn actor_function(&mut self, function_type: FunctionType, name: String) -> PulseResult<()> {
+        // Create new compiler for actor body
+        let mut compiler = Compiler::new(self.parser, self as *mut Compiler, function_type, self.module_path.clone());
+        compiler.begin_scope();
+
+        compiler.consume(Token::LeftBrace, "Expect '{' before actor body.")?;
+        compiler.block()?;
+
+        // Emit return in actor
+        compiler.emit_return();
+
+        let chunk = compiler.chunk.clone();
+        let upvalue_count = compiler.upvalues.len();
+        let function = Function {
+            arity: 0, // Actors typically don't take parameters in this form
+            chunk: Arc::new(chunk),
+            name,
+            upvalue_count,
+            module_path: self.module_path.clone(),
+        };
+
+        // Add function to Parent (self) constants
+        let idx = self.chunk.add_constant(Constant::Function(Box::new(function)));
+        self.emit_byte(Op::Closure as u8);
+        self.emit_u16(idx as u16);
+
+        // Emit upvalue capturing info
+        for i in 0..upvalue_count {
+            self.emit_byte(if compiler.upvalues[i].is_local { 1 } else { 0 });
+            self.emit_byte(compiler.upvalues[i].index);
+        }
+
+        Ok(())
+    }
+
+    fn shared_memory_declaration(&mut self) -> PulseResult<()> {
+        // Parse: shared memory IDENTIFIER = expression;
+        self.consume(Token::Memory, "Expect 'memory' after 'shared'.")?;
+        
+        let global = self.parse_variable("Expect shared memory name.")?;
+        let _name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+
+        self.consume(Token::Equal, "Expect '=' after shared memory name.")?;
+        
+        // Parse the initial value for the shared memory
+        self.expression()?;
+        
+        self.consume(Token::Semicolon, "Expect ';' after shared memory declaration.")?;
+        
+        // Emit instruction to create shared memory
+        self.emit_byte(Op::CreateSharedMemory as u8);
+        
+        // Define the shared memory in global scope
+        self.emit_byte(Op::DefineGlobal as u8);
+        self.emit_u16(global as u16);
+        
+        Ok(())
+    }
+
     // --- Statements ---
     fn statement(&mut self) -> PulseResult<()> {
         if self.matches(Token::Print)? {
@@ -260,6 +422,10 @@ impl<'a, 'b> Compiler<'a, 'b> {
             self.try_statement()?;
         } else if self.matches(Token::Throw)? {
             self.throw_statement()?;
+        } else if self.matches(Token::Lock)? {
+            self.lock_statement()?;
+        } else if self.matches(Token::Unlock)? {
+            self.unlock_statement()?;
         } else if self.matches(Token::LeftBrace)? {
             self.begin_scope();
             self.block()?;
@@ -305,9 +471,34 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn print_statement(&mut self) -> PulseResult<()> {
-        self.expression()?;
-        self.consume(Token::Semicolon, "Expect ';' after value.")?;
-        self.emit_byte(Op::Print as u8);
+        // Check if print is followed by parentheses (multi-arg form)
+        if self.matches(Token::LeftParen)? {
+            // Multi-argument print: print(arg1, arg2, ...)
+            let mut arg_count = 0;
+            
+            if !self.check(Token::RightParen) {
+                loop {
+                    self.expression()?;
+                    arg_count += 1;
+                    
+                    if !self.matches(Token::Comma)? {
+                        break;
+                    }
+                }
+            }
+            
+            self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
+            self.consume(Token::Semicolon, "Expect ';' after print statement.")?;
+            
+            // Emit multi-argument print
+            self.emit_byte(Op::PrintMulti as u8);
+            self.emit_byte(arg_count as u8);
+        } else {
+            // Single-argument print: print value;
+            self.expression()?;
+            self.consume(Token::Semicolon, "Expect ';' after value.")?;
+            self.emit_byte(Op::Print as u8);
+        }
         Ok(())
     }
 
@@ -637,6 +828,9 @@ impl<'a, 'b> Compiler<'a, 'b> {
         if self.matches(Token::Semicolon)? {
             self.emit_return();
         } else {
+            if self.function_type == FunctionType::Initializer {
+                return Err(PulseError::CompileError("Cannot return a value from an initializer.".into(), 0));
+            }
             self.expression()?;
             self.consume(Token::Semicolon, "Expect ';' after return value.")?;
             self.emit_byte(Op::Return as u8);
@@ -660,7 +854,23 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
         Ok(())
     }
-    
+
+    fn lock_statement(&mut self) -> PulseResult<()> {
+        // Parse: lock(expression);
+        self.expression()?;
+        self.consume(Token::Semicolon, "Expect ';' after lock statement.")?;
+        self.emit_byte(Op::LockSharedMemory as u8);
+        Ok(())
+    }
+
+    fn unlock_statement(&mut self) -> PulseResult<()> {
+        // Parse: unlock(expression);
+        self.expression()?;
+        self.consume(Token::Semicolon, "Expect ';' after unlock statement.")?;
+        self.emit_byte(Op::UnlockSharedMemory as u8);
+        Ok(())
+    }
+
     fn block(&mut self) -> PulseResult<()> {
         while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
             self.declaration()?;
@@ -1212,7 +1422,15 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn variable(&mut self, can_assign: bool) -> PulseResult<()> {
         let previous = self.parser().previous.clone();
-        self.named_variable(previous, can_assign)
+        if let Token::This = previous {
+            // Handle 'this' keyword
+            let slot = self.resolve_local(&Token::Identifier("this".to_string()))?;
+            self.emit_byte(Op::GetLocal as u8);
+            self.emit_byte(slot);
+            Ok(())
+        } else {
+            self.named_variable(previous, can_assign)
+        }
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) -> PulseResult<()> {
@@ -1240,10 +1458,10 @@ impl<'a, 'b> Compiler<'a, 'b> {
             if can_assign && self.matches(Token::Equal)? {
                 self.expression()?;
                 self.emit_byte(Op::SetGlobal as u8);
-                self.emit_byte(global_idx);
+                self.emit_u16(global_idx as u16);
             } else {
                 self.emit_byte(Op::GetGlobal as u8);
-                self.emit_byte(global_idx);
+                self.emit_u16(global_idx as u16);
             }
         }
         Ok(())
@@ -1357,7 +1575,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         (self.upvalues.len() - 1) as u8
     }
 
-    fn parse_variable(&mut self, msg: &str) -> PulseResult<u8> {
+    fn parse_variable(&mut self, msg: &str) -> PulseResult<u16> {
         self.consume_identifier(msg)?;
         self.declare_variable()?;
         if self.scope_depth > 0 {
@@ -1366,15 +1584,15 @@ impl<'a, 'b> Compiler<'a, 'b> {
         let name = self.parser().previous.clone();
         self.identifier_constant(&name) // Return name index for globals
     }
-    
-    fn identifier_constant(&mut self, name: &Token) -> PulseResult<u8> {
+
+    fn identifier_constant(&mut self, name: &Token) -> PulseResult<u16> {
         match name {
             Token::Identifier(s) => {
                 let idx = self.chunk.add_constant(Constant::String(s.clone()));
-                if idx > u8::MAX as usize {
+                if idx > u16::MAX as usize {
                     return Err(PulseError::CompileError("Too many constants.".into(), 0));
                 }
-                Ok(idx as u8)
+                Ok(idx as u16)
             },
             _ => Err(PulseError::CompileError("Expected identifier.".into(), 0)),
         }
@@ -1421,7 +1639,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         Ok(())
     }
 
-    fn define_variable(&mut self, global: u8) {
+    fn define_variable(&mut self, global: u16) {
         if self.scope_depth > 0 {
             // Local: mark initialized
             if let Some(local) = self.locals.last_mut() {
@@ -1430,7 +1648,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         } else {
             // Global
             self.emit_byte(Op::DefineGlobal as u8);
-            self.emit_byte(global);
+            self.emit_u16(global);
         }
     }
 
@@ -1566,23 +1784,36 @@ impl<'a, 'b> Compiler<'a, 'b> {
                 self.emit_byte(Op::Gt as u8);
                 self.emit_byte(Op::Not as u8);
             },
+            Token::Percent => self.emit_byte(Op::Mod as u8),
+            Token::LogicalAnd => {
+                // For logical operators, we need short-circuit evaluation
+                // This is a simplified approach - ideally we'd implement proper short-circuiting
+                // For now, emit as regular boolean AND
+                self.emit_byte(Op::And as u8);  // Use existing AND operation
+            },
+            Token::LogicalOr => {
+                // Similar for OR
+                self.emit_byte(Op::Or as u8);  // Use existing OR operation
+            },
             _ => return Err(PulseError::CompileError("Invalid binary operator".into(), 0)),
         }
         Ok(())
     }
 
-    fn dot(&mut self, _can_assign: bool) -> PulseResult<()> {
+    fn dot(&mut self, can_assign: bool) -> PulseResult<()> {
         self.consume_identifier("Expect property name after '.'.")?;
         let name = self.parser().previous.clone();
         let idx = self.identifier_constant(&name)?;
         
-        // Stack: [Object]
-        // We want: [Object, "Property"]
-        // Then Op::GetIndex
         self.emit_byte(Op::Const as u8);
-        self.emit_byte(idx);
-        
-        self.emit_byte(Op::GetIndex as u8);
+        self.emit_u16(idx as u16);
+
+        if can_assign && self.matches(Token::Equal)? {
+            self.expression()?;
+            self.emit_byte(Op::SetIndex as u8);
+        } else {
+            self.emit_byte(Op::GetIndex as u8);
+        }
         Ok(())
     }
 
@@ -1670,12 +1901,40 @@ impl<'a, 'b> Compiler<'a, 'b> {
             _ => unreachable!(),
         }));
         
-        if idx > u8::MAX as usize {
+        if idx > u16::MAX as usize {
             return Err(PulseError::CompileError("Too many constants.".into(), 0));
         }
-        
+
         self.emit_byte(Op::Import as u8);
-        self.emit_byte(idx as u8);
+        self.emit_u16(idx as u16);
+        Ok(())
+    }
+
+    fn anonymous_function(&mut self, _can_assign: bool) -> PulseResult<()> {
+        // Parse anonymous function: fn(parameters) { body }
+        let name = format!("lambda_{}", self.chunk.code.len()); // Generate unique name
+        self.function(FunctionType::Function, name)?;
+        Ok(())
+    }
+
+    fn super_(&mut self, _can_assign: bool) -> PulseResult<()> {
+        if self.matches(Token::Dot)? {
+            self.consume_identifier("Expect superclass method name.")?;
+            let name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+            let name_idx = self.identifier_constant(&Token::Identifier(name))?;
+
+            // Push 'this'
+            self.named_variable(Token::Identifier("this".to_string()), false)?;
+
+            // Push 'super'
+            self.named_variable(Token::Identifier("super".to_string()), false)?;
+
+            self.emit_byte(Op::GetSuper as u8);
+            self.emit_u16(name_idx as u16);
+        } else {
+            // Just 'super' access
+             self.named_variable(Token::Identifier("super".to_string()), false)?;
+        }
         Ok(())
     }
 
@@ -1708,6 +1967,24 @@ impl<'a, 'b> Compiler<'a, 'b> {
         Ok(())
     }
 
+    fn link_expr(&mut self, _can_assign: bool) -> PulseResult<()> {
+        // link(pid)
+        self.consume(Token::LeftParen, "Expect '(' after 'link'.")?;
+        self.expression()?; // pid
+        self.consume(Token::RightParen, "Expect ')' after arguments.")?;
+        self.emit_byte(Op::Link as u8);
+        Ok(())
+    }
+
+    fn monitor_expr(&mut self, _can_assign: bool) -> PulseResult<()> {
+        // monitor(pid)
+        self.consume(Token::LeftParen, "Expect '(' after 'monitor'.")?;
+        self.expression()?; // pid
+        self.consume(Token::RightParen, "Expect ')' after arguments.")?;
+        self.emit_byte(Op::Monitor as u8);
+        Ok(())
+    }
+
     fn call(&mut self, _can_assign: bool) -> PulseResult<()> {
         let mut arg_count = 0;
         if !self.check(Token::RightParen) {
@@ -1730,7 +2007,6 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> PulseResult<()> {
-        println!("DEBUG: Entering parse_precedence with {:?}", precedence);
         self.advance()?;
         
         let previous = self.parser().previous.clone();
@@ -1739,6 +2015,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             let can_assign = precedence <= Precedence::Assignment;
             prefix_fn(self, can_assign)?;
         } else {
+            println!("DEBUG: Expect expression failed on token: {:?}", previous);
             return Err(PulseError::CompileError("Expect expression.".into(), 0));
         }
 
@@ -1776,41 +2053,39 @@ impl<'a, 'b> Compiler<'a, 'b> {
             Token::LeftBracket => ParseRule { prefix: Some(Self::list_literal), infix: Some(Self::subscript), precedence: Precedence::Call },
             Token::Identifier(_) => ParseRule { prefix: Some(Self::variable), infix: None, precedence: Precedence::None },
             Token::Spawn => ParseRule { prefix: Some(Self::spawn), infix: None, precedence: Precedence::None },
+            Token::Link => ParseRule { prefix: Some(Self::link_expr), infix: None, precedence: Precedence::None },
+            Token::Monitor => ParseRule { prefix: Some(Self::monitor_expr), infix: None, precedence: Precedence::None },
             Token::Receive => ParseRule { prefix: Some(Self::receive), infix: None, precedence: Precedence::None },
             Token::Register => ParseRule { prefix: Some(Self::register_expr), infix: None, precedence: Precedence::None },
             Token::Unregister => ParseRule { prefix: Some(Self::unregister_expr), infix: None, precedence: Precedence::None },
             Token::WhereIs => ParseRule { prefix: Some(Self::whereis_expr), infix: None, precedence: Precedence::None },
             Token::Match => ParseRule { prefix: Some(Self::match_expression), infix: None, precedence: Precedence::None },
             Token::Import => ParseRule { prefix: Some(Self::import_expression), infix: None, precedence: Precedence::None },
+            Token::Bang => ParseRule { prefix: Some(Self::unary), infix: None, precedence: Precedence::Unary },
             Token::And => ParseRule { prefix: None, infix: Some(Self::and_), precedence: Precedence::And },
             Token::Or => ParseRule { prefix: None, infix: Some(Self::or_), precedence: Precedence::Or },
+            Token::Percent => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Factor },
+            Token::LogicalAnd => ParseRule { prefix: None, infix: Some(Self::and_), precedence: Precedence::And },
+            Token::LogicalOr => ParseRule { prefix: None, infix: Some(Self::or_), precedence: Precedence::Or },
+            Token::This => ParseRule { prefix: Some(Self::variable), infix: None, precedence: Precedence::None },
+            Token::Super => ParseRule { prefix: Some(Self::super_), infix: None, precedence: Precedence::None },
+            Token::Fn => ParseRule { prefix: Some(Self::anonymous_function), infix: None, precedence: Precedence::None },
             _ => ParseRule { prefix: None, infix: None, precedence: Precedence::None },
         }
     }
 
     // --- Helpers ---
     fn advance(&mut self) -> PulseResult<()> {
-        self.parser().advance()?;
-        println!("Token: {:?}", self.parser().current);
-        Ok(())
+        self.parser().advance()
     }
 
     fn consume(&mut self, expected: Token, msg: &str) -> PulseResult<()> {
-        if self.parser().current == expected {
-            self.parser().advance()?;
-            println!("Consumed Success: {:?}", expected);
-            Ok(())
-        } else {
-            println!("Consume Mismatch! Expected: {:?}, Got: {:?}", expected, self.parser().current);
-            self.parser().consume(expected, msg)
-        }
+        self.parser().consume(expected, msg)
     }
 
     fn matches(&mut self, expected: Token) -> PulseResult<bool> {
-        // println!("DEBUG: Comparing {:?} == {:?}", self.parser().current, expected);
         if self.parser().current == expected {
             self.parser().advance()?;
-            println!("Matched Success: {:?}", expected);
             Ok(true)
         } else {
             Ok(false)
@@ -1852,11 +2127,17 @@ impl<'a, 'b> Compiler<'a, 'b> {
         let line = self.parser().previous_line;
         self.chunk.write(byte, line);
     }
-    
+
+    fn emit_u16(&mut self, value: u16) {
+        let bytes = value.to_le_bytes();
+        self.emit_byte(bytes[0]);
+        self.emit_byte(bytes[1]);
+    }
+
     fn emit_constant(&mut self, value: Constant) {
         let idx = self.chunk.add_constant(value);
         self.emit_byte(Op::Const as u8);
-        self.emit_byte(idx as u8);
+        self.emit_u16(idx as u16);
     }
 }
 

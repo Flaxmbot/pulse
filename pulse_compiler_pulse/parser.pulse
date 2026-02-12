@@ -1,0 +1,424 @@
+// Pulse Parser Implementation (Modular Version)
+let l_mod = import "./lexer.pulse";
+let a_mod = import "./ast.pulse";
+
+// --- Precedence Levels ---
+let PREC_NONE = 0;
+let PREC_ASSIGNMENT = 1;
+let PREC_OR = 2;
+let PREC_AND = 3;
+let PREC_EQUALITY = 4;
+let PREC_COMPARISON = 5;
+let PREC_TERM = 6;
+let PREC_FACTOR = 7;
+let PREC_UNARY = 8;
+let PREC_CALL = 9;
+let PREC_PRIMARY = 10;
+
+fn make_parser(lexer) {
+    let p = {
+        "lexer": lexer,
+        "current": nil,
+        "previous": nil,
+        "had_error": false,
+        "panic_mode": false
+    };
+    advance(p);
+    return p;
+}
+
+fn advance(p) {
+    p["previous"] = p["current"];
+    while (true) {
+        p["current"] = l_mod["next_token"](p["lexer"]);
+        if (p["current"]["type"] != "ERROR") break;
+        error_at_current(p, p["current"]["lexeme"]);
+    }
+}
+
+fn consume(p, t, m) {
+    if (p["current"]["type"] == t) {
+        advance(p);
+        return true;
+    }
+    error_at_current(p, m);
+    return false;
+}
+
+fn check(p, t) {
+    return p["current"]["type"] == t;
+}
+
+fn matches(p, t) {
+    if (!check(p, t)) return false;
+    advance(p);
+    return true;
+}
+
+fn error_at_current(p, m) {
+    error_at(p, p["current"], m);
+}
+
+fn error(p, m) {
+    error_at(p, p["previous"], m);
+}
+
+fn error_at(p, token, m) {
+    if (p["panic_mode"]) return;
+    p["panic_mode"] = true;
+    p["had_error"] = true;
+    print "Error at line " + to_string(token["line"]) + ": " + m;
+}
+
+// --- Expressions ---
+
+fn parse_precedence(p, precedence) {
+    advance(p);
+    let token_type = p["previous"]["type"];
+    let prefix_fn = get_prefix(token_type);
+    if (prefix_fn == nil) {
+        error(p, "Expect expression.");
+        return nil;
+    }
+    
+    let can_assign = precedence <= PREC_ASSIGNMENT;
+    let left_expr = call_prefix(p, prefix_fn, can_assign);
+    
+    while (precedence <= get_precedence(p["current"]["type"])) {
+        advance(p);
+        let infix_fn = get_infix(p["previous"]["type"]);
+        left_expr = call_infix(p, infix_fn, left_expr, can_assign);
+    }
+    
+    return left_expr;
+}
+
+fn expression(p) {
+    return parse_precedence(p, PREC_ASSIGNMENT);
+}
+
+fn get_precedence(token_type) {
+    if (token_type == "LEFT_PAREN") return PREC_CALL;
+    if (token_type == "DOT") return PREC_CALL;
+    if (token_type == "LEFT_BRACKET") return PREC_CALL;
+    if (token_type == "MINUS") return PREC_TERM;
+    if (token_type == "PLUS") return PREC_TERM;
+    if (token_type == "SLASH") return PREC_FACTOR;
+    if (token_type == "STAR") return PREC_FACTOR;
+    if (token_type == "PERCENT") return PREC_FACTOR;
+    if (token_type == "BANG_EQUAL") return PREC_EQUALITY;
+    if (token_type == "EQUAL_EQUAL") return PREC_EQUALITY;
+    if (token_type == "GREATER") return PREC_COMPARISON;
+    if (token_type == "GREATER_EQUAL") return PREC_COMPARISON;
+    if (token_type == "LESS") return PREC_COMPARISON;
+    if (token_type == "LESS_EQUAL") return PREC_COMPARISON;
+    if (token_type == "AND") return PREC_AND;
+    if (token_type == "OR") return PREC_OR;
+    return PREC_NONE;
+}
+
+fn get_prefix(token_type) {
+    if (token_type == "LEFT_PAREN") return "grouping";
+    if (token_type == "MINUS") return "unary";
+    if (token_type == "BANG") return "unary";
+    if (token_type == "IDENTIFIER") return "variable";
+    if (token_type == "STRING") return "literal";
+    if (token_type == "INT") return "literal";
+    if (token_type == "FLOAT") return "literal";
+    if (token_type == "TRUE") return "literal";
+    if (token_type == "FALSE") return "literal";
+    if (token_type == "NIL") return "literal";
+    if (token_type == "LEFT_BRACKET") return "list";
+    if (token_type == "LEFT_BRACE") return "map";
+    return nil;
+}
+
+fn get_infix(token_type) {
+    if (token_type == "LEFT_PAREN") return "call";
+    if (token_type == "DOT") return "dot";
+    if (token_type == "LEFT_BRACKET") return "index";
+    if (token_type == "MINUS") return "binary";
+    if (token_type == "PLUS") return "binary";
+    if (token_type == "SLASH") return "binary";
+    if (token_type == "STAR") return "binary";
+    if (token_type == "PERCENT") return "binary";
+    if (token_type == "BANG_EQUAL") return "binary";
+    if (token_type == "EQUAL_EQUAL") return "binary";
+    if (token_type == "GREATER") return "binary";
+    if (token_type == "GREATER_EQUAL") return "binary";
+    if (token_type == "LESS") return "binary";
+    if (token_type == "LESS_EQUAL") return "binary";
+    if (token_type == "AND") return "logical";
+    if (token_type == "OR") return "logical";
+    return nil;
+}
+
+fn call_prefix(p, fn_name, can_assign) {
+    if (fn_name == "grouping") return parse_grouping(p);
+    if (fn_name == "unary") return parse_unary(p);
+    if (fn_name == "variable") return parse_variable(p, can_assign);
+    if (fn_name == "literal") return parse_literal(p);
+    if (fn_name == "list") return parse_list(p);
+    if (fn_name == "map") return parse_map(p);
+    return nil;
+}
+
+fn call_infix(p, fn_name, left, can_assign) {
+    if (fn_name == "binary") return parse_binary(p, left);
+    if (fn_name == "logical") return parse_logical(p, left);
+    if (fn_name == "call") return parse_call(p, left);
+    if (fn_name == "index") return parse_index(p, left);
+    if (fn_name == "dot") return parse_dot(p, left, can_assign);
+    return nil;
+}
+
+fn parse_literal(p) {
+    let token = p["previous"];
+    if (token["type"] == "INT") return a_mod["literal_expr"](to_int(token["lexeme"]));
+    if (token["type"] == "FLOAT") return a_mod["literal_expr"](to_float(token["lexeme"]));
+    if (token["type"] == "STRING") return a_mod["literal_expr"](token["lexeme"]);
+    if (token["type"] == "TRUE") return a_mod["literal_expr"](true);
+    if (token["type"] == "FALSE") return a_mod["literal_expr"](false);
+    if (token["type"] == "NIL") return a_mod["literal_expr"](nil);
+    return nil;
+}
+
+fn parse_grouping(p) {
+    let expr = expression(p);
+    consume(p, "RIGHT_PAREN", "Expect ')' after expression.");
+    return expr;
+}
+
+fn parse_unary(p) {
+    let operator = p["previous"]["lexeme"];
+    let right = parse_precedence(p, PREC_UNARY);
+    return a_mod["unary_expr"](operator, right);
+}
+
+fn parse_binary(p, left) {
+    let operator = p["previous"]["lexeme"];
+    let precedence = get_precedence(p["previous"]["type"]);
+    let right = parse_precedence(p, precedence + 1);
+    return a_mod["binary_expr"](left, operator, right);
+}
+
+fn parse_logical(p, left) {
+    let operator = p["previous"]["lexeme"];
+    let precedence = get_precedence(p["previous"]["type"]);
+    let right = parse_precedence(p, precedence + 1);
+    return a_mod["logical_expr"](left, operator, right);
+}
+
+fn parse_variable(p, can_assign) {
+    let name = p["previous"]["lexeme"];
+    if (can_assign and matches(p, "EQUAL")) {
+        let value = expression(p);
+        return a_mod["assignment_expr"](name, value);
+    }
+    return a_mod["variable_expr"](name);
+}
+
+fn parse_list(p) {
+    let elements = [];
+    if (!check(p, "RIGHT_BRACKET")) {
+        loop {
+            push(elements, expression(p));
+            if (!matches(p, "COMMA")) break;
+        }
+    }
+    consume(p, "RIGHT_BRACKET", "Expect ']' after list elements.");
+    return a_mod["list_expr"](elements);
+}
+
+fn parse_map(p) {
+    let entries = {};
+    if (!check(p, "RIGHT_BRACE")) {
+        loop {
+            let key = expression(p);
+            consume(p, "COLON", "Expect ':' after map key.");
+            let value = expression(p);
+            entries[to_string(key)] = value;
+            if (!matches(p, "COMMA")) break;
+        }
+    }
+    consume(p, "RIGHT_BRACE", "Expect '}' after map entries.");
+    return a_mod["map_expr"](entries);
+}
+
+fn parse_call(p, callee) {
+    let arguments = [];
+    if (!check(p, "RIGHT_PAREN")) {
+        loop {
+            push(arguments, expression(p));
+            if (!matches(p, "COMMA")) break;
+        }
+    }
+    consume(p, "RIGHT_PAREN", "Expect ')' after arguments.");
+    return a_mod["call_expr"](callee, arguments);
+}
+
+fn parse_index(p, left) {
+    let index = expression(p);
+    consume(p, "RIGHT_BRACKET", "Expect ']' after index.");
+    return a_mod["index_expr"](left, index);
+}
+
+fn parse_dot(p, left, can_assign) {
+    consume(p, "IDENTIFIER", "Expect property name after '.'.");
+    let name = p["previous"]["lexeme"];
+    if (can_assign and matches(p, "EQUAL")) {
+        let value = expression(p);
+        return a_mod["set_expr"](left, name, value);
+    }
+    return a_mod["get_expr"](left, name);
+}
+
+fn parse_declaration(p) {
+    if (matches(p, "FN")) return parse_fn_declaration(p);
+    if (matches(p, "LET")) return parse_let_declaration(p);
+    if (matches(p, "ACTOR")) return parse_actor_declaration(p);
+    if (matches(p, "CLASS")) return parse_class_declaration(p);
+    return parse_statement(p);
+}
+
+fn parse_fn_declaration(p) {
+    consume(p, "IDENTIFIER", "Expect function name.");
+    let name = p["previous"]["lexeme"];
+    consume(p, "LEFT_PAREN", "Expect '(' after function name.");
+    let params = [];
+    if (!check(p, "RIGHT_PAREN")) {
+        loop {
+            consume(p, "IDENTIFIER", "Expect parameter name.");
+            push(params, p["previous"]["lexeme"]);
+            if (!matches(p, "COMMA")) break;
+        }
+    }
+    consume(p, "RIGHT_PAREN", "Expect ')' after parameters.");
+    let return_type = nil;
+    if (matches(p, "ARROW")) {
+        consume(p, "IDENTIFIER", "Expect return type name.");
+        return_type = p["previous"]["lexeme"];
+    }
+    consume(p, "LEFT_BRACE", "Expect '{' before function body.");
+    let body = parse_block(p);
+    return a_mod["fn_decl"](name, params, body, return_type);
+}
+
+fn parse_let_declaration(p) {
+    consume(p, "IDENTIFIER", "Expect variable name.");
+    let name = p["previous"]["lexeme"];
+    let type_annotation = nil;
+    if (matches(p, "COLON")) {
+        consume(p, "IDENTIFIER", "Expect type name.");
+        type_annotation = p["previous"]["lexeme"];
+    }
+    let initializer = nil;
+    if (matches(p, "EQUAL")) {
+        initializer = expression(p);
+    }
+    consume(p, "SEMICOLON", "Expect ';' after variable declaration.");
+    return a_mod["let_stmt"](name, initializer, type_annotation);
+}
+
+fn parse_actor_declaration(p) {
+    consume(p, "IDENTIFIER", "Expect actor name.");
+    let name = p["previous"]["lexeme"];
+    consume(p, "LEFT_BRACE", "Expect '{' before actor body.");
+    let members = [];
+    while (!check(p, "RIGHT_BRACE") and !check(p, "EOF")) {
+        push(members, parse_declaration(p));
+    }
+    consume(p, "RIGHT_BRACE", "Expect '}' after actor body.");
+    return a_mod["actor_decl"](name, [], members);
+}
+
+fn parse_class_declaration(p) {
+    consume(p, "IDENTIFIER", "Expect class name.");
+    let name = p["previous"]["lexeme"];
+    consume(p, "LEFT_BRACE", "Expect '{' before class body.");
+    let members = [];
+    while (!check(p, "RIGHT_BRACE") and !check(p, "EOF")) {
+        push(members, parse_declaration(p));
+    }
+    consume(p, "RIGHT_BRACE", "Expect '}' after class body.");
+    return a_mod["class_decl"](name, [], members);
+}
+
+fn parse_statement(p) {
+    if (matches(p, "IF")) return parse_if_statement(p);
+    if (matches(p, "WHILE")) return parse_while_statement(p);
+    if (matches(p, "FOR")) return parse_for_statement(p);
+    if (matches(p, "RETURN")) return parse_return_statement(p);
+    if (matches(p, "PRINT")) return parse_print_statement(p);
+    if (matches(p, "LEFT_BRACE")) return parse_block(p);
+    return parse_expression_statement(p);
+}
+
+fn parse_if_statement(p) {
+    consume(p, "LEFT_PAREN", "Expect '(' after 'if'.");
+    let condition = expression(p);
+    consume(p, "RIGHT_PAREN", "Expect ')' after condition.");
+    let then_branch = parse_statement(p);
+    let else_branch = nil;
+    if (matches(p, "ELSE")) {
+        else_branch = parse_statement(p);
+    }
+    return a_mod["if_stmt"](condition, then_branch, else_branch);
+}
+
+fn parse_while_statement(p) {
+    consume(p, "LEFT_PAREN", "Expect '(' after 'while'.");
+    let condition = expression(p);
+    consume(p, "RIGHT_PAREN", "Expect ')' after condition.");
+    let body = parse_statement(p);
+    return a_mod["while_stmt"](condition, body);
+}
+
+fn parse_for_statement(p) {
+    consume(p, "LEFT_PAREN", "Expect '(' after 'for'.");
+    consume(p, "IDENTIFIER", "Expect variable name in for loop.");
+    let name = p["previous"]["lexeme"];
+    consume(p, "IN", "Expect 'in' after for variable.");
+    let collection = expression(p);
+    consume(p, "RIGHT_PAREN", "Expect ')' after for clauses.");
+    let body = parse_statement(p);
+    return a_mod["for_stmt"](name, collection, body);
+}
+
+fn parse_return_statement(p) {
+    let value = nil;
+    if (!check(p, "SEMICOLON")) {
+        value = expression(p);
+    }
+    consume(p, "SEMICOLON", "Expect ';' after return value.");
+    return a_mod["return_stmt"](value);
+}
+
+fn parse_print_statement(p) {
+    let expr = expression(p);
+    consume(p, "SEMICOLON", "Expect ';' after value.");
+    return a_mod["print_stmt"](expr);
+}
+
+fn parse_block(p) {
+    let statements = [];
+    while (!check(p, "RIGHT_BRACE") and !check(p, "EOF")) {
+        push(statements, parse_declaration(p));
+    }
+    consume(p, "RIGHT_BRACE", "Expect '}' after block.");
+    return a_mod["block_stmt"](statements);
+}
+
+fn parse_expression_statement(p) {
+    let expr = expression(p);
+    consume(p, "SEMICOLON", "Expect ';' after expression.");
+    return a_mod["expr_stmt"](expr);
+}
+
+fn parse_program(p) {
+    let statements = [];
+    while (!check(p, "EOF")) {
+        push(statements, parse_declaration(p));
+    }
+    return statements;
+}
