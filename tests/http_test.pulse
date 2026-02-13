@@ -1,0 +1,19 @@
+fn test_http() {
+    let raw = "GET /hello HTTP/1.1\r\nHost: localhost\r\nUser-Agent: Pulse\r\n\r\n";
+    let req = http_parse(raw);
+    
+    println("Method:", req.method);
+    println("Path:", req.path);
+    println("Host:", req.headers.Host);
+    
+    let resp = http_format_response(200, "Hello from Pulse!");
+    println("Formatted Response:\n" + resp);
+    
+    if (req.method == "GET" && req.path == "/hello") {
+        println("HTTP Parse Test: PASSED");
+    } else {
+        println("HTTP Parse Test: FAILED");
+    }
+}
+
+test_http();

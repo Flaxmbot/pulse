@@ -1,5 +1,4 @@
 use pulse_core::object::{Object, ObjHandle, HeapInterface};
-use pulse_core::Value;
 
 
 #[derive(Debug)]
@@ -50,6 +49,7 @@ impl Heap {
             Object::SharedMemory(_) => 16, // Rough estimate
             Object::Socket(_) => 64, // Struct + OS resource overhead
             Object::SharedBuffer(_) => 16, // Wrapper
+            Object::Listener(_) => 16,
         };
         
         if let Some(idx) = self.free_head {
@@ -188,6 +188,7 @@ impl Heap {
                          Object::SharedBuffer(_) => 16,
                          Object::Instance(i) => 32 + i.fields.len() * 16,
                          Object::BoundMethod(_) => 32,
+                         Object::Listener(_) => 16,
                      };
                      self.bytes_allocated = self.bytes_allocated.saturating_sub(size_estimate);
                  }

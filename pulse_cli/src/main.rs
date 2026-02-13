@@ -50,8 +50,14 @@ enum Commands {
         #[arg(short, long)]
         version: Option<String>,
     },
-    /// Build the project
-    Build,
+    /// Build the project to a native executable
+    Build {
+        /// Path to the .pulse file
+        file: PathBuf,
+        /// Output executable name
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Generate documentation
     Doc {
         /// Source directory (default: src/)
@@ -95,8 +101,11 @@ async fn main() {
         Some(Commands::Add { package, version }) => {
             add_dependency(package, version);
         }
-        Some(Commands::Build) => {
-            build_project();
+        Some(Commands::Build { file, output }) => {
+            if let Err(e) = build_file(file, output) {
+                eprintln!("Build Error: {}", e);
+                std::process::exit(1);
+            }
         }
         Some(Commands::Doc { source, output }) => {
             generate_docs(source, output);
@@ -218,6 +227,47 @@ fn init_project(path: Option<PathBuf>, name: Option<String>) {
 
 fn add_dependency(package: String, version: Option<String>) {
     println!("Adding dependency {} {:?}", package, version);
+}
+
+fn build_file(path: PathBuf, output: Option<PathBuf>) -> Result<(), String> {
+    let source = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let mut parser = pulse_compiler::ParserV2::new(&source);
+    let script = parser.parse().map_err(|e| format!("Parse error: {}", e))?;
+
+    let context = inkwell::context::Context::create();
+    let mut codegen = pulse_compiler::LLVMCodegen::new(&context, "main_module");
+    codegen.gen_script(&script).map_err(|e| format!("Codegen error: {}", e))?;
+
+    let output_name = output.unwrap_or_else(|| path.with_extension("exe"));
+    let ll_file = path.with_extension("ll");
+    
+    // For now, we write the LLVM IR to a file and call clang
+    std::fs::write(&ll_file, codegen.module.print_to_string().to_string())
+        .map_err(|e| format!("Failed to write LLVM IR: {}", e))?;
+
+    println!("Compiling {} to native executable {}...", path.display(), output_name.display());
+
+    // Call clang to compile and link
+    // We need to link with pulse_aot_runtime
+    // Assume pulse_aot_runtime.lib is in the target/debug directory
+    // This is a bit brittle, but works for development
+    let status = std::process::Command::new("clang")
+        .arg(ll_file.to_str().unwrap())
+        .arg("-o")
+        .arg(output_name.to_str().unwrap())
+        .arg("-lpulse_aot_runtime")
+        .arg("-L./target/debug")
+        .status()
+        .map_err(|e| format!("Failed to invoke clang: {}", e))?;
+
+    if !status.success() {
+        return Err("Clang failed to build executable".into());
+    }
+
+    println!("Build successful: {}", output_name.display());
+    Ok(())
 }
 
 fn build_project() {

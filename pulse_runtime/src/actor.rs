@@ -199,7 +199,11 @@ impl Actor {
             Constant::Socket(s) => {
                 let h = self.vm.heap.alloc(Object::Socket(s));
                 Value::Obj(h)
-            }
+            },
+            Constant::Listener(l) => {
+                let h = self.vm.heap.alloc(Object::Listener(l));
+                Value::Obj(h)
+            },
         }
     }
 }

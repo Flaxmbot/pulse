@@ -29,7 +29,7 @@ impl<'de> Deserialize<'de> for PulseSharedMemory {
 
 
 #[derive(Clone, Debug)]
-pub struct PulseSocket(pub Arc<tokio::net::TcpStream>);
+pub struct PulseSocket(pub Arc<tokio::sync::Mutex<tokio::net::TcpStream>>);
 
 impl PartialEq for PulseSocket {
     fn eq(&self, other: &Self) -> bool {
@@ -51,6 +51,29 @@ impl<'de> Deserialize<'de> for PulseSocket {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct PulseListener(pub Arc<tokio::net::TcpListener>);
+
+impl PartialEq for PulseListener {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Serialize for PulseListener {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> Deserialize<'de> for PulseListener {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where D: Deserializer<'de> {
+         Err(serde::de::Error::custom("Cannot deserialize Listener"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)] 
 pub enum Constant {
     Bool(bool),
@@ -60,6 +83,7 @@ pub enum Constant {
     Unit,
     SharedMemory(PulseSharedMemory),
     Socket(PulseSocket),
+    Listener(PulseListener),
     Function(Box<Function>),
 }
 
@@ -154,7 +178,7 @@ impl From<Constant> for Value {
             Constant::Unit => Value::Unit,
             Constant::String(_) => panic!("Cannot convert String Constant to Value without Heap"),
             Constant::Function(_) => panic!("Cannot convert Function Constant to Value without Heap"),
-            Constant::SharedMemory(_) | Constant::Socket(_) => panic!("Cannot convert complex Constant to Value without Heap"),
+            Constant::SharedMemory(_) | Constant::Socket(_) | Constant::Listener(_) => panic!("Cannot convert complex Constant to Value without Heap"),
         }
     }
 }

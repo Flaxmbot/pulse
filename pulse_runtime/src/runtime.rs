@@ -1,14 +1,14 @@
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicUsize, Ordering}};
 use tokio::sync::{mpsc, RwLock, Notify};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use pulse_core::{ActorId, PulseError, PulseResult, Value, Chunk, Constant};
-use pulse_core::object::{Object, ObjHandle, Closure};
+use pulse_core::{ActorId, PulseError, PulseResult, Chunk};
+use pulse_core::object::{Object, ObjHandle};
 use pulse_vm::VM;
-use crate::actor::{Actor, ActorStatus};
+use crate::actor::Actor;
 use crate::mailbox::{Message, SystemMessage};
 use crate::network::MessageEnvelope;
 
@@ -199,6 +199,9 @@ impl RuntimeHandle {
     }
     
     pub async fn exit(&self, pid: ActorId, reason: String) {
+        if reason != "normal" {
+            eprintln!("Actor {:?} exited with error: {}", pid, reason);
+        }
         // Remove from registry
         {
             let mut actors = self.state.actors.write().await;

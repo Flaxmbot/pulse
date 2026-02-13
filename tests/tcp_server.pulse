@@ -1,0 +1,53 @@
+fn server_task(port) {
+    println("Server: Starting on port " + to_string(port));
+    let listener = tcp_listen(port);
+    println("Server: Listening...");
+    
+    // Accept one connection
+    let socket = tcp_accept(listener);
+    println("Server: Accepted connection");
+    
+    // Read command
+    let cmd = tcp_receive(socket, 1024);
+    println("Server: Received '" + cmd + "'");
+    
+    // Send response
+    let response = "Echo: " + cmd;
+    tcp_send(socket, response);
+    println("Server: Sent response");
+}
+
+fn client_task(port) {
+    sleep(1000); // Wait for server to start
+    println("Client: Connecting to port " + to_string(port));
+    let socket = tcp_connect("127.0.0.1", port);
+    println("Client: Connected");
+    
+    tcp_send(socket, "Hello from Client");
+    println("Client: Sent message");
+    
+    let reply = tcp_receive(socket, 1024);
+    println("Client: Received '" + reply + "'");
+    
+    if (reply == "Echo: Hello from Client") {
+        println("TEST PASSED");
+    } else {
+        println("TEST FAILED: Expected 'Echo: Hello from Client', got '" + reply + "'");
+    }
+}
+
+// Main execution
+println("Starting Test...");
+
+// Use spawn { ... } syntax
+spawn {
+    server_task(9001);
+};
+
+spawn {
+    client_task(9001);
+};
+
+// Keep main alive for a bit to let actors finish
+sleep(2000);
+println("Main: Done");

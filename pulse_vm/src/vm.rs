@@ -125,10 +125,10 @@ impl VM {
         self.define_native("pop", pop_native);
         
         // Standard Library v2 natives
-        self.define_native("read_file", pulse_stdlib::io::read_file_native);
-        self.define_native("write_file", pulse_stdlib::io::write_file_native);
-        self.define_native("file_exists", pulse_stdlib::io::file_exists_native);
-        self.define_native("delete_file", pulse_stdlib::io::delete_file_native);
+        self.define_native_async("read_file", pulse_stdlib::io::read_file_native);
+        self.define_native_async("write_file", pulse_stdlib::io::write_file_native);
+        self.define_native_async("file_exists", pulse_stdlib::io::file_exists_native);
+        self.define_native_async("delete_file", pulse_stdlib::io::delete_file_native);
         self.define_native("json_parse", pulse_stdlib::json::json_parse_native);
         self.define_native("json_stringify", pulse_stdlib::json::json_stringify_native);
 
@@ -145,10 +145,15 @@ impl VM {
         // Networking natives
         self.define_native_async("tcp_connect", pulse_stdlib::networking::tcp_connect_native);
         self.define_native_async("tcp_listen", pulse_stdlib::networking::tcp_listen_native);
+        self.define_native_async("tcp_accept", pulse_stdlib::networking::tcp_accept_native);
+        self.define_native_async("tcp_send", pulse_stdlib::networking::tcp_send_native);
+        self.define_native_async("tcp_receive", pulse_stdlib::networking::tcp_receive_native);
         self.define_native_async("http_get", pulse_stdlib::networking::http_get_native);
         self.define_native_async("http_post", pulse_stdlib::networking::http_post_native);
         self.define_native_async("socket_create", pulse_stdlib::networking::socket_create_native);
         self.define_native_async("dns_resolve", pulse_stdlib::networking::dns_resolve_native);
+        self.define_native("http_parse", pulse_stdlib::http::http_parse_native);
+        self.define_native("http_format_response", pulse_stdlib::http::http_format_response_native);
 
         // Regex natives
         self.define_native("regex_compile", pulse_stdlib::regex::regex_compile_native);
@@ -211,7 +216,7 @@ impl VM {
         
         let script_func = Function {
             arity: 0,
-            chunk: chunk,
+            chunk: chunk.clone(),
             name: "spawned".to_string(), 
             upvalue_count: 0,
             module_path: None,
@@ -250,6 +255,20 @@ impl VM {
             exception_frames: Vec::new(),
             debug_ctx: None,
         };
+        
+        // Inherit global functions from the chunk
+        let chunk_for_globals = chunk.clone();
+        for constant in &chunk_for_globals.constants {
+            if let Constant::Function(f) = constant {
+                let closure = Closure {
+                    function: *f.clone(),
+                    upvalues: Vec::new(),
+                };
+                let handle = vm.heap.alloc(Object::Closure(closure));
+                vm.globals.insert(f.name.clone(), Value::Obj(handle));
+            }
+        }
+
         vm.push(Value::Obj(closure_handle));
         vm.register_all_natives();
         vm
@@ -465,6 +484,7 @@ impl VM {
                                     Object::SharedMemory(sm) => format!("<shared memory locked={}>", sm.locked),
                                     Object::Socket(_) => "<socket>".to_string(),
                                     Object::SharedBuffer(_) => "<shared buffer>".to_string(),
+                                    Object::Listener(_) => "<listener>".to_string(),
                                 }
                             }
                         };
@@ -628,6 +648,7 @@ impl VM {
                                 Value::Obj(handle)
                             },
                             Constant::SharedMemory(_) => panic!("SharedMemory constant loading not implemented"),
+                            Constant::Listener(_) => panic!("Listener constant loading not implemented"),
                         };
                         self.push(val);
                         return Ok(VMStatus::Running);
@@ -1161,6 +1182,7 @@ impl VM {
                                         Object::Module(_) => return Err(PulseError::RuntimeError("Cannot send modules".into())),
 
                                         Object::Socket(s) => Constant::Socket(s.clone()),
+                                        Object::Listener(l) => Constant::Listener(l.clone()),
                                         Object::SharedBuffer(sm) => Constant::SharedMemory(sm.clone()),
                                     }
                                 } else {
@@ -1816,6 +1838,7 @@ impl VM {
                         Object::Queue(q) => print!("<queue len={}>", q.len()),
                         Object::SharedMemory(sm) => print!("<shared memory locked={}>", sm.locked),
                         Object::Socket(_) => print!("<socket>"),
+                        Object::Listener(_) => print!("<listener>"),
                     }
                 } else {
                     print!("<freed object>");
@@ -1963,8 +1986,9 @@ impl VM {
                         Object::Set(s) => format!("<set len={}>", s.len()),
                         Object::Queue(q) => format!("<queue len={}>", q.len()),
 
-                        Object::SharedMemory(sm) => "SharedMemory".to_string(),
+                        Object::SharedMemory(_sm) => "SharedMemory".to_string(),
                         Object::Socket(_) => "Socket".to_string(),
+                        Object::Listener(_) => "Listener".to_string(),
                         Object::SharedBuffer(_) => "SharedBuffer".to_string(),
                     }
                 } else {
@@ -2027,7 +2051,7 @@ impl HeapInterface for VM {
         // Mark Frames (Closures)
         for frame in &self.frames {
             self.heap.mark_object(frame.closure);
-             if let Some(path) = &frame.module_path {
+             if let Some(_path) = &frame.module_path {
                  // Strings are objects? No, module_path is Option<String>.
                  // If it was ObjHandle, we'd mark it. String is owned here.
              }
@@ -2068,7 +2092,7 @@ impl HeapInterface for VM {
         self.heap.trace();
         
         // 3. Sweep
-        let freed = self.heap.sweep();
+        let _freed = self.heap.sweep();
         
         // 4. Update Stats
         let (allocated, _) = self.heap.get_allocation_stats();

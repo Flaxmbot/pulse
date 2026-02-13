@@ -29,7 +29,7 @@ pub fn regex_compile_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
     };
 
     match Regex::new(&pattern) {
-        Ok(regex) => {
+        Ok(_regex) => {
             // For now, we'll store the pattern as a string since we can't store the Regex object directly
             // In a real implementation, we'd need to create a custom object type for Regex
             let handle = heap.alloc_object(Object::String(pattern));

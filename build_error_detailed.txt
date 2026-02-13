@@ -1,0 +1,187 @@
+﻿cargo :        Fresh 
+unicode-ident v1.0.22
+At line:1 char:51
++ ... ram Files\LLVM"; cargo 
+check -p pulse_compiler 
+--verbose 2>&1 | Out-F ...
++                      ~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~
+    + CategoryInfo          : No 
+   tSpecified: (       Fresh un  
+  icode-ident v1.0.22:String)    
+ [], RemoteException
+    + FullyQualifiedErrorId : Na 
+   tiveCommandError
+ 
+       Fresh shlex v1.3.0
+       Fresh find-msvc-tools 
+v0.1.9
+       Fresh futures-core v0.3.31
+       Fresh proc-macro2 v1.0.106
+       Fresh cc v1.2.55
+       Fresh lazy_static v1.5.0
+       Fresh semver v1.0.27
+       Fresh regex-lite v0.1.9
+       Fresh quote v1.0.44
+       Fresh anyhow v1.0.101
+       Fresh windows_x86_64_msvc 
+v0.53.1
+       Fresh pin-project-lite 
+v0.2.16
+       Fresh futures-sink v0.3.31
+       Fresh futures-task v0.3.31
+       Fresh syn v2.0.114
+       Fresh futures-channel 
+v0.3.31
+       Fresh windows-targets 
+v0.53.5
+       Fresh futures-io v0.3.31
+       Fresh slab v0.4.12
+       Fresh futures-macro 
+v0.3.31
+       Fresh pin-utils v0.1.0
+       Fresh memchr v2.8.0
+       Fresh windows-link v0.2.1
+       Fresh windows-sys v0.60.2
+       Fresh serde_core v1.0.228
+       Fresh futures-util v0.3.31
+       Fresh windows-sys v0.61.2
+       Fresh serde_derive 
+v1.0.228
+       Fresh libc v0.2.180
+       Fresh socket2 v0.6.2
+       Fresh tokio-macros v2.6.0
+       Fresh futures-executor 
+v0.3.31
+       Fresh serde v1.0.228
+       Fresh mio v1.1.1
+       Fresh thiserror-impl 
+v1.0.69
+    Checking llvm-sys v180.0.0
+       Fresh inkwell_internals 
+v0.10.0
+       Fresh bincode v1.3.3
+       Fresh tokio v1.49.0
+       Fresh thiserror v1.0.69
+       Fresh futures v0.3.31
+       Fresh async-trait v0.1.89
+       Fresh either v1.15.0
+     Running `C:\Users\Kuntal\.ru
+stup\toolchains\stable-x86_64-pc-
+windows-msvc\bin\rustc.exe 
+--crate-name llvm_sys 
+--edition=2015 C:\Users\Kuntal\.c
+argo\registry\src\index.crates.io
+-1949cf8c6b5b557f\llvm-sys-180.0.
+0\src\lib.rs --error-format=json 
+--json=diagnostic-rendered-ansi,a
+rtifacts,future-incompat 
+--crate-type lib 
+--emit=dep-info,metadata -C 
+embed-bitcode=no -C debuginfo=2 
+--check-cfg cfg(docsrs,test) 
+--check-cfg "cfg(feature, 
+values(\"clang-sys\", 
+\"disable-alltargets-init\", 
+\"force-dynamic\", 
+\"force-static\", 
+\"no-llvm-linking\", 
+\"prefer-dynamic\", 
+\"prefer-static\", 
+\"strict-versioning\", 
+\"tempfile\"))" -C 
+metadata=bdbcdfb564f98b00 -C 
+extra-filename=-613bda71c5138141 
+--out-dir C:\Users\Kuntal\Documen
+ts\Pulse\pulse_lang\target\debug\
+deps -L dependency=C:\Users\Kunta
+l\Documents\Pulse\pulse_lang\targ
+et\debug\deps --extern libc=C:\Us
+ers\Kuntal\Documents\Pulse\pulse_
+lang\target\debug\deps\liblibc-a2
+4ca61dc368fbff.rmeta --cap-lints 
+allow --cfg LLVM_SYS_NOT_FOUND`
+       Fresh bytes v1.11.1
+       Fresh once_cell v1.21.3
+       Fresh pulse_core v0.1.0 (C
+:\Users\Kuntal\Documents\Pulse\pu
+lse_lang\pulse_core)
+error: No suitable version of 
+LLVM was found system-wide or 
+pointed
+              to by 
+LLVM_SYS_180_PREFIX.
+       
+              Consider using 
+`llvmenv` to compile an 
+appropriate copy of LLVM, and
+              refer to the 
+llvm-sys documentation for more 
+information.
+       
+              llvm-sys: 
+https://crates.io/crates/llvm-sys
+              llvmenv: 
+https://crates.io/crates/llvmenv
+   --> C:\Users\Kuntal\.cargo\reg
+istry\src\index.crates.io-1949cf8
+c6b5b557f\llvm-sys-180.0.0\src\li
+b.rs:515:1
+    |
+515 | / 
+std::compile_error!(concat!(
+516 | |     "No suitable version 
+of LLVM was found system-wide or 
+pointed
+517 | |        to by LLVM_SYS_",
+518 | |     
+env!("CARGO_PKG_VERSION_MAJOR"),
+...   |
+525 | |        llvmenv: 
+https://crates.io/crates/llvmenv"
+526 | | ));
+    | |__^
+
+error: could not compile 
+`llvm-sys` (lib) due to 1 
+previous error
+
+Caused by:
+  process didn't exit 
+successfully: `C:\Users\Kuntal\.r
+ustup\toolchains\stable-x86_64-pc
+-windows-msvc\bin\rustc.exe 
+--crate-name llvm_sys 
+--edition=2015 C:\Users\Kuntal\.c
+argo\registry\src\index.crates.io
+-1949cf8c6b5b557f\llvm-sys-180.0.
+0\src\lib.rs --error-format=json 
+--json=diagnostic-rendered-ansi,a
+rtifacts,future-incompat 
+--crate-type lib 
+--emit=dep-info,metadata -C 
+embed-bitcode=no -C debuginfo=2 
+--check-cfg cfg(docsrs,test) 
+--check-cfg "cfg(feature, 
+values(\"clang-sys\", 
+\"disable-alltargets-init\", 
+\"force-dynamic\", 
+\"force-static\", 
+\"no-llvm-linking\", 
+\"prefer-dynamic\", 
+\"prefer-static\", 
+\"strict-versioning\", 
+\"tempfile\"))" -C 
+metadata=bdbcdfb564f98b00 -C 
+extra-filename=-613bda71c5138141 
+--out-dir C:\Users\Kuntal\Documen
+ts\Pulse\pulse_lang\target\debug\
+deps -L dependency=C:\Users\Kunta
+l\Documents\Pulse\pulse_lang\targ
+et\debug\deps --extern libc=C:\Us
+ers\Kuntal\Documents\Pulse\pulse_
+lang\target\debug\deps\liblibc-a2
+4ca61dc368fbff.rmeta --cap-lints 
+allow --cfg LLVM_SYS_NOT_FOUND` 
+(exit code: 1)

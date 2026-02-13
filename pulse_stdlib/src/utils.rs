@@ -3,7 +3,6 @@
 use pulse_core::{Value, PulseResult, PulseError};
 use pulse_core::object::{HeapInterface, Object};
 use rand::Rng;
-use std::thread;
 use std::time::Duration;
 
 /// random() -> Float
@@ -93,6 +92,7 @@ pub fn type_of_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
                     Object::SharedMemory(_) => "SharedMemory",
                     Object::Socket(_) => "Socket",
                     Object::SharedBuffer(_) => "SharedBuffer",
+                    Object::Listener(_) => "Listener",
                 }
             } else {
                 "Unknown"
@@ -143,6 +143,7 @@ fn value_to_string(val: &Value, heap: &dyn HeapInterface) -> String {
 
                     Object::Socket(_) => "<socket>".to_string(),
                     Object::SharedBuffer(_) => "<shared buffer>".to_string(),
+                    Object::Listener(_) => "<listener>".to_string(),
                 }
             } else {
                 "<invalid>".to_string()
@@ -347,6 +348,7 @@ pub fn println_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
                         Object::Socket(_) => print!("<socket>"),
 
                         Object::SharedBuffer(_) => print!("<shared buffer>"),
+                        Object::Listener(_) => print!("<listener>"),
                     }
                 } else {
                     print!("<invalid>");

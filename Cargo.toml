@@ -7,5 +7,5 @@ members = [
     "pulse_compiler",
     "pulse_runtime",
     "pulse_cli",
-    "pulse_stdlib", "pulse_lsp",
+    "pulse_stdlib", "pulse_lsp", "pulse_aot_runtime",
 ]

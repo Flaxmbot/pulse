@@ -1,12 +1,13 @@
 //! Networking native functions
 
 use pulse_core::{Value, PulseResult, PulseError};
-use pulse_core::object::{HeapInterface, Object, PulseSocket};
+use pulse_core::object::{HeapInterface, Object, PulseSocket, PulseListener};
 use std::pin::Pin;
 use std::future::Future;
 use futures::FutureExt;
 use std::sync::Arc;
-use tokio::net::{TcpListener, UdpSocket}; // TcpStream is in PulseSocket
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// tcp_connect(host: String, port: Int) -> Socket
 /// Connects to a TCP server and returns a Socket object (wrapped in Value)
@@ -14,7 +15,7 @@ pub fn tcp_connect_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]
     let args = args.to_vec();
     async move {
         if args.len() != 2 {
-            return Err(PulseError::RuntimeError("tcp_connect expects 2 arguments".into()));
+            return Err(PulseError::RuntimeError("tcp_connect(host, port) expects 2 arguments".into()));
         }
 
         // We need to access heap to get the string.
@@ -44,7 +45,7 @@ pub fn tcp_connect_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]
         
         match tokio::net::TcpStream::connect(&addr).await {
             Ok(stream) => {
-                let handle = heap.alloc_object(Object::Socket(PulseSocket(Arc::new(stream))));
+                let handle = heap.alloc_object(Object::Socket(PulseSocket(Arc::new(tokio::sync::Mutex::new(stream)))));
                 Ok(Value::Obj(handle))
             }
             Err(e) => Err(PulseError::RuntimeError(format!("Failed to connect to {}: {}", addr, e))),
@@ -52,15 +53,13 @@ pub fn tcp_connect_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]
     }.boxed()
 }
 
-/// tcp_listen(port: Int) -> Unit (Should return Listener object, but for now Unit as placeholder for Async Task spawning)
-/// Starts listening on a TCP port. 
-/// NOTE: In a real actor system, this should spawn an acceptor actor. 
-/// For now, we just verify binding works.
-pub fn tcp_listen_native<'a>(_heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+/// tcp_listen(port: Int) -> Listener
+/// Starts listening on a TCP port and returns a Listener object.
+pub fn tcp_listen_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
     let args = args.to_vec();
     async move {
         if args.len() != 1 {
-            return Err(PulseError::RuntimeError("tcp_listen expects 1 argument".into()));
+            return Err(PulseError::RuntimeError("tcp_listen(port) expects 1 argument".into()));
         }
 
         let port = args[0].as_int()?;
@@ -71,12 +70,127 @@ pub fn tcp_listen_native<'a>(_heap: &'a mut dyn HeapInterface, args: &'a [Value]
         let addr = format!("0.0.0.0:{}", port);
         
         match TcpListener::bind(&addr).await {
-            Ok(_listener) => {
-                // TODO: Return a Listener object or spawn a handling task?
-                // For now, we just return Unit to signify success binding.
-                Ok(Value::Unit)
+            Ok(listener) => {
+                let handle = heap.alloc_object(Object::Listener(PulseListener(Arc::new(listener))));
+                Ok(Value::Obj(handle))
             }
-            Err(e) => Err(PulseError::RuntimeError(format!("Failed to bind: {}", e))),
+            Err(e) => Err(PulseError::RuntimeError(format!("Failed to bind to {}: {}", addr, e))),
+        }
+    }.boxed()
+}
+
+/// tcp_accept(listener: Listener) -> Socket
+/// Accepts a connection from a Listener and returns a Socket.
+pub fn tcp_accept_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    let args = args.to_vec();
+    async move {
+        if args.len() != 1 {
+            return Err(PulseError::RuntimeError("tcp_accept(listener) expects 1 argument".into()));
+        }
+
+        let listener = match &args[0] {
+            Value::Obj(h) => {
+                if let Some(Object::Listener(l)) = heap.get_object(*h) {
+                    l.0.clone()
+                } else {
+                     return Err(PulseError::TypeMismatch {
+                        expected: "listener".into(),
+                        got: "object".into()
+                    });
+                }
+            }
+             _ => return Err(PulseError::TypeMismatch {
+                expected: "listener".into(),
+                got: args[0].type_name()
+            }),
+        };
+
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                let handle = heap.alloc_object(Object::Socket(PulseSocket(Arc::new(tokio::sync::Mutex::new(stream)))));
+                Ok(Value::Obj(handle))
+            }
+            Err(e) => Err(PulseError::RuntimeError(format!("Accept failed: {}", e))),
+        }
+    }.boxed()
+}
+
+/// tcp_send(socket: Socket, data: String) -> Bool
+/// Sends data over a TCP socket
+pub fn tcp_send_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    let args = args.to_vec();
+    async move {
+        if args.len() != 2 {
+            return Err(PulseError::RuntimeError("tcp_send(socket, data) expects 2 arguments".into()));
+        }
+
+        let socket = match &args[0] {
+            Value::Obj(h) => {
+                if let Some(Object::Socket(s)) = heap.get_object(*h) {
+                    s.0.clone()
+                } else {
+                     return Err(PulseError::TypeMismatch { expected: "socket".into(), got: "object".into() });
+                }
+            }
+             _ => return Err(PulseError::TypeMismatch { expected: "socket".into(), got: args[0].type_name() }),
+        };
+
+        let data = match &args[1] {
+            Value::Obj(h) => {
+                if let Some(Object::String(s)) = heap.get_object(*h) {
+                    s.clone()
+                } else {
+                     return Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() });
+                }
+            }
+            _ => return Err(PulseError::TypeMismatch { expected: "string".into(), got: args[1].type_name() }),
+        };
+
+        let mut socket_lock = socket.lock().await;
+        match socket_lock.write_all(data.as_bytes()).await {
+            Ok(_) => Ok(Value::Bool(true)),
+            Err(e) => Err(PulseError::RuntimeError(format!("Send failed: {}", e))),
+        }
+    }.boxed()
+}
+
+/// tcp_receive(socket: Socket, count: Int) -> String
+/// Receives up to `count` bytes from socket (or until EOF)
+pub fn tcp_receive_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    let args = args.to_vec();
+    async move {
+        if args.len() != 2 {
+            return Err(PulseError::RuntimeError("tcp_receive(socket, count) expects 2 arguments".into()));
+        }
+
+        let socket = match &args[0] {
+            Value::Obj(h) => {
+                if let Some(Object::Socket(s)) = heap.get_object(*h) {
+                    s.0.clone()
+                } else {
+                     return Err(PulseError::TypeMismatch { expected: "socket".into(), got: "object".into() });
+                }
+            }
+             _ => return Err(PulseError::TypeMismatch { expected: "socket".into(), got: args[0].type_name() }),
+        };
+
+        let count = match args[1].as_int() {
+            Ok(i) => i as usize,
+            Err(_) => return Err(PulseError::TypeMismatch { expected: "int".into(), got: args[1].type_name() }),
+        };
+
+        if count == 0 { return Ok(Value::Unit); }
+
+        let mut buf = vec![0u8; count];
+        let mut socket_lock = socket.lock().await;
+        
+        match socket_lock.read(&mut buf).await {
+            Ok(n) => {
+                let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                let handle = heap.alloc_object(Object::String(s));
+                Ok(Value::Obj(handle))
+            }
+            Err(e) => Err(PulseError::RuntimeError(format!("Receive failed: {}", e))),
         }
     }.boxed()
 }

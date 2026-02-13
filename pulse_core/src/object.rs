@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 use crate::value::{NativeFn, Value};
 
 pub use crate::value::PulseSocket;
+pub use crate::value::PulseListener;
 pub use crate::value::PulseSharedMemory;
 use crate::bytecode::Chunk;
 use std::collections::{HashMap, VecDeque};
@@ -49,7 +50,8 @@ pub enum Object {
     SharedMemory(SharedMemory),
 
     SharedBuffer(PulseSharedMemory),
-    Socket(PulseSocket), // Added for real networking
+    Socket(PulseSocket),
+    Listener(PulseListener),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,7 +141,7 @@ impl Object {
              },
 
               // Primitives and others
-             Object::String(_) | Object::NativeFn(_) | Object::Function(_) | Object::Set(_) | Object::Socket(_) | Object::SharedBuffer(_) => {},
+             Object::String(_) | Object::NativeFn(_) | Object::Function(_) | Object::Set(_) | Object::Socket(_) | Object::Listener(_) | Object::SharedBuffer(_) => {},
         }
     }
 }
