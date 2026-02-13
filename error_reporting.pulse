@@ -1,0 +1,282 @@
+// Error reporting system for Pulse compiler
+import "ast";
+
+// Error types
+enum ErrorType {
+    LEXER_ERROR,
+    PARSER_ERROR,
+    COMPILE_ERROR,
+    RUNTIME_ERROR,
+    TYPE_ERROR
+}
+
+// Error class to represent compiler errors
+class Error {
+    type: ErrorType;
+    message: String;
+    line: Int;
+    column: Int;
+    filename: String;
+    
+    init(type: ErrorType, message: String, line: Int, column: Int, filename: String) {
+        this.type = type;
+        this.message = message;
+        this.line = line;
+        this.column = column;
+        this.filename = filename;
+    }
+    
+    fn to_string() -> String {
+        return this.filename + ":" + this.line + ":" + this.column + 
+               " - " + this.type.to_string() + ": " + this.message;
+    }
+}
+
+// Error reporter that collects and reports errors
+class ErrorReporter {
+    errors: List<Error>;
+    warnings: List<Error>;
+    had_error: Bool;
+    had_runtime_error: Bool;
+    
+    init() {
+        this.errors = [];
+        this.warnings = [];
+        this.had_error = false;
+        this.had_runtime_error = false;
+    }
+    
+    fn error_at_token(token: Token, message: String) {
+        if (token.type == TokenType.EOF) {
+            this.report_error(token.line, " at end", message);
+        } else {
+            this.report_error(token.line, " at '" + token.lexeme + "'", message);
+        }
+    }
+    
+    fn error(line: Int, message: String) {
+        this.report_error(line, "", message);
+    }
+    
+    fn runtime_error(error: Error) {
+        println(error.to_string());
+        this.had_runtime_error = true;
+    }
+    
+    fn warning_at_token(token: Token, message: String) {
+        let warning = Error(ErrorType.PARSER_ERROR, message, token.line, 0, "unknown");  // Column would come from token
+        this.warnings.push(warning);
+        println("Warning: " + warning.to_string());
+    }
+    
+    fn report_error(line: Int, where: String, message: String) {
+        println("[Line " + line + "] Error" + where + ": " + message);
+        this.had_error = true;
+        
+        let error = Error(ErrorType.PARSER_ERROR, message, line, 0, "unknown");
+        this.errors.push(error);
+    }
+    
+    fn get_errors() -> List<Error> {
+        return this.errors;
+    }
+    
+    fn get_warnings() -> List<Error> {
+        return this.warnings;
+    }
+    
+    fn has_errors() -> Bool {
+        return this.had_error;
+    }
+    
+    fn has_runtime_errors() -> Bool {
+        return this.had_runtime_error;
+    }
+    
+    fn reset() {
+        this.errors = [];
+        this.warnings = [];
+        this.had_error = false;
+        this.had_runtime_error = false;
+    }
+    
+    fn print_detailed_error(source: String, error: Error) {
+        let lines = split_string(source, "\n");
+        if (error.line > 0 && error.line <= lines.len()) {
+            let error_line = lines[error.line - 1];
+            println(error_line);
+            
+            // Print pointer to the error location
+            for i in range(error.column - 1) {
+                if (substring(error_line, i, i + 1) == "\t") {
+                    print("\t");
+                } else {
+                    print(" ");
+                }
+            }
+            println("^-- " + error.message);
+        }
+    }
+}
+
+// Enhanced error reporting with source context
+class DetailedErrorReporter : ErrorReporter {
+    source: String;
+    filename: String;
+    
+    init(source: String, filename: String) {
+        super();
+        this.source = source;
+        this.filename = filename;
+    }
+    
+    fn error_at_token_with_context(token: Token, message: String) {
+        if (token.type == TokenType.EOF) {
+            this.report_error_with_context(token.line, " at end", message, token);
+        } else {
+            this.report_error_with_context(token.line, " at '" + token.lexeme + "'", message, token);
+        }
+    }
+    
+    fn report_error_with_context(line: Int, where: String, message: String, token: Token) {
+        let error_msg = "[Line " + line + "] Error" + where + ": " + message;
+        println(error_msg);
+        this.print_detailed_error(this.source, Error(ErrorType.PARSER_ERROR, message, line, token.column, this.filename));
+        this.had_error = true;
+        
+        let error = Error(ErrorType.PARSER_ERROR, message, line, token.column, this.filename);
+        this.errors.push(error);
+    }
+    
+    fn print_detailed_error(source: String, error: Error) {
+        let lines = split_string(source, "\n");
+        if (error.line > 0 && error.line <= lines.len()) {
+            let error_line = lines[error.line - 1];
+            println("  " + error_line);
+            
+            // Print pointer to the error location
+            print("  ");
+            for i in range(error.column) {
+                if (i < error_line.len() && substring(error_line, i, i + 1) == "\t") {
+                    print("\t");
+                } else {
+                    print(" ");
+                }
+            }
+            println("^-- " + error.message);
+        }
+    }
+}
+
+// Error context that provides additional information about where errors occur
+class ErrorContext {
+    reporter: ErrorReporter;
+    source: String;
+    filename: String;
+    
+    init(reporter: ErrorReporter, source: String, filename: String) {
+        this.reporter = reporter;
+        this.source = source;
+        this.filename = filename;
+    }
+    
+    fn add_error(error_type: ErrorType, message: String, line: Int, column: Int) {
+        let error = Error(error_type, message, line, column, this.filename);
+        if (error_type == ErrorType.RUNTIME_ERROR) {
+            this.reporter.runtime_error(error);
+        } else {
+            this.reporter.get_errors().push(error);
+            this.reporter.had_error = true;
+        }
+        println(error.to_string());
+    }
+    
+    fn add_error_at_token(token: Token, message: String) {
+        this.add_error(ErrorType.PARSER_ERROR, message, token.line, token.column);
+    }
+    
+    fn suggest_corrections(token: Token, expected: List<String>) -> String {
+        if (expected.len() == 0) {
+            return "";
+        }
+        
+        let suggestions = "Did you mean ";
+        if (expected.len() == 1) {
+            suggestions = suggestions + "'" + expected[0] + "'?";
+        } else {
+            suggestions = suggestions + "one of: ";
+            for i in range(expected.len()) {
+                suggestions = suggestions + "'" + expected[i] + "'";
+                if (i < expected.len() - 1) {
+                    suggestions = suggestions + ", ";
+                }
+            }
+            suggestions = suggestions + "?";
+        }
+        
+        return suggestions;
+    }
+}
+
+// Common error messages
+class ErrorMessages {
+    static fn unexpected_token(found: String, expected: String) -> String {
+        return "Unexpected token '" + found + "', expected '" + expected + "'";
+    }
+    
+    static fn unexpected_eof(expected: String) -> String {
+        return "Unexpected end of file, expected '" + expected + "'";
+    }
+    
+    static fn undefined_variable(name: String) -> String {
+        return "Undefined variable '" + name + "'";
+    }
+    
+    static fn redefined_variable(name: String) -> String {
+        return "Variable '" + name + "' is already defined in this scope";
+    }
+    
+    static fn invalid_assignment_target() -> String {
+        return "Invalid assignment target";
+    }
+    
+    static fn too_many_arguments(max: Int) -> String {
+        return "Cannot have more than " + max + " arguments";
+    }
+    
+    static fn too_many_parameters(max: Int) -> String {
+        return "Cannot have more than " + max + " parameters";
+    }
+    
+    static fn too_many_locals(max: Int) -> String {
+        return "Cannot have more than " + max + " local variables in one scope";
+    }
+    
+    static fn cannot_return_from_top_level() -> String {
+        return "Cannot return from top-level code";
+    }
+    
+    static fn cannot_use_super_outside_method() -> String {
+        return "Cannot use 'super' outside of a method";
+    }
+    
+    static fn cannot_use_this_outside_method() -> String {
+        return "Cannot use 'this' outside of a class method";
+    }
+    
+    static fn class_method_named_init_as_function() -> String {
+        return "Cannot call a class method named 'init' directly";
+    }
+    
+    static fn super_without_superclass() -> String {
+        return "Cannot use 'super' in a class with no superclass";
+    }
+}
+
+// Export the error reporting system
+export Error;
+export ErrorType;
+export ErrorReporter;
+export DetailedErrorReporter;
+export ErrorContext;
+export ErrorMessages;

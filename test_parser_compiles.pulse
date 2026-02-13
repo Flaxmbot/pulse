@@ -1,5 +1,0 @@
-let Lexer = import "./pulse_compiler_pulse/lexer.pulse";
-let AST = import "./pulse_compiler_pulse/ast.pulse";
-fn test(p) { return p; }
-print "ok";
- Linda

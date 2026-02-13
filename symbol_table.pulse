@@ -1,0 +1,297 @@
+// Symbol table management for Pulse compiler
+import "ast";
+
+// Symbol types
+enum SymbolType {
+    VARIABLE,
+    FUNCTION,
+    CLASS,
+    PARAMETER,
+    LOCAL,
+    GLOBAL
+}
+
+// Represents a symbol in the symbol table
+class Symbol {
+    name: String;
+    type: SymbolType;
+    scope_level: Int;
+    datatype: String;
+    is_mutable: Bool;
+    is_initialized: Bool;
+    
+    init(name: String, type: SymbolType, scope_level: Int, datatype: String, is_mutable: Bool) {
+        this.name = name;
+        this.type = type;
+        this.scope_level = scope_level;
+        this.datatype = datatype;
+        this.is_mutable = is_mutable;
+        this.is_initialized = false;
+    }
+    
+    fn mark_initialized() {
+        this.is_initialized = true;
+    }
+    
+    fn to_string() -> String {
+        return this.name + " (" + this.type.to_string() + ") in scope " + this.scope_level;
+    }
+}
+
+// Scope class to manage symbols within a particular scope
+class Scope {
+    symbols: Map<String, Symbol>;
+    parent: Scope;
+    level: Int;
+    
+    init(parent: Scope, level: Int) {
+        this.symbols = {};
+        this.parent = parent;
+        this.level = level;
+    }
+    
+    fn define(symbol: Symbol) {
+        this.symbols[symbol.name] = symbol;
+    }
+    
+    fn get(name: String) -> Symbol {
+        return this.symbols[name];
+    }
+    
+    fn contains(name: String) -> Bool {
+        return name in this.symbols;
+    }
+    
+    fn lookup(name: String) -> Symbol {
+        // Look in current scope first
+        if (name in this.symbols) {
+            return this.symbols[name];
+        }
+        
+        // If not found and we have a parent, look in parent scope
+        if (this.parent != nil) {
+            return this.parent.lookup(name);
+        }
+        
+        // Not found anywhere
+        return nil;
+    }
+}
+
+// Main symbol table manager
+class SymbolTable {
+    global_scope: Scope;
+    current_scope: Scope;
+    scope_counter: Int;
+    
+    init() {
+        this.global_scope = Scope(nil, 0);
+        this.current_scope = this.global_scope;
+        this.scope_counter = 1;
+    }
+    
+    fn enter_scope() {
+        this.current_scope = Scope(this.current_scope, this.scope_counter);
+        this.scope_counter = this.scope_counter + 1;
+    }
+    
+    fn exit_scope() {
+        if (this.current_scope.parent != nil) {
+            this.current_scope = this.current_scope.parent;
+        }
+    }
+    
+    fn define_variable(name: String, datatype: String, is_mutable: Bool) -> Symbol {
+        let symbol = Symbol(name, SymbolType.VARIABLE, this.current_scope.level, datatype, is_mutable);
+        this.current_scope.define(symbol);
+        return symbol;
+    }
+    
+    fn define_function(name: String, return_type: String, params: List<Symbol>) -> Symbol {
+        let symbol = Symbol(name, SymbolType.FUNCTION, this.current_scope.level, return_type, false);
+        this.current_scope.define(symbol);
+        return symbol;
+    }
+    
+    fn define_class(name: String, superclass: String) -> Symbol {
+        let symbol = Symbol(name, SymbolType.CLASS, this.current_scope.level, "Class", false);
+        this.current_scope.define(symbol);
+        return symbol;
+    }
+    
+    fn lookup(name: String) -> Symbol {
+        return this.current_scope.lookup(name);
+    }
+    
+    fn lookup_local(name: String) -> Symbol {
+        if (this.current_scope.contains(name)) {
+            return this.current_scope.get(name);
+        }
+        return nil;
+    }
+    
+    fn is_global_scope() -> Bool {
+        return this.current_scope.level == 0;
+    }
+    
+    fn get_current_scope_level() -> Int {
+        return this.current_scope.level;
+    }
+    
+    fn resolve_variable_depth(name: String) -> Int {
+        let current = this.current_scope;
+        let depth = 0;
+        
+        while (current != nil) {
+            if (current.contains(name)) {
+                return depth;
+            }
+            current = current.parent;
+            depth = depth + 1;
+        }
+        
+        return -1;  // Not found
+    }
+    
+    fn is_variable_mutable(name: String) -> Bool {
+        let symbol = this.lookup(name);
+        return symbol != nil && symbol.is_mutable;
+    }
+    
+    fn validate_variable_usage(name: String) -> Bool {
+        let symbol = this.lookup(name);
+        if (symbol == nil) {
+            return false;  // Undefined variable
+        }
+        
+        // Check if it's initialized (for local variables)
+        if (symbol.type == SymbolType.LOCAL && !symbol.is_initialized) {
+            return false;  // Used before initialization
+        }
+        
+        return true;
+    }
+}
+
+// Symbol table builder that walks the AST to populate the symbol table
+class SymbolTableBuilder {
+    symbol_table: SymbolTable;
+    error_reporter: ErrorReporter;
+
+    init(error_reporter: ErrorReporter) {
+        this.symbol_table = SymbolTable();
+        this.error_reporter = error_reporter;
+    }
+
+    fn build(statements: List<Stmt>) -> SymbolTable {
+        for stmt in statements {
+            this.declare(stmt);
+        }
+
+        for stmt in statements {
+            this.define(stmt);
+        }
+
+        return this.symbol_table;
+    }
+
+    fn declare(stmt: Stmt) {
+        match stmt {
+            is VarStmt -> {
+                let name = stmt.name.lexeme;
+                if (this.symbol_table.lookup_local(name) != nil) {
+                    this.error_reporter.error(stmt.name, ErrorMessages.redefined_variable(name));
+                }
+                this.symbol_table.define_variable(name, "Any", true); // Will be refined later
+            }
+            is FunctionStmt -> {
+                let name = stmt.name.lexeme;
+                if (this.symbol_table.lookup_local(name) != nil) {
+                    this.error_reporter.error(stmt.name, ErrorMessages.redefined_variable(name));
+                }
+                this.symbol_table.define_function(name, "Any", []); // Return type will be refined later
+            }
+            is ClassStmt -> {
+                let name = stmt.name.lexeme;
+                if (this.symbol_table.lookup_local(name) != nil) {
+                    this.error_reporter.error(stmt.name, ErrorMessages.redefined_variable(name));
+                }
+                this.symbol_table.define_class(name, if stmt.superclass != nil { stmt.superclass.name.lexeme } else { "" });
+            }
+            is BlockStmt -> {
+                this.symbol_table.enter_scope();
+                for statement in stmt.statements {
+                    this.declare(statement);
+                }
+                this.symbol_table.exit_scope();
+            }
+            _ -> {
+                // Other statement types don't declare symbols
+            }
+        }
+    }
+
+    fn define(stmt: Stmt) {
+        match stmt {
+            is VarStmt -> {
+                if (stmt.initializer != nil) {
+                    // Evaluate the initializer in the current context
+                }
+                // Variable is already declared, just mark as initialized
+            }
+            is FunctionStmt -> {
+                this.symbol_table.enter_scope();
+                
+                // Add parameters as variables in the function scope
+                for param in stmt.parameters {
+                    this.symbol_table.define_variable(param.lexeme, "Any", true);
+                }
+                
+                // Process function body
+                for body_stmt in stmt.body {
+                    this.define(body_stmt);
+                }
+                
+                this.symbol_table.exit_scope();
+            }
+            is ClassStmt -> {
+                if (stmt.superclass != nil) {
+                    // Check that superclass exists
+                    if (this.symbol_table.lookup(stmt.superclass.name.lexeme) == nil) {
+                        this.error_reporter.error(stmt.superclass.name, 
+                            ErrorMessages.undefined_variable(stmt.superclass.name.lexeme));
+                    }
+                }
+                
+                this.symbol_table.enter_scope();
+                
+                // Add 'this' as a special variable
+                this.symbol_table.define_variable("this", stmt.name.lexeme, false);
+                
+                // Process methods
+                for method in stmt.methods {
+                    this.define(method);
+                }
+                
+                this.symbol_table.exit_scope();
+            }
+            is BlockStmt -> {
+                this.symbol_table.enter_scope();
+                for statement in stmt.statements {
+                    this.define(statement);
+                }
+                this.symbol_table.exit_scope();
+            }
+            _ -> {
+                // Other statement types don't define symbols in a special way
+            }
+        }
+    }
+}
+
+// Export the symbol table system
+export Symbol;
+export SymbolType;
+export SymbolTable;
+export Scope;
+export SymbolTableBuilder;

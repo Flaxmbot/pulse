@@ -1,0 +1,502 @@
+// Type system for Pulse language
+import "ast";
+import "symbol_table";
+
+// Basic types in Pulse
+enum BasicType {
+    INT,
+    FLOAT,
+    BOOL,
+    STRING,
+    UNIT,
+    PID,
+    ANY,
+    UNKNOWN
+}
+
+// Represents a type in the type system
+class Type {
+    basic_type: BasicType;
+    name: String;           // For user-defined types
+    generic_args: List<Type>;  // For generic types like List<Int>
+    
+    init(basic_type: BasicType, name: String, generic_args: List<Type>) {
+        this.basic_type = basic_type;
+        this.name = name;
+        this.generic_args = generic_args;
+    }
+    
+    // Constructor for basic types
+    fn basic(basic_type: BasicType) -> Type {
+        return Type(basic_type, "", []);
+    }
+    
+    // Constructor for named types (classes, etc.)
+    fn named(name: String) -> Type {
+        return Type(BasicType.UNKNOWN, name, []);
+    }
+    
+    // Constructor for generic types
+    fn generic(basic_type: BasicType, args: List<Type>) -> Type {
+        return Type(basic_type, "", args);
+    }
+    
+    fn to_string() -> String {
+        if (this.name != "") {
+            return this.name;
+        }
+        
+        match this.basic_type {
+            BasicType.INT -> return "Int";
+            BasicType.FLOAT -> return "Float";
+            BasicType.BOOL -> return "Bool";
+            BasicType.STRING -> return "String";
+            BasicType.UNIT -> return "Unit";
+            BasicType.PID -> return "Pid";
+            BasicType.ANY -> return "Any";
+            BasicType.UNKNOWN -> return "Unknown";
+        }
+        
+        // Handle generic types
+        if (this.generic_args.len() > 0) {
+            let result = this.basic_type.to_string() + "<";
+            for i in range(this.generic_args.len()) {
+                result = result + this.generic_args[i].to_string();
+                if (i < this.generic_args.len() - 1) {
+                    result = result + ", ";
+                }
+            }
+            result = result + ">";
+            return result;
+        }
+        
+        return "UnknownType";
+    }
+    
+    fn equals(other: Type) -> Bool {
+        if (this.basic_type != other.basic_type) {
+            return false;
+        }
+        
+        if (this.name != other.name) {
+            return false;
+        }
+        
+        if (this.generic_args.len() != other.generic_args.len()) {
+            return false;
+        }
+        
+        for i in range(this.generic_args.len()) {
+            if (!this.generic_args[i].equals(other.generic_args[i])) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    fn is_subtype_of(other: Type) -> Bool {
+        // Basic subtype rules
+        if (this.equals(other)) {
+            return true;
+        }
+        
+        // Any is a supertype of all types
+        if (other.basic_type == BasicType.ANY) {
+            return true;
+        }
+        
+        // For now, we'll say Int is a subtype of Float (for automatic promotion)
+        if (this.basic_type == BasicType.INT && other.basic_type == BasicType.FLOAT) {
+            return true;
+        }
+        
+        return false;
+    }
+}
+
+// Type checker that performs type checking and inference
+class TypeChecker {
+    symbol_table: SymbolTable;
+    error_reporter: ErrorReporter;
+    type_env: Map<String, Type>;  // Maps variable names to their types
+    
+    init(symbol_table: SymbolTable, error_reporter: ErrorReporter) {
+        this.symbol_table = symbol_table;
+        this.error_reporter = error_reporter;
+        this.type_env = {};
+    }
+    
+    fn check(ast: List<Stmt>) -> Bool {
+        // Perform type checking on the AST
+        for stmt in ast {
+            this.check_stmt(stmt);
+        }
+        
+        return !this.error_reporter.has_errors();
+    }
+    
+    fn check_stmt(stmt: Stmt) {
+        match stmt {
+            is VarStmt -> this.check_var_stmt(stmt);
+            is FunctionStmt -> this.check_function_stmt(stmt);
+            is ExpressionStmt -> this.check_expr_stmt(stmt);
+            is PrintStmt -> this.check_print_stmt(stmt);
+            is IfStmt -> this.check_if_stmt(stmt);
+            is WhileStmt -> this.check_while_stmt(stmt);
+            is BlockStmt -> this.check_block_stmt(stmt);
+            is ReturnStmt -> this.check_return_stmt(stmt);
+            _ -> {
+                // Other statement types
+            }
+        }
+    }
+    
+    fn check_var_stmt(stmt: VarStmt) {
+        let inferred_type = if (stmt.initializer != nil) {
+            this.infer_expr_type(stmt.initializer)
+        } else {
+            Type.basic(BasicType.UNIT)  // Default type for uninitialized vars
+        };
+        
+        // Add variable and its type to the environment
+        this.type_env[stmt.name.lexeme] = inferred_type;
+    }
+    
+    fn check_function_stmt(stmt: FunctionStmt) {
+        // Create a new scope for the function
+        this.symbol_table.enter_scope();
+        
+        // Add parameters to the type environment
+        for param in stmt.parameters {
+            // For simplicity, we'll assume parameters are of type Any
+            // In a real implementation, we'd have type annotations
+            this.type_env[param.lexeme] = Type.basic(BasicType.ANY);
+        }
+        
+        // Check the function body
+        for body_stmt in stmt.body {
+            this.check_stmt(body_stmt);
+        }
+        
+        this.symbol_table.exit_scope();
+    }
+    
+    fn check_expr_stmt(stmt: ExpressionStmt) {
+        this.infer_expr_type(stmt.expression);
+    }
+    
+    fn check_print_stmt(stmt: PrintStmt) {
+        // Print can accept any type
+        this.infer_expr_type(stmt.expression);
+    }
+    
+    fn check_if_stmt(stmt: IfStmt) {
+        // Condition must be of type Bool
+        let cond_type = this.infer_expr_type(stmt.condition);
+        if (!this.is_bool_type(cond_type)) {
+            this.error_reporter.error(stmt.condition.line, 
+                "Condition in if statement must be of type Bool, got " + cond_type.to_string());
+        }
+        
+        // Check both branches
+        this.symbol_table.enter_scope();
+        this.check_stmt(stmt.then_branch);
+        this.symbol_table.exit_scope();
+        
+        if (stmt.else_branch != nil) {
+            this.symbol_table.enter_scope();
+            this.check_stmt(stmt.else_branch);
+            this.symbol_table.exit_scope();
+        }
+    }
+    
+    fn check_while_stmt(stmt: WhileStmt) {
+        // Condition must be of type Bool
+        let cond_type = this.infer_expr_type(stmt.condition);
+        if (!this.is_bool_type(cond_type)) {
+            this.error_reporter.error(stmt.condition.line, 
+                "Condition in while statement must be of type Bool, got " + cond_type.to_string());
+        }
+        
+        // Check the body
+        this.symbol_table.enter_scope();
+        this.check_stmt(stmt.body);
+        this.symbol_table.exit_scope();
+    }
+    
+    fn check_block_stmt(stmt: BlockStmt) {
+        this.symbol_table.enter_scope();
+        
+        for block_stmt in stmt.statements {
+            this.check_stmt(block_stmt);
+        }
+        
+        this.symbol_table.exit_scope();
+    }
+    
+    fn check_return_stmt(stmt: ReturnStmt) {
+        if (stmt.value != nil) {
+            this.infer_expr_type(stmt.value);
+        }
+    }
+    
+    fn infer_expr_type(expr: Expr) -> Type {
+        match expr {
+            is Literal -> return this.infer_literal_type(expr);
+            is Variable -> return this.infer_variable_type(expr);
+            is Binary -> return this.infer_binary_type(expr);
+            is Unary -> return this.infer_unary_type(expr);
+            is Grouping -> return this.infer_expr_type(expr.expression);
+            is Call -> return this.infer_call_type(expr);
+            is Get -> return this.infer_get_type(expr);
+            is Set -> return this.infer_set_type(expr);
+            is Assign -> return this.infer_assign_type(expr);
+            _ -> return Type.basic(BasicType.ANY);
+        }
+    }
+    
+    fn infer_literal_type(expr: Literal) -> Type {
+        match expr.value {
+            is Int -> return Type.basic(BasicType.INT);
+            is Float -> return Type.basic(BasicType.FLOAT);
+            is Bool -> return Type.basic(BasicType.BOOL);
+            is String -> return Type.basic(BasicType.STRING);
+            nil -> return Type.basic(BasicType.UNIT);
+            _ -> return Type.basic(BasicType.ANY);
+        }
+    }
+    
+    fn infer_variable_type(expr: Variable) -> Type {
+        // Look up the variable's type in the environment
+        if (expr.name.lexeme in this.type_env) {
+            return this.type_env[expr.name.lexeme];
+        }
+        
+        // If not found in local environment, check symbol table
+        let symbol = this.symbol_table.lookup(expr.name.lexeme);
+        if (symbol != nil) {
+            // Convert symbol type to Type
+            return this.symbol_to_type(symbol);
+        }
+        
+        // Variable not found - this should have been caught by symbol table
+        this.error_reporter.error(expr.name.line, 
+            "Unknown variable '" + expr.name.lexeme + "'");
+        return Type.basic(BasicType.UNKNOWN);
+    }
+    
+    fn infer_binary_type(expr: Binary) -> Type {
+        let left_type = this.infer_expr_type(expr.left);
+        let right_type = this.infer_expr_type(expr.right);
+        
+        // Perform type checking based on the operator
+        match expr.operator.type {
+            // Arithmetic operators
+            TokenType.PLUS, TokenType.MINUS, TokenType.STAR, TokenType.SLASH -> {
+                // Both operands should be numeric
+                if (!this.is_numeric_type(left_type) || !this.is_numeric_type(right_type)) {
+                    this.error_reporter.error(expr.operator.line,
+                        "Arithmetic operation requires numeric operands, got " + 
+                        left_type.to_string() + " and " + right_type.to_string());
+                    return Type.basic(BasicType.UNKNOWN);
+                }
+                
+                // Result type: if any operand is Float, result is Float
+                if (left_type.basic_type == BasicType.FLOAT || right_type.basic_type == BasicType.FLOAT) {
+                    return Type.basic(BasicType.FLOAT);
+                }
+                return Type.basic(BasicType.INT);
+            }
+            
+            // Comparison operators
+            TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL -> {
+                if (!this.is_numeric_type(left_type) || !this.is_numeric_type(right_type)) {
+                    this.error_reporter.error(expr.operator.line,
+                        "Comparison operation requires numeric operands, got " + 
+                        left_type.to_string() + " and " + right_type.to_string());
+                    return Type.basic(BasicType.UNKNOWN);
+                }
+                return Type.basic(BasicType.BOOL);
+            }
+            
+            // Equality operators
+            TokenType.EQUAL_EQUAL, TokenType.BANG_EQUAL -> {
+                // Operands should be compatible types
+                if (!this.are_compatible_types(left_type, right_type)) {
+                    this.error_reporter.error(expr.operator.line,
+                        "Equality comparison between incompatible types: " + 
+                        left_type.to_string() + " and " + right_type.to_string());
+                }
+                return Type.basic(BasicType.BOOL);
+            }
+            
+            // Logical operators
+            TokenType.LOGICAL_AND, TokenType.LOGICAL_OR -> {
+                if (!this.is_bool_type(left_type) || !this.is_bool_type(right_type)) {
+                    this.error_reporter.error(expr.operator.line,
+                        "Logical operation requires Boolean operands, got " + 
+                        left_type.to_string() + " and " + right_type.to_string());
+                    return Type.basic(BasicType.UNKNOWN);
+                }
+                return Type.basic(BasicType.BOOL);
+            }
+            
+            _ -> {
+                // Other operators
+                return Type.basic(BasicType.ANY);
+            }
+        }
+    }
+    
+    fn infer_unary_type(expr: Unary) -> Type {
+        let operand_type = this.infer_expr_type(expr.right);
+        
+        match expr.operator.type {
+            TokenType.MINUS -> {
+                if (!this.is_numeric_type(operand_type)) {
+                    this.error_reporter.error(expr.operator.line,
+                        "Unary minus requires numeric operand, got " + operand_type.to_string());
+                    return Type.basic(BasicType.UNKNOWN);
+                }
+                return operand_type;  // Same type as operand
+            }
+            TokenType.BANG -> {
+                if (!this.is_bool_type(operand_type)) {
+                    this.error_reporter.error(expr.operator.line,
+                        "Logical NOT requires Boolean operand, got " + operand_type.to_string());
+                    return Type.basic(BasicType.UNKNOWN);
+                }
+                return Type.basic(BasicType.BOOL);
+            }
+            _ -> return Type.basic(BasicType.ANY);
+        }
+    }
+    
+    fn infer_call_type(expr: Call) -> Type {
+        // For function calls, we need to look up the function's return type
+        let callee_type = this.infer_expr_type(expr.callee);
+        
+        // Check argument types against function parameter types
+        // This is simplified - in a real implementation, we'd have function signatures
+        for arg in expr.arguments {
+            this.infer_expr_type(arg);
+        }
+        
+        // For now, assume function calls return Any
+        // In a real implementation, we'd look up the function's return type
+        return Type.basic(BasicType.ANY);
+    }
+    
+    fn infer_get_type(expr: Get) -> Type {
+        // Getting a property from an object
+        let obj_type = this.infer_expr_type(expr.object);
+        
+        // In a real implementation, we'd look up the property type in the object's type
+        // For now, return Any
+        return Type.basic(BasicType.ANY);
+    }
+    
+    fn infer_set_type(expr: Set) -> Type {
+        // Setting a property on an object
+        let obj_type = this.infer_expr_type(expr.object);
+        let value_type = this.infer_expr_type(expr.value);
+        
+        // In a real implementation, we'd check if the property exists and has compatible type
+        // For now, return the value type
+        return value_type;
+    }
+    
+    fn infer_assign_type(expr: Assign) -> Type {
+        let var_type = this.infer_variable_type(Variable(expr.name));
+        let value_type = this.infer_expr_type(expr.value);
+        
+        // Check if the assignment is type-compatible
+        if (!this.are_compatible_types(var_type, value_type)) {
+            this.error_reporter.error(expr.name.line,
+                "Cannot assign value of type " + value_type.to_string() + 
+                " to variable of type " + var_type.to_string());
+        }
+        
+        return value_type;
+    }
+    
+    fn is_numeric_type(type: Type) -> Bool {
+        return type.basic_type == BasicType.INT || type.basic_type == BasicType.FLOAT;
+    }
+    
+    fn is_bool_type(type: Type) -> Bool {
+        return type.basic_type == BasicType.BOOL;
+    }
+    
+    fn is_string_type(type: Type) -> Bool {
+        return type.basic_type == BasicType.STRING;
+    }
+    
+    fn are_compatible_types(type1: Type, type2: Type) -> Bool {
+        // Types are compatible if one is a subtype of the other
+        return type1.is_subtype_of(type2) || type2.is_subtype_of(type1);
+    }
+    
+    fn symbol_to_type(symbol: Symbol) -> Type {
+        // Convert a symbol to its corresponding type
+        match symbol.type {
+            SymbolType.VARIABLE, SymbolType.PARAMETER, SymbolType.LOCAL -> {
+                return Type.named(symbol.datatype);
+            }
+            SymbolType.FUNCTION -> {
+                return Type.named("Function");  // Simplified
+            }
+            SymbolType.CLASS -> {
+                return Type.named(symbol.name);
+            }
+            _ -> return Type.basic(BasicType.ANY);
+        }
+    }
+}
+
+// Type inference context that manages type variables and constraints
+class TypeInferenceContext {
+    type_vars: Map<String, Type>;
+    constraints: List<(Type, Type)>;  // Type equality constraints
+    
+    init() {
+        this.type_vars = {};
+        this.constraints = [];
+    }
+    
+    fn new_type_var(prefix: String) -> Type {
+        let name = prefix + "_" + this.type_vars.len();
+        let type_var = Type.named(name);
+        this.type_vars[name] = type_var;
+        return type_var;
+    }
+    
+    fn add_constraint(type1: Type, type2: Type) {
+        this.constraints.push((type1, type2));
+    }
+    
+    fn solve_constraints() -> Map<String, Type> {
+        // Simplified constraint solving
+        // In a real implementation, this would use unification algorithm
+        let solution = {};
+        
+        for constraint in this.constraints {
+            let (t1, t2) = constraint;
+            // For now, we'll just map type variables to concrete types
+            if (t1.name in this.type_vars && t2.basic_type != BasicType.UNKNOWN) {
+                solution[t1.name] = t2;
+            } else if (t2.name in this.type_vars && t1.basic_type != BasicType.UNKNOWN) {
+                solution[t2.name] = t1;
+            }
+        }
+        
+        return solution;
+    }
+}
+
+// Export the type system
+export Type;
+export BasicType;
+export TypeChecker;
+export TypeInferenceContext;

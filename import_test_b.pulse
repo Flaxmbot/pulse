@@ -1,2 +1,0 @@
-let m = import "import_test_a.pulse";
-print m["hello"]();

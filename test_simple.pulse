@@ -1,6 +1,0 @@
-// Simple test to understand Pulse language behavior
-let test_list = [1, 2, 3];
-println("List length:", len(test_list));
-
-let test_obj = {"key": "value"};
-println("Object test completed");

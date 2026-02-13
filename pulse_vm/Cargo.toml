@@ -6,9 +6,8 @@ edition = "2021"
 [dependencies]
 pulse_core = { path = "../pulse_core" }
 pulse_stdlib = { path = "../pulse_stdlib" }
+async-trait = "0.1"
 
 [dev-dependencies]
 pulse_compiler = { path = "../pulse_compiler" }
 pulse_runtime = { path = "../pulse_runtime" }
-
-

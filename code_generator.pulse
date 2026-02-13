@@ -1,0 +1,801 @@
+// Code Generator for Pulse language
+import "ast";
+
+// Represents a chunk of bytecode
+class Chunk {
+    code: List<Int>;
+    constants: List<Any>;
+    lines: List<Int>;
+    
+    init() {
+        this.code = [];
+        this.constants = [];
+        this.lines = [];
+    }
+    
+    fn write(byte: Int, line: Int) {
+        this.code.push(byte);
+        this.lines.push(line);
+    }
+    
+    fn add_constant(value: Any) -> Int {
+        this.constants.push(value);
+        return this.constants.len() - 1;
+    }
+}
+
+// Represents an upvalue (closed-over variable)
+class Upvalue {
+    index: Int;
+    is_local: Bool;
+    
+    init(index: Int, is_local: Bool) {
+        this.index = index;
+        this.is_local = is_local;
+    }
+}
+
+// Represents a local variable
+class Local {
+    name: Token;
+    depth: Int;
+    is_captured: Bool;
+    
+    init(name: Token, depth: Int, is_captured: Bool) {
+        this.name = name;
+        this.depth = depth;
+        this.is_captured = is_captured;
+    }
+}
+
+// Code generator that transforms AST to bytecode
+class CodeGenerator {
+    chunk: Chunk;
+    current_function_type: FunctionType;
+    locals: List<Local>;
+    scope_depth: Int;
+    upvalues: List<Upvalue>;
+    
+    init() {
+        this.chunk = Chunk();
+        this.current_function_type = FunctionType.SCRIPT;
+        this.locals = [];
+        this.scope_depth = 0;
+        this.upvalues = [];
+        
+        // Add a dummy local for slot 0 (this for methods, empty for others)
+        this.locals.push(Local(Token(TokenType.IDENTIFIER, "", nil, 0), 0, false));
+    }
+    
+    fn compile(statements: List<Stmt>) -> Chunk {
+        for stmt in statements {
+            this.compile_stmt(stmt);
+        }
+        
+        // Add return at the end of script
+        this.emit_byte(OpCode.RETURN);
+        
+        return this.chunk;
+    }
+    
+    fn compile_stmt(stmt: Stmt) {
+        match stmt {
+            is ExpressionStmt -> this.compile_expr_stmt(stmt);
+            is PrintStmt -> this.compile_print_stmt(stmt);
+            is VarStmt -> this.compile_var_stmt(stmt);
+            is BlockStmt -> this.compile_block_stmt(stmt);
+            is IfStmt -> this.compile_if_stmt(stmt);
+            is WhileStmt -> this.compile_while_stmt(stmt);
+            is ForStmt -> this.compile_for_stmt(stmt);
+            is FunctionStmt -> this.compile_function_stmt(stmt);
+            is ReturnStmt -> this.compile_return_stmt(stmt);
+            is BreakStmt -> this.compile_break_stmt(stmt);
+            is ContinueStmt -> this.compile_continue_stmt(stmt);
+            is ClassStmt -> this.compile_class_stmt(stmt);
+            _ -> {
+                // Unknown statement type
+                println("Unknown statement type");
+            }
+        }
+    }
+    
+    fn compile_expr_stmt(stmt: ExpressionStmt) {
+        this.compile_expr(stmt.expression);
+        this.emit_byte(OpCode.POP);
+    }
+    
+    fn compile_print_stmt(stmt: PrintStmt) {
+        this.compile_expr(stmt.expression);
+        this.emit_byte(OpCode.PRINT);
+    }
+    
+    fn compile_var_stmt(stmt: VarStmt) {
+        // Compile the initializer
+        if (stmt.initializer != nil) {
+            this.compile_expr(stmt.initializer);
+        } else {
+            this.emit_byte(OpCode.NIL);
+        }
+        
+        // Add the variable to locals if in local scope
+        if (this.scope_depth > 0) {
+            this.add_local(stmt.name);
+        } else {
+            // For global variables, emit DefineGlobal
+            let global_index = this.identifier_constant(stmt.name);
+            this.emit_byte(OpCode.DEFINE_GLOBAL);
+            this.emit_u16(global_index);
+        }
+    }
+    
+    fn compile_block_stmt(stmt: BlockStmt) {
+        this.begin_scope();
+        for statement in stmt.statements {
+            this.compile_stmt(statement);
+        }
+        this.end_scope();
+    }
+    
+    fn compile_if_stmt(stmt: IfStmt) {
+        // Compile the condition
+        this.compile_expr(stmt.condition);
+        
+        // Jump to else branch if condition is false
+        let else_jump = this.emit_jump(OpCode.JUMP_IF_FALSE);
+        this.emit_byte(OpCode.POP); // Pop the condition
+        
+        // Compile then branch
+        this.compile_stmt(stmt.then_branch);
+        
+        // Jump over else branch
+        let end_jump = this.emit_jump(OpCode.JUMP);
+        
+        // Patch the else jump to point here
+        this.patch_jump(else_jump);
+        this.emit_byte(OpCode.POP); // Pop the condition
+        
+        // Compile else branch if it exists
+        if (stmt.else_branch != nil) {
+            this.compile_stmt(stmt.else_branch);
+        }
+        
+        // Patch the end jump
+        this.patch_jump(end_jump);
+    }
+    
+    fn compile_while_stmt(stmt: WhileStmt) {
+        let loop_start = this.chunk.code.len();
+        
+        // Compile the condition
+        this.compile_expr(stmt.condition);
+        
+        // Jump to end if condition is false
+        let exit_jump = this.emit_jump(OpCode.JUMP_IF_FALSE);
+        this.emit_byte(OpCode.POP); // Pop the condition
+        
+        // Compile the body
+        this.compile_stmt(stmt.body);
+        
+        // Loop back to the start
+        this.emit_loop(loop_start);
+        
+        // Patch the exit jump
+        this.patch_jump(exit_jump);
+        this.emit_byte(OpCode.POP); // Pop the condition
+    }
+    
+    fn compile_for_stmt(stmt: ForStmt) {
+        this.begin_scope();
+        
+        // Compile initializer
+        if (stmt.initializer != nil) {
+            this.compile_stmt(stmt.initializer);
+        }
+        
+        let loop_start = this.chunk.code.len();
+        let exit_jump = -1;
+        
+        // Compile condition
+        if (stmt.condition != nil) {
+            this.compile_expr(stmt.condition);
+            
+            // Jump to end if condition is false
+            exit_jump = this.emit_jump(OpCode.JUMP_IF_FALSE);
+            this.emit_byte(OpCode.POP); // Pop the condition
+        }
+        
+        // Compile body
+        this.compile_stmt(stmt.body);
+        
+        // Compile increment
+        if (stmt.increment != nil) {
+            this.compile_expr(stmt.increment);
+            this.emit_byte(OpCode.POP); // Discard the result
+        }
+        
+        // Loop back to the start
+        this.emit_loop(loop_start);
+        
+        if (exit_jump != -1) {
+            this.patch_jump(exit_jump);
+            this.emit_byte(OpCode.POP); // Pop the condition
+        }
+        
+        this.end_scope();
+    }
+    
+    fn compile_function_stmt(stmt: FunctionStmt) {
+        // Add function name to constants
+        let function_name_index = this.identifier_constant(stmt.name);
+        
+        // Create a new compiler for the function body
+        let function_compiler = CodeGenerator();
+        function_compiler.current_function_type = FunctionType.FUNCTION;
+        
+        // Enter function scope
+        function_compiler.begin_scope();
+        
+        // Add parameters as locals
+        for param in stmt.parameters {
+            function_compiler.add_local(param);
+            function_compiler.mark_initialized();
+        }
+        
+        // Compile function body
+        for statement in stmt.body {
+            function_compiler.compile_stmt(statement);
+        }
+        
+        // Add implicit return
+        function_compiler.emit_byte(OpCode.NIL);
+        function_compiler.emit_byte(OpCode.RETURN);
+        
+        // Get the function's chunk
+        let function_chunk = function_compiler.end();
+        
+        // Create function object
+        let function_obj = Function(
+            stmt.parameters.len(),
+            function_chunk,
+            stmt.name.lexeme,
+            function_compiler.upvalues.len(),
+            nil
+        );
+        
+        // Add function to current chunk's constants
+        let function_index = this.chunk.add_constant(function_obj);
+        
+        // Emit closure instruction
+        this.emit_byte(OpCode.CLOSURE);
+        this.emit_u16(function_index);
+        
+        // Emit upvalue information
+        for upvalue in function_compiler.upvalues {
+            this.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            this.emit_byte(upvalue.index);
+        }
+        
+        // Define the function as a global variable
+        this.emit_byte(OpCode.DEFINE_GLOBAL);
+        this.emit_u16(function_name_index);
+    }
+    
+    fn compile_return_stmt(stmt: ReturnStmt) {
+        if (this.current_function_type == FunctionType.SCRIPT) {
+            this.error("Cannot return from top-level code.");
+            return;
+        }
+        
+        if (stmt.value != nil) {
+            this.compile_expr(stmt.value);
+        } else {
+            this.emit_byte(OpCode.NIL);
+        }
+        
+        this.emit_byte(OpCode.RETURN);
+    }
+    
+    fn compile_break_stmt(stmt: BreakStmt) {
+        // In a real implementation, this would handle break statements
+        // For now, we'll just emit a placeholder
+        this.emit_byte(OpCode.NIL);
+    }
+    
+    fn compile_continue_stmt(stmt: ContinueStmt) {
+        // In a real implementation, this would handle continue statements
+        // For now, we'll just emit a placeholder
+        this.emit_byte(OpCode.NIL);
+    }
+    
+    fn compile_class_stmt(stmt: ClassStmt) {
+        // Add class name to constants
+        let class_name_index = this.identifier_constant(stmt.name);
+        
+        // Emit BuildClass instruction
+        this.emit_byte(OpCode.BUILD_CLASS);
+        this.emit_u16(class_name_index);
+        
+        // Emit whether there's a superclass (0 for none, 1 for yes)
+        if (stmt.superclass != nil) {
+            this.emit_byte(1);
+            let super_name_index = this.identifier_constant(stmt.superclass.name);
+            this.emit_u16(super_name_index);
+        } else {
+            this.emit_byte(0);
+        }
+        
+        // Define the class as a global variable
+        this.emit_byte(OpCode.DEFINE_GLOBAL);
+        this.emit_u16(class_name_index);
+        
+        // Compile methods
+        this.begin_scope();
+        for method in stmt.methods {
+            this.compile_function_stmt(method);
+        }
+        this.end_scope();
+    }
+    
+    fn compile_expr(expr: Expr) {
+        match expr {
+            is Literal -> this.compile_literal_expr(expr);
+            is Grouping -> this.compile_grouping_expr(expr);
+            is Unary -> this.compile_unary_expr(expr);
+            is Binary -> this.compile_binary_expr(expr);
+            is Variable -> this.compile_variable_expr(expr);
+            is Assign -> this.compile_assign_expr(expr);
+            is Call -> this.compile_call_expr(expr);
+            is Get -> this.compile_get_expr(expr);
+            is Set -> this.compile_set_expr(expr);
+            is This -> this.compile_this_expr(expr);
+            is Super -> this.compile_super_expr(expr);
+            is ArrayAccess -> this.compile_array_access_expr(expr);
+            is ArrayAssign -> this.compile_array_assign_expr(expr);
+            is ListLiteral -> this.compile_list_literal_expr(expr);
+            is MapLiteral -> this.compile_map_literal_expr(expr);
+            _ -> {
+                // Unknown expression type
+                println("Unknown expression type");
+            }
+        }
+    }
+    
+    fn compile_literal_expr(expr: Literal) {
+        if (expr.value is String) {
+            let string_index = this.chunk.add_constant(expr.value);
+            this.emit_byte(OpCode.CONSTANT);
+            this.emit_u16(string_index);
+        } else if (expr.value is Int) {
+            let int_index = this.chunk.add_constant(expr.value);
+            this.emit_byte(OpCode.CONSTANT);
+            this.emit_u16(int_index);
+        } else if (expr.value is Float) {
+            let float_index = this.chunk.add_constant(expr.value);
+            this.emit_byte(OpCode.CONSTANT);
+            this.emit_u16(float_index);
+        } else if (expr.value is Bool) {
+            if (expr.value) {
+                this.emit_byte(OpCode.TRUE);
+            } else {
+                this.emit_byte(OpCode.FALSE);
+            }
+        } else if (expr.value == nil) {
+            this.emit_byte(OpCode.NIL);
+        }
+    }
+    
+    fn compile_grouping_expr(expr: Grouping) {
+        this.compile_expr(expr.expression);
+    }
+    
+    fn compile_unary_expr(expr: Unary) {
+        this.compile_expr(expr.right);
+        
+        match expr.operator.type {
+            TokenType.MINUS -> this.emit_byte(OpCode.NEGATE);
+            TokenType.BANG -> this.emit_byte(OpCode.NOT);
+            _ -> {
+                // Unknown unary operator
+                println("Unknown unary operator");
+            }
+        }
+    }
+    
+    fn compile_binary_expr(expr: Binary) {
+        this.compile_expr(expr.left);
+        this.compile_expr(expr.right);
+        
+        match expr.operator.type {
+            TokenType.GREATER -> this.emit_byte(OpCode.GREATER);
+            TokenType.GREATER_EQUAL -> {
+                this.emit_byte(OpCode.LESS);
+                this.emit_byte(OpCode.NOT);
+            }
+            TokenType.LESS -> this.emit_byte(OpCode.LESS);
+            TokenType.LESS_EQUAL -> {
+                this.emit_byte(OpCode.GREATER);
+                this.emit_byte(OpCode.NOT);
+            }
+            TokenType.BANG_EQUAL -> {
+                this.emit_byte(OpCode.EQUAL);
+                this.emit_byte(OpCode.NOT);
+            }
+            TokenType.EQUAL_EQUAL -> this.emit_byte(OpCode.EQUAL);
+            TokenType.PLUS -> this.emit_byte(OpCode.ADD);
+            TokenType.MINUS -> this.emit_byte(OpCode.SUBTRACT);
+            TokenType.STAR -> this.emit_byte(OpCode.MULTIPLY);
+            TokenType.SLASH -> this.emit_byte(OpCode.DIVIDE);
+            _ -> {
+                // Unknown binary operator
+                println("Unknown binary operator");
+            }
+        }
+    }
+    
+    fn compile_variable_expr(expr: Variable) {
+        this.named_variable(expr.name, false);
+    }
+    
+    fn compile_assign_expr(expr: Assign) {
+        // Try to resolve the variable as a local first
+        let arg = this.resolve_local(expr.name);
+        if (arg != -1) {
+            this.compile_expr(expr.value);
+            this.emit_byte(OpCode.SET_LOCAL);
+            this.emit_byte(arg);
+        } else {
+            // It's a global variable
+            this.compile_expr(expr.value);
+            let name_index = this.identifier_constant(expr.name);
+            this.emit_byte(OpCode.SET_GLOBAL);
+            this.emit_u16(name_index);
+        }
+    }
+    
+    fn compile_call_expr(expr: Call) {
+        this.compile_expr(expr.callee);
+        
+        let arg_count = 0;
+        for argument in expr.arguments {
+            this.compile_expr(argument);
+            arg_count = arg_count + 1;
+        }
+        
+        this.emit_byte(OpCode.CALL);
+        this.emit_byte(arg_count);
+    }
+    
+    fn compile_get_expr(expr: Get) {
+        this.compile_expr(expr.object);
+        let name_index = this.identifier_constant(expr.name);
+        this.emit_byte(OpCode.GET_PROPERTY);
+        this.emit_u16(name_index);
+    }
+    
+    fn compile_set_expr(expr: Set) {
+        this.compile_expr(expr.object);
+        this.compile_expr(expr.value);
+        let name_index = this.identifier_constant(expr.name);
+        this.emit_byte(OpCode.SET_PROPERTY);
+        this.emit_u16(name_index);
+    }
+    
+    fn compile_this_expr(expr: This) {
+        if (this.current_function_type == FunctionType.FUNCTION) {
+            this.error("'this' is not allowed in regular functions.");
+            return;
+        }
+        
+        this.variable(Variable(expr.keyword), false);
+    }
+    
+    fn compile_super_expr(expr: Super) {
+        if (this.current_function_type != FunctionType.METHOD) {
+            this.error("Cannot use 'super' outside of a method.");
+            return;
+        }
+        
+        // Load 'this' onto the stack
+        this.named_variable(Token(TokenType.THIS, "this", nil, expr.keyword.line), false);
+        
+        // Load the superclass
+        let name_index = this.identifier_constant(expr.method);
+        this.emit_byte(OpCode.GET_SUPER);
+        this.emit_u16(name_index);
+    }
+    
+    fn compile_array_access_expr(expr: ArrayAccess) {
+        this.compile_expr(expr.array);
+        this.compile_expr(expr.index);
+        this.emit_byte(OpCode.GET_INDEX);
+    }
+
+    fn compile_array_assign_expr(expr: ArrayAssign) {
+        this.compile_expr(expr.array);
+        this.compile_expr(expr.index);
+        this.compile_expr(expr.value);
+        this.emit_byte(OpCode.SET_INDEX);
+    }
+
+    fn compile_list_literal_expr(expr: ListLiteral) {
+        // Compile each element
+        for element in expr.elements {
+            this.compile_expr(element);
+        }
+
+        // Create list with the number of elements
+        this.emit_byte(OpCode.BUILD_LIST);
+        this.emit_byte(expr.elements.len());
+    }
+
+    fn compile_map_literal_expr(expr: MapLiteral) {
+        // Compile each key-value pair
+        for entry in expr.entries {
+            let (key, value) = entry;
+            this.compile_expr(key);
+            this.compile_expr(value);
+        }
+
+        // Create map with the number of entries
+        this.emit_byte(OpCode.BUILD_MAP);
+        this.emit_byte(expr.entries.len() * 2);  // Each entry contributes 2 values (key + value)
+    }
+    
+    fn named_variable(name: Token, can_assign: Bool) {
+        let get_op = OpCode.GET_LOCAL;
+        let set_op = OpCode.SET_LOCAL;
+        let arg = this.resolve_local(name);
+        
+        if (arg == -1) {
+            arg = this.resolve_upvalue(name);
+            if (arg != -1) {
+                get_op = OpCode.GET_UPVALUE;
+                set_op = OpCode.SET_UPVALUE;
+            } else {
+                arg = this.identifier_constant(name);
+                get_op = OpCode.GET_GLOBAL;
+                set_op = OpCode.SET_GLOBAL;
+            }
+        }
+        
+        if (can_assign && this.match(TokenType.EQUAL)) {
+            this.compile_expr(this.expression());
+            this.emit_bytes(set_op, arg);
+        } else {
+            this.emit_bytes(get_op, arg);
+        }
+    }
+    
+    fn resolve_local(name: Token) -> Int {
+        // Iterate through locals in reverse order to find the most recent one
+        for i in range(this.locals.len() - 1, -1, -1) {
+            let local = this.locals[i];
+            if (this.identifiers_equal(local.name, name)) {
+                if (local.depth == -1) {
+                    this.error("Cannot read local variable in its own initializer.");
+                }
+                return i;
+            }
+        }
+        
+        return -1; // Not found
+    }
+    
+    fn resolve_upvalue(name: Token) -> Int {
+        if (this.enclosing == nil) {
+            return -1; // No enclosing function
+        }
+        
+        let local = this.enclosing.resolve_local(name);
+        if (local != -1) {
+            this.enclosing.locals[local].is_captured = true;
+            return this.add_upvalue(local, true);
+        }
+        
+        let upvalue = this.enclosing.resolve_upvalue(name);
+        if (upvalue != -1) {
+            return this.add_upvalue(upvalue, false);
+        }
+        
+        return -1; // Not found
+    }
+    
+    fn add_upvalue(index: Int, is_local: Bool) -> Int {
+        // Check if we already have this upvalue
+        for i in range(this.upvalues.len()) {
+            let upvalue = this.upvalues[i];
+            if (upvalue.index == index && upvalue.is_local == is_local) {
+                return i;
+            }
+        }
+        
+        // Add new upvalue
+        this.upvalues.push(Upvalue(index, is_local));
+        return this.upvalues.len() - 1;
+    }
+    
+    fn identifiers_equal(a: Token, b: Token) -> Bool {
+        return a.lexeme == b.lexeme;
+    }
+    
+    fn identifier_constant(name: Token) -> Int {
+        return this.chunk.add_constant(name.lexeme);
+    }
+    
+    fn add_local(name: Token) {
+        // Check if we already have a local with this name in the current scope
+        if (this.locals.len() >= 256) {
+            this.error("Cannot have more than 256 variables in one scope.");
+            return;
+        }
+        
+        this.locals.push(Local(name, this.scope_depth, false));
+    }
+    
+    fn mark_initialized() {
+        if (this.scope_depth == 0) {
+            return; // Global scope
+        }
+        let local = this.locals[this.locals.len() - 1];
+        local.depth = this.scope_depth;
+    }
+    
+    fn begin_scope() {
+        this.scope_depth = this.scope_depth + 1;
+    }
+    
+    fn end_scope() {
+        this.scope_depth = this.scope_depth - 1;
+        
+        // Pop locals from the stack that are no longer in scope
+        while (this.locals.len() > 0 && 
+               this.locals[this.locals.len() - 1].depth > this.scope_depth) {
+            if (this.locals[this.locals.len() - 1].is_captured) {
+                this.emit_byte(OpCode.CLOSE_UPVALUE);
+            } else {
+                this.emit_byte(OpCode.POP);
+            }
+            this.locals.pop();
+        }
+    }
+    
+    fn emit_byte(byte: Int) {
+        this.chunk.write(byte, 0); // Line number would come from the AST node
+    }
+    
+    fn emit_bytes(byte1: Int, byte2: Int) {
+        this.emit_byte(byte1);
+        this.emit_byte(byte2);
+    }
+    
+    fn emit_u16(value: Int) {
+        this.emit_byte((value >> 8) & 0xFF);
+        this.emit_byte(value & 0xFF);
+    }
+    
+    fn emit_jump(instruction: OpCode) -> Int {
+        this.emit_byte(instruction);
+        this.emit_byte(0xFF); // Placeholder for low byte
+        this.emit_byte(0xFF); // Placeholder for high byte
+        return this.chunk.code.len() - 2; // Return position of the jump offset
+    }
+    
+    fn patch_jump(offset: Int) {
+        // -2 to adjust for the bytecode for the jump offset itself
+        let jump = this.chunk.code.len() - offset - 2;
+        
+        if (jump > UInt16.MAX_VALUE) {
+            this.error("Too much code to jump over.");
+            return;
+        }
+        
+        this.chunk.code[offset] = (jump >> 8) & 0xFF;
+        this.chunk.code[offset + 1] = jump & 0xFF;
+    }
+    
+    fn emit_loop(start_position: Int) {
+        this.emit_byte(OpCode.LOOP);
+        
+        let offset = this.chunk.code.len() - start_position + 2;
+        if (offset > UInt16.MAX_VALUE) {
+            this.error("Loop body too large.");
+            return;
+        }
+        
+        this.emit_byte((offset >> 8) & 0xFF);
+        this.emit_byte(offset & 0xFF);
+    }
+    
+    fn error(message: String) {
+        // In a real implementation, this would record the error
+        // For now, we'll just print it
+        println("Error: " + message);
+    }
+    
+    fn end() -> Chunk {
+        return this.chunk;
+    }
+}
+
+// Enum for function types
+enum FunctionType {
+    FUNCTION,
+    METHOD,
+    INITIALIZER,
+    SCRIPT
+}
+
+// Enum for opcodes
+enum OpCode {
+    // Constants
+    CONSTANT,
+    NIL,
+    TRUE,
+    FALSE,
+    
+    // Operations
+    ADD,
+    SUBTRACT,
+    MULTIPLY,
+    DIVIDE,
+    NEGATE,
+    NOT,
+    EQUAL,
+    GREATER,
+    LESS,
+    
+    // Variables
+    GET_LOCAL,
+    SET_LOCAL,
+    GET_GLOBAL,
+    SET_GLOBAL,
+    DEFINE_GLOBAL,
+    
+    // Control flow
+    POP,
+    JUMP,
+    JUMP_IF_FALSE,
+    LOOP,
+    CALL,
+    RETURN,
+    
+    // Objects and classes
+    GET_PROPERTY,
+    SET_PROPERTY,
+    GET_SUPER,
+    
+    // Arrays
+    GET_ELEMENT,
+    SET_ELEMENT,
+    
+    // Other
+    PRINT,
+    CLOSURE,
+    CLOSE_UPVALUE,
+    GET_UPVALUE,
+    SET_UPVALUE,
+    BUILD_CLASS,
+    
+    // Collections
+    BUILD_LIST,
+    BUILD_MAP,
+    GET_INDEX,
+    SET_INDEX
+}
+
+// Function object representation
+class Function {
+    arity: Int;
+    chunk: Chunk;
+    name: String;
+    upvalue_count: Int;
+    module_path: String;
+    
+    init(arity: Int, chunk: Chunk, name: String, upvalue_count: Int, module_path: String) {
+        this.arity = arity;
+        this.chunk = chunk;
+        this.name = name;
+        this.upvalue_count = upvalue_count;
+        this.module_path = module_path;
+    }
+}

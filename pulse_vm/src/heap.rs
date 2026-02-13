@@ -12,6 +12,7 @@ pub struct Heap {
     objects: Vec<ObjectEntry>,
     free_head: Option<usize>,
     gray_stack: Vec<usize>, // For marking
+    scratch_buffer: Vec<ObjHandle>, // Reusable buffer for tracing children
     // For Phase 0: Enhanced memory management
     bytes_allocated: usize,
     next_gc: usize,  // When to trigger next GC
@@ -23,6 +24,7 @@ impl Heap {
             objects: Vec::with_capacity(1024),
             free_head: None,
             gray_stack: Vec::new(),
+            scratch_buffer: Vec::new(),
             bytes_allocated: 0,
             next_gc: 1024 * 1024, // 1MB default
         }
@@ -44,7 +46,10 @@ impl Heap {
             Object::BoundMethod(_) => 32, // Rough estimate
             Object::Set(set) => set.len() * 8, // Rough estimate
             Object::Queue(q) => q.len() * 8, // Rough estimate
+
             Object::SharedMemory(_) => 16, // Rough estimate
+            Object::Socket(_) => 64, // Struct + OS resource overhead
+            Object::SharedBuffer(_) => 16, // Wrapper
         };
         
         if let Some(idx) = self.free_head {
@@ -67,6 +72,8 @@ impl Heap {
     }
 }
 
+
+#[async_trait::async_trait]
 impl HeapInterface for Heap {
     fn alloc_object(&mut self, obj: Object) -> ObjHandle {
         self.alloc(obj)
@@ -131,73 +138,22 @@ impl Heap {
 
     pub fn trace(&mut self) {
         while let Some(idx) = self.gray_stack.pop() {
-            // We need to look at the object at `idx`
-            // But we can't borrow `self.objects` while mutating `self` (calling mark_object).
-            // Classic borrow checker issue.
+            // Re-use scratch buffer to avoid allocation
+            // We temporarily take the buffer out to safely borrow it mutably alongside immutable 'objects'
+            let mut children = std::mem::take(&mut self.scratch_buffer);
+            children.clear();
             
-            // Workaround: Extract handles to mark, THEN mark them.
-            // Or use indices.
-            
-            let handles_to_mark = {
-                if let ObjectEntry::Allocated { object, .. } = &self.objects[idx] {
-                    match object {
-                        Object::Closure(c) => {
-                            c.upvalues.clone()
-                        },
-                        Object::Upvalue(uv) => {
-                            if let Some(Value::Obj(h)) = &uv.closed {
-                                vec![*h]
-                            } else {
-                                Vec::new()
-                            }
-                        },
-                        Object::List(vec) => {
-                            vec.iter().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
-                        },
-                         Object::Map(map) => {
-                             map.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
-                         },
-                         Object::Module(exports) => {
-                             exports.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
-                         },
-                         Object::Class(c) => {
-                             c.methods.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
-                         },
-                         Object::Set(_) => Vec::new(), // Sets contain only strings, no object references
-                         Object::Queue(q) => {
-                             q.iter().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>()
-                         },
-                         Object::SharedMemory(sm) => {
-                             // Check if the value in shared memory is an object
-                             if let Value::Obj(h) = &sm.value {
-                                 vec![*h]
-                             } else {
-                                 Vec::new()
-                             }
-                         },
-                         Object::Instance(i) => {
-                             let mut roots = i.fields.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }).collect::<Vec<_>>();
-                             // Mark class methods as well, as they might be closures on the heap
-                             roots.extend(i.class.methods.values().filter_map(|v| if let Value::Obj(h) = v { Some(*h) } else { None }));
-                             roots
-                         },
-                         Object::BoundMethod(b) => {
-                             if let Value::Obj(h) = b.receiver {
-                                 vec![h]
-                             } else {
-                                 Vec::new()
-                             }
-                         },
-                         Object::Function(_) | Object::String(_) | Object::NativeFn(_) => Vec::new(),
-                    }
-                } else {
-                    Vec::new()
-                }
-            };
-            
-            for handle in handles_to_mark {
-                self.mark_object(handle);
+            if let Some(ObjectEntry::Allocated { object, .. }) = self.objects.get(idx) {
+                object.visit_references(|h| children.push(h));
             }
+            
+            // Now mark the children
+            for handle in &children {
+                self.mark_object(*handle);
+            }
+            
+            // Put buffer back
+            self.scratch_buffer = children;
         }
     }
     
@@ -226,7 +182,10 @@ impl Heap {
                          Object::Class(_) => 32,
                          Object::Set(set) => set.len() * 8,
                          Object::Queue(q) => q.len() * 8,
+
                          Object::SharedMemory(_) => 16,
+                         Object::Socket(_) => 64, // This is the existing one
+                         Object::SharedBuffer(_) => 16,
                          Object::Instance(i) => 32 + i.fields.len() * 16,
                          Object::BoundMethod(_) => 32,
                      };

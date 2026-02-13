@@ -267,6 +267,8 @@ fn stringify_value(val: &Value, heap: &dyn HeapInterface) -> PulseResult<String>
                         }
                         Ok(format!("{{{}}}", pairs.join(",")))
                     }
+                    Object::SharedMemory(_) => Ok("<shared_memory>".to_string()),
+                    Object::Socket(_) => Ok("<socket>".to_string()),
                     _ => Ok("null".to_string()),
                 }
             } else {

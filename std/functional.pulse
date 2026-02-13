@@ -1,0 +1,39 @@
+
+fn map(list, func) {
+    let result = [];
+    let count = len(list);
+    let i = 0;
+    while (i < count) {
+        let item = list[i];
+        let val = func(item);
+        push(result, val);
+        i = i + 1;
+    }
+    return result;
+}
+
+fn filter(list, pred) {
+    let result = [];
+    let count = len(list);
+    let i = 0;
+    while (i < count) {
+        let item = list[i];
+        if (pred(item)) {
+            push(result, item);
+        }
+        i = i + 1;
+    }
+    return result;
+}
+
+fn reduce(list, func, initial) {
+    let acc = initial;
+    let count = len(list);
+    let i = 0;
+    while (i < count) {
+        let item = list[i];
+        acc = func(acc, item);
+        i = i + 1;
+    }
+    return acc;
+}

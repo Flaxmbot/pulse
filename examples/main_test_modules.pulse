@@ -1,8 +1,0 @@
-let math = import "std/math";
-let local_math = import "examples/math_lib.pulse";
-
-print "Native abs(-50): ${math.abs(-50)}";
-print "Local math.square(5): ${local_math.square(5)}";
-print "Local math.cube(3): ${local_math.cube(3)}";
-print "Math module length: ${len(math)}";
-print "Local math module length: ${len(local_math)}";

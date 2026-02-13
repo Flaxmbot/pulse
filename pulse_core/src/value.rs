@@ -1,6 +1,55 @@
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::error::{PulseError, PulseResult};
 use crate::object::{ObjHandle, HeapInterface, Function};
+use std::sync::Arc;
+
+// Wrappers for non-serializable types
+#[derive(Clone, Debug)]
+pub struct PulseSharedMemory(pub Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl PartialEq for PulseSharedMemory {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Serialize for PulseSharedMemory {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> Deserialize<'de> for PulseSharedMemory {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where D: Deserializer<'de> {
+        Err(serde::de::Error::custom("Cannot deserialize SharedMemory"))
+    }
+}
+
+
+#[derive(Clone, Debug)]
+pub struct PulseSocket(pub Arc<tokio::net::TcpStream>);
+
+impl PartialEq for PulseSocket {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Serialize for PulseSocket {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> Deserialize<'de> for PulseSocket {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where D: Deserializer<'de> {
+         Err(serde::de::Error::custom("Cannot deserialize Socket"))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)] 
 pub enum Constant {
@@ -9,13 +58,9 @@ pub enum Constant {
     Float(f64),
     String(String),
     Unit,
-    Function(Box<Function>), // Boxed to avoid infinite size if Function was inline (struct contains Chunk contains Vec<Constant>)
-    // Actually Chunk contains Vec, so indirection exists. But Function is struct.
-    // Constant -> Function -> Chunk -> Vec<Constant>.
-    // Vec is pointer. So Function size is fixed.
-    // Constant size is max(size of variants).
-    // So explicit Box not strictly necessary for size, but good for move?
-    // Let's use Box just in case or simpler: `Function` struct.
+    SharedMemory(PulseSharedMemory),
+    Socket(PulseSocket),
+    Function(Box<Function>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -30,22 +75,35 @@ pub enum Value {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActorId {
-    pub node_id: u128,
-    pub sequence: u64,
+    pub node_id: u64,
+    pub sequence: u32,
 }
 
 impl ActorId {
-    pub fn new(node_id: u128, sequence: u64) -> Self {
+    pub fn new(node_id: u64, sequence: u32) -> Self {
         Self { node_id, sequence }
     }
 }
 
-// NativeFn definition. 
-// Note: It is NOT stored in Value anymore, but in Object.
+
+
+use std::pin::Pin;
+use std::future::Future;
+
+
+pub type SyncNativeFn = fn(&mut dyn HeapInterface, &[Value]) -> PulseResult<Value>;
+pub type AsyncNativeFn = for<'a> fn(&'a mut dyn HeapInterface, &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>>;
+
+#[derive(Clone)]
+pub enum NativeFunctionKind {
+    Sync(SyncNativeFn),
+    Async(AsyncNativeFn),
+}
+
 #[derive(Clone)]
 pub struct NativeFn {
     pub name: String,
-    pub func: fn(&mut dyn HeapInterface, &[Value]) -> PulseResult<Value>,
+    pub func: NativeFunctionKind,
 }
 
 impl std::fmt::Debug for NativeFn {
@@ -95,7 +153,8 @@ impl From<Constant> for Value {
             Constant::Float(f) => Value::Float(f),
             Constant::Unit => Value::Unit,
             Constant::String(_) => panic!("Cannot convert String Constant to Value without Heap"),
-            Constant::Function(_) => panic!("Cannot convert Function Constant to Value without Heap (needs Closure wrapper)"),
+            Constant::Function(_) => panic!("Cannot convert Function Constant to Value without Heap"),
+            Constant::SharedMemory(_) | Constant::Socket(_) => panic!("Cannot convert complex Constant to Value without Heap"),
         }
     }
 }

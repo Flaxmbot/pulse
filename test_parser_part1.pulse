@@ -1,8 +1,0 @@
-let Lexer = import "./pulse_compiler_pulse/lexer.pulse";
-let AST = import "./pulse_compiler_pulse/ast.pulse";
-
-fn make_parser(l) {
-    return { "lexer": l };
-}
-
-print "ok";

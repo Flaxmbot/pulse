@@ -1,0 +1,664 @@
+// Simple interpreter for Pulse language (specification)
+import "ast";
+import "lexer";
+import "parser";
+import "error_reporting";
+
+// Environment to store variable bindings
+class Environment {
+    values: Map<String, Any>;
+    enclosing: Environment;
+
+    init(enclosing: Environment) {
+        this.values = {};
+        this.enclosing = enclosing;
+    }
+
+    fn define(name: String, value: Any) {
+        this.values[name] = value;
+    }
+
+    fn get(name: Token) -> Any {
+        if (name.lexeme in this.values) {
+            return this.values[name.lexeme];
+        }
+
+        if (this.enclosing != nil) {
+            return this.enclosing.get(name);
+        }
+
+        error(name, "Undefined variable '" + name.lexeme + "'.");
+        return nil;
+    }
+
+    fn assign(name: Token, value: Any) {
+        if (name.lexeme in this.values) {
+            this.values[name.lexeme] = value;
+            return;
+        }
+
+        if (this.enclosing != nil) {
+            this.enclosing.assign(name, value);
+            return;
+        }
+
+        error(name, "Undefined variable '" + name.lexeme + "'.");
+    }
+}
+
+// Interpreter that evaluates the AST
+class Interpreter {
+    globals: Environment;
+    environment: Environment;
+    error_reporter: ErrorReporter;
+
+    init(error_reporter: ErrorReporter) {
+        this.globals = Environment(nil);
+        this.environment = this.globals;
+        this.error_reporter = error_reporter;
+        
+        // Define some built-in functions
+        this.globals.define("println", BuiltinFunction_Println());
+        this.globals.define("clock", BuiltinFunction_Clock());
+    }
+
+    fn interpret(statements: List<Stmt>) {
+        try {
+            for statement in statements {
+                this.execute(statement);
+            }
+        } catch error {
+            this.error_reporter.runtime_error(error);
+        }
+    }
+
+    fn execute(stmt: Stmt) {
+        match stmt {
+            is ExpressionStmt -> this.execute_expr_stmt(stmt);
+            is PrintStmt -> this.execute_print_stmt(stmt);
+            is VarStmt -> this.execute_var_stmt(stmt);
+            is BlockStmt -> this.execute_block_stmt(stmt);
+            is IfStmt -> this.execute_if_stmt(stmt);
+            is WhileStmt -> this.execute_while_stmt(stmt);
+            is ForStmt -> this.execute_for_stmt(stmt);
+            is FunctionStmt -> this.execute_function_stmt(stmt);
+            is ReturnStmt -> this.execute_return_stmt(stmt);
+            is ClassStmt -> this.execute_class_stmt(stmt);
+            _ -> {
+                // Other statement types
+            }
+        }
+    }
+
+    fn execute_expr_stmt(stmt: ExpressionStmt) {
+        this.evaluate(stmt.expression);
+    }
+
+    fn execute_print_stmt(stmt: PrintStmt) {
+        let value = this.evaluate(stmt.expression);
+        println(stringify(value));
+    }
+
+    fn execute_var_stmt(stmt: VarStmt) {
+        let value = if (stmt.initializer != nil) {
+            this.evaluate(stmt.initializer);
+        } else {
+            nil;
+        };
+
+        this.environment.define(stmt.name.lexeme, value);
+    }
+
+    fn execute_block_stmt(stmt: BlockStmt) {
+        let previous_env = this.environment;
+        this.environment = Environment(this.environment);
+
+        try {
+            for statement in stmt.statements {
+                this.execute(statement);
+            }
+        } finally {
+            this.environment = previous_env;
+        }
+    }
+
+    fn execute_if_stmt(stmt: IfStmt) {
+        if (this.is_truthy(this.evaluate(stmt.condition))) {
+            this.execute(stmt.then_branch);
+        } else if (stmt.else_branch != nil) {
+            this.execute(stmt.else_branch);
+        }
+    }
+
+    fn execute_while_stmt(stmt: WhileStmt) {
+        while (this.is_truthy(this.evaluate(stmt.condition))) {
+            this.execute(stmt.body);
+        }
+    }
+
+    fn execute_for_stmt(stmt: ForStmt) {
+        if (stmt.initializer != nil) {
+            this.execute(stmt.initializer);
+        }
+
+        while (stmt.condition == nil || this.is_truthy(this.evaluate(stmt.condition))) {
+            this.execute(stmt.body);
+
+            if (stmt.increment != nil) {
+                this.evaluate(stmt.increment);
+            }
+        }
+    }
+
+    fn execute_function_stmt(stmt: FunctionStmt) {
+        let function = PulseFunction(stmt, this.environment);
+        this.environment.define(stmt.name.lexeme, function);
+    }
+
+    fn execute_return_stmt(stmt: ReturnStmt) {
+        let value = if (stmt.value != nil) {
+            this.evaluate(stmt.value);
+        } else {
+            nil;
+        };
+
+        throw ReturnException(value);
+    }
+
+    fn execute_class_stmt(stmt: ClassStmt) {
+        let superclass = nil;
+        if (stmt.superclass != nil) {
+            superclass = this.evaluate(stmt.superclass);
+            if (!(superclass is Class)) {
+                error(stmt.superclass.name, "Superclass must be a class.");
+                return;
+            }
+        }
+
+        this.environment.define(stmt.name.lexeme, nil);
+
+        if (superclass != nil) {
+            this.environment = Environment(this.environment);
+            this.environment.define("super", superclass);
+        }
+
+        let methods = {};
+        for method in stmt.methods {
+            let function = PulseFunction(method, this.environment, method.name.lexeme == "init");
+            methods[method.name.lexeme] = function;
+        }
+
+        let klass = Class(stmt.name.lexeme, superclass, methods);
+
+        if (superclass != nil) {
+            this.environment = this.environment.enclosing;
+        }
+
+        this.environment.assign(stmt.name, klass);
+    }
+
+    fn evaluate(expr: Expr) -> Any {
+        match expr {
+            is Literal -> return expr.value;
+            is Grouping -> return this.evaluate(expr.expression);
+            is Unary -> return this.evaluate_unary(expr);
+            is Binary -> return this.evaluate_binary(expr);
+            is Variable -> return this.evaluate_variable(expr);
+            is Assign -> return this.evaluate_assign(expr);
+            is Logical -> return this.evaluate_logical(expr);
+            is Call -> return this.evaluate_call(expr);
+            is Get -> return this.evaluate_get(expr);
+            is Set -> return this.evaluate_set(expr);
+            is This -> return this.evaluate_this(expr);
+            is Super -> return this.evaluate_super(expr);
+            is ListLiteral -> return this.evaluate_list_literal(expr);
+            is MapLiteral -> return this.evaluate_map_literal(expr);
+            _ -> {
+                return nil; // Unsupported expression type
+            }
+        }
+    }
+
+    fn evaluate_unary(expr: Unary) -> Any {
+        let right = this.evaluate(expr.right);
+
+        match expr.operator.type {
+            TokenType.MINUS -> {
+                if (right is Int) {
+                    return -right;
+                } else if (right is Float) {
+                    return -right;
+                }
+                error(expr.operator, "Operand must be a number.");
+                return nil;
+            }
+            TokenType.BANG -> return !this.is_truthy(right);
+            _ -> return nil;
+        }
+    }
+
+    fn evaluate_binary(expr: Binary) -> Any {
+        let left = this.evaluate(expr.left);
+        let right = this.evaluate(expr.right);
+
+        match expr.operator.type {
+            TokenType.GREATER -> {
+                if (left is Int && right is Int) {
+                    return left > right;
+                } else if (left is Float && right is Float) {
+                    return left > right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) > (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            TokenType.GREATER_EQUAL -> {
+                if (left is Int && right is Int) {
+                    return left >= right;
+                } else if (left is Float && right is Float) {
+                    return left >= right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) >= (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            TokenType.LESS -> {
+                if (left is Int && right is Int) {
+                    return left < right;
+                } else if (left is Float && right is Float) {
+                    return left < right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) < (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            TokenType.LESS_EQUAL -> {
+                if (left is Int && right is Int) {
+                    return left <= right;
+                } else if (left is Float && right is Float) {
+                    return left <= right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) <= (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            TokenType.EQUAL_EQUAL -> return this.is_equal(left, right);
+            TokenType.BANG_EQUAL -> return !this.is_equal(left, right);
+            TokenType.PLUS -> {
+                if (left is String && right is String) {
+                    return left + right;
+                } else if (left is Int && right is Int) {
+                    return left + right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) + (right as Float);
+                }
+                error(expr.operator, "Operands must be two numbers or two strings.");
+                return nil;
+            }
+            TokenType.MINUS -> {
+                if (left is Int && right is Int) {
+                    return left - right;
+                } else if (left is Float && right is Float) {
+                    return left - right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) - (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            TokenType.STAR -> {
+                if (left is Int && right is Int) {
+                    return left * right;
+                } else if (left is Float && right is Float) {
+                    return left * right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) * (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            TokenType.SLASH -> {
+                if (left is Int && right is Int) {
+                    return left / right;
+                } else if (left is Float && right is Float) {
+                    return left / right;
+                } else if ((left is Int || left is Float) && (right is Int || right is Float)) {
+                    return (left as Float) / (right as Float);
+                }
+                error(expr.operator, "Operands must be numbers.");
+                return nil;
+            }
+            _ -> return nil;
+        }
+    }
+
+    fn evaluate_variable(expr: Variable) -> Any {
+        return this.environment.get(expr.name);
+    }
+
+    fn evaluate_assign(expr: Assign) -> Any {
+        let value = this.evaluate(expr.value);
+
+        if (expr.name.lexeme in this.environment.values) {
+            this.environment.assign(expr.name, value);
+        } else if (this.environment.enclosing != nil) {
+            this.environment.enclosing.assign(expr.name, value);
+        } else {
+            error(expr.name, "Undefined variable '" + expr.name.lexeme + "'.");
+        }
+
+        return value;
+    }
+
+    fn evaluate_logical(expr: Logical) -> Any {
+        let left = this.evaluate(expr.left);
+
+        if (expr.operator.type == TokenType.LOGICAL_OR) {
+            if (this.is_truthy(left)) {
+                return left;
+            }
+        } else {
+            if (!this.is_truthy(left)) {
+                return left;
+            }
+        }
+
+        return this.evaluate(expr.right);
+    }
+
+    fn evaluate_call(expr: Call) -> Any {
+        let callee = this.evaluate(expr.callee);
+
+        let args = [];
+        for argument in expr.arguments {
+            args.push(this.evaluate(argument));
+        }
+
+        if (!(callee is Callable)) {
+            error(expr.paren, "Can only call functions and classes.");
+            return nil;
+        }
+
+        let function = callee as Callable;
+        if (args.len() != function.arity()) {
+            error(expr.paren, "Expected " + function.arity() + " arguments but got " + args.len() + ".");
+            return nil;
+        }
+
+        return function.call(this, args);
+    }
+
+    fn evaluate_get(expr: Get) -> Any {
+        let object = this.evaluate(expr.object);
+        if (object is ClassInstance) {
+            return object.get(expr.name);
+        }
+
+        error(expr.name, "Only instances have properties.");
+        return nil;
+    }
+
+    fn evaluate_set(expr: Set) -> Any {
+        let object = this.evaluate(expr.object);
+
+        if (!(object is ClassInstance)) {
+            error(expr.name, "Only instances have fields.");
+            return nil;
+        }
+
+        let value = this.evaluate(expr.value);
+        object.set(expr.name, value);
+        return value;
+    }
+
+    fn evaluate_this(expr: This) -> Any {
+        return this.lookup_variable(expr.keyword, expr);
+    }
+
+    fn evaluate_super(expr: Super) -> Any {
+        // Super implementation would go here
+        return nil;
+    }
+
+    fn evaluate_list_literal(expr: ListLiteral) -> Any {
+        let elements = [];
+        for element in expr.elements {
+            elements.push(this.evaluate(element));
+        }
+        return elements;
+    }
+
+    fn evaluate_map_literal(expr: MapLiteral) -> Any {
+        let map = {};
+        for entry in expr.entries {
+            let key = this.evaluate(entry.0);
+            let value = this.evaluate(entry.1);
+            // Convert key to string for map storage
+            map[key.to_string()] = value;
+        }
+        return map;
+    }
+
+    fn is_truthy(object: Any) -> Bool {
+        if (object == nil) return false;
+        if (object is Bool) return object;
+        return true;
+    }
+
+    fn is_equal(a: Any, b: Any) -> Bool {
+        if (a == nil && b == nil) return true;
+        if (a == nil) return false;
+        return a == b;
+    }
+
+    fn stringify(object: Any) -> String {
+        if (object == nil) return "nil";
+        if (object is Float) {
+            let text = object.to_string();
+            if (text.endswith(".0")) {
+                return substring(text, 0, text.len() - 2);
+            }
+            return text;
+        }
+        return object.to_string();
+    }
+
+    fn lookup_variable(name: Token, expr: Expr) -> Any {
+        // This would look up variables in scopes
+        return this.environment.get(name);
+    }
+
+    fn error(token: Token, message: String) {
+        this.error_reporter.error_at_token(token, message);
+    }
+}
+
+// Base class for callable objects
+class Callable {
+    fn call(interpreter: Interpreter, arguments: List<Any>) -> Any {
+        // To be overridden
+        return nil;
+    }
+
+    fn arity() -> Int {
+        // To be overridden
+        return 0;
+    }
+}
+
+// Pulse function implementation
+class PulseFunction : Callable {
+    declaration: FunctionStmt;
+    closure: Environment;
+    is_initializer: Bool;
+
+    init(declaration: FunctionStmt, closure: Environment, is_initializer: Bool) {
+        this.declaration = declaration;
+        this.closure = closure;
+        this.is_initializer = is_initializer;
+    }
+
+    fn call(interpreter: Interpreter, arguments: List<Any>) -> Any {
+        let environment = Environment(this.closure);
+
+        for i in range(this.declaration.parameters.len()) {
+            environment.define(this.declaration.parameters[i].lexeme, arguments[i]);
+        }
+
+        try {
+            interpreter.execute_block_stmt(BlockStmt(this.declaration.body));
+        } catch return_exception {
+            if (this.is_initializer) {
+                return this.closure.get(this.declaration.name);
+            }
+            return return_exception.value;
+        }
+
+        if (this.is_initializer) {
+            return this.closure.get(this.declaration.name);
+        }
+        return nil;
+    }
+
+    fn arity() -> Int {
+        return this.declaration.parameters.len();
+    }
+
+    fn to_string() -> String {
+        return "<fn " + this.declaration.name.lexeme + ">";
+    }
+}
+
+// Class representation
+class Class : Callable {
+    name: String;
+    superclass: Class;
+    methods: Map<String, PulseFunction>;
+
+    init(name: String, superclass: Class, methods: Map<String, PulseFunction>) {
+        this.name = name;
+        this.superclass = superclass;
+        this.methods = methods;
+    }
+
+    fn call(interpreter: Interpreter, arguments: List<Any>) -> Any {
+        let instance = ClassInstance(this);
+        let initializer = this.find_method("init");
+        if (initializer != nil) {
+            initializer.bind(instance).call(interpreter, arguments);
+        }
+        return instance;
+    }
+
+    fn arity() -> Int {
+        let initializer = this.find_method("init");
+        if (initializer == nil) return 0;
+        return initializer.arity();
+    }
+
+    fn find_method(name: String) -> PulseFunction {
+        if (name in this.methods) {
+            return this.methods[name];
+        }
+
+        if (this.superclass != nil) {
+            return this.superclass.find_method(name);
+        }
+
+        return nil;
+    }
+
+    fn to_string() -> String {
+        return this.name;
+    }
+}
+
+// Class instance representation
+class ClassInstance {
+    klass: Class;
+    fields: Map<String, Any>;
+
+    init(klass: Class) {
+        this.klass = klass;
+        this.fields = {};
+    }
+
+    fn get(name: Token) -> Any {
+        if (name.lexeme in this.fields) {
+            return this.fields[name.lexeme];
+        }
+
+        let method = this.klass.find_method(name.lexeme);
+        if (method != nil) {
+            return method.bind(this);
+        }
+
+        error(name, "Undefined property '" + name.lexeme + "'.");
+        return nil;
+    }
+
+    fn set(name: Token, value: Any) {
+        this.fields[name.lexeme] = value;
+    }
+
+    fn to_string() -> String {
+        return this.klass.name + " instance";
+    }
+}
+
+// Built-in functions
+class BuiltinFunction_Println : Callable {
+    fn call(interpreter: Interpreter, arguments: List<Any>) -> Any {
+        for arg in arguments {
+            print(interpreter.stringify(arg));
+            print(" ");
+        }
+        println("");
+        return nil;
+    }
+
+    fn arity() -> Int {
+        return 1; // Actually variadic, but we'll simplify
+    }
+
+    fn to_string() -> String {
+        return "<native fn println>";
+    }
+}
+
+class BuiltinFunction_Clock : Callable {
+    fn call(interpreter: Interpreter, arguments: List<Any>) -> Any {
+        // This would return current time in a real implementation
+        return 0.0;
+    }
+
+    fn arity() -> Int {
+        return 0;
+    }
+
+    fn to_string() -> String {
+        return "<native fn clock>";
+    }
+}
+
+// Return exception for function returns
+class ReturnException {
+    value: Any;
+
+    init(value: Any) {
+        this.value = value;
+    }
+}
+
+// Export the interpreter
+export Interpreter;
+export Environment;
+export Callable;
+export PulseFunction;
+export Class;
+export ClassInstance;
+export ReturnException;

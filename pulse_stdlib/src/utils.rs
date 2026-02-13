@@ -35,20 +35,29 @@ pub fn random_int_native(_heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
     Ok(Value::Int(rng.gen_range(min..=max)))
 }
 
+
+use std::pin::Pin;
+use std::future::Future;
+use futures::FutureExt;
+
+
 /// sleep(ms: Int) -> Unit
 /// Sleeps for the specified number of milliseconds
-pub fn sleep_native(_heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    if args.len() != 1 {
-        return Err(PulseError::RuntimeError("sleep expects 1 argument".into()));
-    }
-    
-    let ms = args[0].as_int()?;
-    if ms < 0 {
-        return Err(PulseError::RuntimeError("sleep: duration must be non-negative".into()));
-    }
-    
-    thread::sleep(Duration::from_millis(ms as u64));
-    Ok(Value::Unit)
+pub fn sleep_native<'a>(_heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    let args = args.to_vec();
+    async move {
+        if args.len() != 1 {
+            return Err(PulseError::RuntimeError("sleep expects 1 argument".into()));
+        }
+        
+        let ms = args[0].as_int()?;
+        if ms < 0 {
+            return Err(PulseError::RuntimeError("sleep: duration must be non-negative".into()));
+        }
+        
+        tokio::time::sleep(Duration::from_millis(ms as u64)).await;
+        Ok(Value::Unit)
+    }.boxed()
 }
 
 /// type_of(val: Value) -> String
@@ -80,7 +89,10 @@ pub fn type_of_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
                     Object::BoundMethod(_) => "BoundMethod",
                     Object::Set(_) => "Set",
                     Object::Queue(_) => "Queue",
+
                     Object::SharedMemory(_) => "SharedMemory",
+                    Object::Socket(_) => "Socket",
+                    Object::SharedBuffer(_) => "SharedBuffer",
                 }
             } else {
                 "Unknown"
@@ -128,6 +140,9 @@ fn value_to_string(val: &Value, heap: &dyn HeapInterface) -> String {
                     Object::Set(s) => format!("<set len={}>", s.len()),
                     Object::Queue(q) => format!("<queue len={}>", q.len()),
                     Object::SharedMemory(sm) => format!("<shared memory locked={}>", sm.locked),
+
+                    Object::Socket(_) => "<socket>".to_string(),
+                    Object::SharedBuffer(_) => "<shared buffer>".to_string(),
                 }
             } else {
                 "<invalid>".to_string()
@@ -327,6 +342,11 @@ pub fn println_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
                         Object::Set(s) => print!("<set len={}>", s.len()),
                         Object::Queue(q) => print!("<queue len={}>", q.len()),
                         Object::SharedMemory(sm) => print!("<shared memory locked={}>", sm.locked),
+
+
+                        Object::Socket(_) => print!("<socket>"),
+
+                        Object::SharedBuffer(_) => print!("<shared buffer>"),
                     }
                 } else {
                     print!("<invalid>");

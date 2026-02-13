@@ -29,7 +29,8 @@ pub fn load_std_module(name: &str, vm: &mut VM) -> Option<pulse_core::object::Ob
 }
 
 fn add_native(name: &str, func: fn(&mut dyn HeapInterface, &[Value]) -> pulse_core::PulseResult<Value>, exports: &mut HashMap<String, Value>, vm: &mut VM) {
-    let native = NativeFn { name: name.to_string(), func };
+
+    let native = NativeFn { name: name.to_string(), func: pulse_core::value::NativeFunctionKind::Sync(func) };
     let handle = vm.heap.alloc(Object::NativeFn(native));
     exports.insert(name.to_string(), Value::Obj(handle));
 }

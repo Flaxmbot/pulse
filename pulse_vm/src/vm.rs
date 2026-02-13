@@ -58,6 +58,8 @@ pub struct VM {
     pub debug_ctx: Option<crate::debug::DebugContext>,
 }
 
+// unsafe impl Send for VM {}
+
 impl VM {
     pub fn new(chunk: Chunk, pid: ActorId) -> Self {
         let mut heap = Heap::new();
@@ -129,14 +131,43 @@ impl VM {
         self.define_native("delete_file", pulse_stdlib::io::delete_file_native);
         self.define_native("json_parse", pulse_stdlib::json::json_parse_native);
         self.define_native("json_stringify", pulse_stdlib::json::json_stringify_native);
+
         self.define_native("random", pulse_stdlib::utils::random_native);
         self.define_native("random_int", pulse_stdlib::utils::random_int_native);
-        self.define_native("sleep", pulse_stdlib::utils::sleep_native);
+        self.define_native_async("sleep", pulse_stdlib::utils::sleep_native);
         self.define_native("type_of", pulse_stdlib::utils::type_of_native);
         self.define_native("to_string", pulse_stdlib::utils::to_string_native);
         self.define_native("to_int", pulse_stdlib::utils::to_int_native);
         self.define_native("abs", pulse_stdlib::utils::abs_native);
         self.define_native("string_to_list", pulse_stdlib::utils::string_to_list_native);
+
+
+        // Networking natives
+        self.define_native_async("tcp_connect", pulse_stdlib::networking::tcp_connect_native);
+        self.define_native_async("tcp_listen", pulse_stdlib::networking::tcp_listen_native);
+        self.define_native_async("http_get", pulse_stdlib::networking::http_get_native);
+        self.define_native_async("http_post", pulse_stdlib::networking::http_post_native);
+        self.define_native_async("socket_create", pulse_stdlib::networking::socket_create_native);
+        self.define_native_async("dns_resolve", pulse_stdlib::networking::dns_resolve_native);
+
+        // Regex natives
+        self.define_native("regex_compile", pulse_stdlib::regex::regex_compile_native);
+        self.define_native("regex_match", pulse_stdlib::regex::regex_match_native);
+        self.define_native("regex_find_all", pulse_stdlib::regex::regex_find_all_native);
+        self.define_native("regex_replace", pulse_stdlib::regex::regex_replace_native);
+
+        // String utility natives
+        self.define_native("split_string", pulse_stdlib::string_utils::split_string_native);
+        self.define_native("join_strings", pulse_stdlib::string_utils::join_strings_native);
+        self.define_native("starts_with", pulse_stdlib::string_utils::starts_with_native);
+        self.define_native("ends_with", pulse_stdlib::string_utils::ends_with_native);
+        self.define_native("trim_string", pulse_stdlib::string_utils::trim_string_native);
+        self.define_native("string_length", pulse_stdlib::string_utils::string_length_native);
+        self.define_native("substring", pulse_stdlib::string_utils::substring_native);
+        self.define_native("string_contains", pulse_stdlib::string_utils::string_contains_native);
+        self.define_native("string_replace", pulse_stdlib::string_utils::string_replace_native);
+        self.define_native("string_uppercase", pulse_stdlib::string_utils::string_uppercase_native);
+        self.define_native("string_lowercase", pulse_stdlib::string_utils::string_lowercase_native);
 
         // Test framework natives
         self.define_native("assert", pulse_stdlib::testing::assert_native);
@@ -240,16 +271,27 @@ impl VM {
         chunk.constants[idx].clone()
     }
 
-    pub fn define_native(&mut self, name: &str, func: fn(&mut dyn HeapInterface, &[Value]) -> PulseResult<Value>) {
-        // Create NativeFn object
-        let native = NativeFn { name: name.to_string(), func };
+
+
+    pub fn define_native(&mut self, name: &str, func: pulse_core::value::SyncNativeFn) {
+        let native = NativeFn { 
+            name: name.to_string(), 
+            func: pulse_core::value::NativeFunctionKind::Sync(func) 
+        };
         let handle = self.heap.alloc(Object::NativeFn(native));
-        
-        // Put in builtins
         self.builtins.insert(name.to_string(), Value::Obj(handle));
     }
 
-    pub fn run(&mut self, mut steps: usize) -> VMStatus {
+    pub fn define_native_async(&mut self, name: &str, func: pulse_core::value::AsyncNativeFn) {
+        let native = NativeFn { 
+            name: name.to_string(), 
+            func: pulse_core::value::NativeFunctionKind::Async(func) 
+        };
+        let handle = self.heap.alloc(Object::NativeFn(native));
+        self.builtins.insert(name.to_string(), Value::Obj(handle));
+    }
+
+    pub async fn run(&mut self, mut steps: usize) -> VMStatus {
         while steps > 0 {
             // Check bounds? read_byte will panic if out of bounds, or result in error?
             // Better to check.
@@ -279,9 +321,12 @@ impl VM {
 
             let op_code = self.read_byte();
             let op = Op::from(op_code);
-            println!("Op: {:?}", op); // Tracing enabled
+            // println!("Op: {:?}", op); // Tracing disabled for performance
             
-            match self.execute_op(op) {
+
+            // println!("Op: {:?}", op); // Tracing disabled for performance
+            
+            match self.execute_op(op).await {
                 Ok(status) => {
                     if status != VMStatus::Running {
                         return status;
@@ -293,7 +338,8 @@ impl VM {
         VMStatus::Running 
     }
 
-    fn execute_op(&mut self, op: Op) -> PulseResult<VMStatus> {
+
+    async fn execute_op(&mut self, op: Op) -> PulseResult<VMStatus> {
         macro_rules! op_match {
             ($op:expr) => {
                 match $op {
@@ -413,9 +459,12 @@ impl VM {
                                     Object::Class(c) => format!("<class {}>", c.name),
                                     Object::Instance(i) => format!("<instance {}>", i.class.name),
                                     Object::BoundMethod(_) => "<bound method>".to_string(),
+
                                     Object::Set(s) => format!("<set len={}>", s.len()),
                                     Object::Queue(q) => format!("<queue len={}>", q.len()),
                                     Object::SharedMemory(sm) => format!("<shared memory locked={}>", sm.locked),
+                                    Object::Socket(_) => "<socket>".to_string(),
+                                    Object::SharedBuffer(_) => "<shared buffer>".to_string(),
                                 }
                             }
                         };
@@ -571,15 +620,14 @@ impl VM {
                                 Value::Obj(handle)
                             },
                             Constant::Function(func) => {
-                                 // Should not happen for Op::Const? Compiler emits Op::Closure?
-                                 // Or maybe we treat it as object?
-                                 // Compiler uses Op::Closure for functions.
-                                 // But if we have `const x = fn...`?
-                                 // Usually Op::Closure is used.
-                                 // If we encounter Function constant here, it means we are loading it raw?
-                                 let handle = self.heap.alloc(Object::Function(*func));
-                                 Value::Obj(handle)
-                            }
+                                let handle = self.heap.alloc(Object::Function(*func.clone()));
+                                Value::Obj(handle)
+                            },
+                            Constant::Socket(s) => {
+                                let handle = self.heap.alloc(Object::Socket(s.clone()));
+                                Value::Obj(handle)
+                            },
+                            Constant::SharedMemory(_) => panic!("SharedMemory constant loading not implemented"),
                         };
                         self.push(val);
                         return Ok(VMStatus::Running);
@@ -708,8 +756,15 @@ impl VM {
                                      let native = if let Some(Object::NativeFn(n)) = self.heap.get(handle) { n.clone() } else { unreachable!() };
                                      let args_start = self.stack.len() - arg_count;
                                      let args = self.stack[args_start..].to_vec();
+
+
                                      self.stack.truncate(args_start - 1);
-                                     let result = (native.func)(self, &args)?;
+                                     
+                                     let result = match native.func {
+                                         pulse_core::value::NativeFunctionKind::Sync(f) => f(self, &args)?,
+                                         pulse_core::value::NativeFunctionKind::Async(f) => f(self, &args).await?,
+                                     };
+                                     
                                      self.push(result);
                                      return Ok(VMStatus::Running);
                                  } else if obj_type == 2 { // Closure
@@ -843,10 +898,11 @@ impl VM {
                             }
 
                             // Restore previous globals
+                            // Restore previous globals if they exist.
+                            // If prev_globals is None (e.g. for "include" style imports), 
+                            // we keep the modified globals (namespace pollution), which is desired.
                             if let Some(prev) = frame.prev_globals {
                                 self.globals = prev;
-                            } else {
-                                self.globals.clear(); // Should not happen if is_module is true
                             }
                         }
 
@@ -1103,6 +1159,9 @@ impl VM {
                                         Object::Function(_) | Object::Closure(_) => return Err(PulseError::RuntimeError("Cannot send functions yet (TODO)".into())),
                                         Object::Upvalue(_) => return Err(PulseError::RuntimeError("Cannot send upvalues".into())),
                                         Object::Module(_) => return Err(PulseError::RuntimeError("Cannot send modules".into())),
+
+                                        Object::Socket(s) => Constant::Socket(s.clone()),
+                                        Object::SharedBuffer(sm) => Constant::SharedMemory(sm.clone()),
                                     }
                                 } else {
                                     return Err(PulseError::RuntimeError("Cannot send freed object".into()));
@@ -1744,7 +1803,9 @@ impl VM {
                             }
                             print!("}}");
                         },
+
                         Object::Function(f) => print!("<fn {}>", f.name),
+                        Object::SharedBuffer(_) => print!("<shared buffer>"),
                         Object::Closure(c) => print!("<fn {}>", c.function.name),
                         Object::Upvalue(_) => print!("<upvalue>"),
                         Object::Module(m) => print!("<module len={}>", m.len()),
@@ -1754,6 +1815,7 @@ impl VM {
                         Object::Set(s) => print!("<set len={}>", s.len()),
                         Object::Queue(q) => print!("<queue len={}>", q.len()),
                         Object::SharedMemory(sm) => print!("<shared memory locked={}>", sm.locked),
+                        Object::Socket(_) => print!("<socket>"),
                     }
                 } else {
                     print!("<freed object>");
@@ -1900,7 +1962,10 @@ impl VM {
                         Object::BoundMethod(_) => "<bound method>".to_string(),
                         Object::Set(s) => format!("<set len={}>", s.len()),
                         Object::Queue(q) => format!("<queue len={}>", q.len()),
-                        Object::SharedMemory(sm) => format!("<shared memory locked={}>", sm.locked),
+
+                        Object::SharedMemory(sm) => "SharedMemory".to_string(),
+                        Object::Socket(_) => "Socket".to_string(),
+                        Object::SharedBuffer(_) => "SharedBuffer".to_string(),
                     }
                 } else {
                     "<invalid handle>".to_string()
@@ -1939,7 +2004,76 @@ impl HeapInterface for VM {
     }
 
     fn collect_garbage(&mut self) {
-        self.collect_garbage();
+        // 1. Mark Roots
+
+        // Stack
+        // We can't iterate self.stack while mutating self.heap easily if we are not careful.
+        // But fields are disjoint.
+        
+        // Mark stack
+        for val in &self.stack {
+            if let Value::Obj(h) = val {
+                 self.heap.mark_object(*h);
+            }
+        }
+        
+        // Mark globals
+        for val in self.globals.values() {
+            if let Value::Obj(h) = val {
+                 self.heap.mark_object(*h);
+            }
+        }
+        
+        // Mark Frames (Closures)
+        for frame in &self.frames {
+            self.heap.mark_object(frame.closure);
+             if let Some(path) = &frame.module_path {
+                 // Strings are objects? No, module_path is Option<String>.
+                 // If it was ObjHandle, we'd mark it. String is owned here.
+             }
+             if let Some(globals) = &frame.prev_globals {
+                for val in globals.values() {
+                    if let Value::Obj(h) = val {
+                        self.heap.mark_object(*h);
+                    }
+                }
+             }
+        }
+        
+        // Mark Open Upvalues
+        for handle in &self.open_upvalues {
+            self.heap.mark_object(*handle);
+        }
+        
+        // Mark Loaded Modules
+        for handle in self.loaded_modules.values() {
+            self.heap.mark_object(*handle);
+        }
+        
+        // Mark Global Cache
+        for val in self.global_cache.values() {
+            if let Value::Obj(h) = val {
+                 self.heap.mark_object(*h);
+            }
+        }
+        
+        // Builtins? 
+        for val in self.builtins.values() {
+             if let Value::Obj(h) = val {
+                 self.heap.mark_object(*h);
+            }
+        }
+
+        // 2. Trace
+        self.heap.trace();
+        
+        // 3. Sweep
+        let freed = self.heap.sweep();
+        
+        // 4. Update Stats
+        let (allocated, _) = self.heap.get_allocation_stats();
+        let next_gc = std::cmp::max(allocated * 2, 1024 * 1024);
+        self.heap.set_next_gc(next_gc);
     }
     
     fn get_allocation_stats(&self) -> (usize, usize) {

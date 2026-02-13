@@ -1,0 +1,190 @@
+// Main compiler implementation for Pulse language
+import "ast";
+import "lexer";
+import "parser";
+import "code_generator";
+import "error_reporting";
+import "symbol_table";
+import "type_system";
+import "metaprogramming";
+import "interpreter";
+
+class Compiler {
+    source: String;
+    error_reporter: ErrorReporter;
+    symbol_table: SymbolTable;
+    type_checker: TypeChecker;
+    macro_expander: MacroExpander;
+    
+    init(source: String) {
+        this.source = source;
+        this.error_reporter = ErrorReporter();
+        this.symbol_table = SymbolTable();
+        this.type_checker = nil;
+        this.macro_expander = nil;
+    }
+    
+    fn compile() -> Chunk {
+        // First, tokenize the source
+        let lexer = Lexer(this.source);
+        let tokens = lexer.scan_tokens();
+
+        // Parse the tokens into an AST
+        let parser = Parser(tokens, this.error_reporter);
+        let ast = parser.parse();
+
+        // Check for parsing errors before proceeding
+        if (this.error_reporter.has_errors()) {
+            return nil; // Return nil to indicate compilation failure
+        }
+
+        // Expand macros in the AST
+        this.macro_expander = MacroExpander(this.symbol_table, this.error_reporter);
+        let expanded_ast = this.macro_expander.expand_macros(ast);
+
+        // Build symbol table from the expanded AST
+        let builder = SymbolTableBuilder(this.error_reporter);
+        this.symbol_table = builder.build(expanded_ast);
+
+        // Check for semantic errors (like undefined variables)
+        if (this.error_reporter.has_errors()) {
+            return nil; // Return nil to indicate compilation failure
+        }
+
+        // Perform type checking on the expanded AST
+        this.type_checker = TypeChecker(this.symbol_table, this.error_reporter);
+        if (!this.type_checker.check(expanded_ast)) {
+            return nil; // Return nil to indicate type checking failure
+        }
+
+        // Generate bytecode from the expanded AST
+        let codegen = CodeGenerator();
+        return codegen.compile(expanded_ast);
+    }
+
+    fn interpret() -> Bool {
+        // First, tokenize the source
+        let lexer = Lexer(this.source);
+        let tokens = lexer.scan_tokens();
+
+        // Parse the tokens into an AST
+        let parser = Parser(tokens, this.error_reporter);
+        let ast = parser.parse();
+
+        // Check for parsing errors before proceeding
+        if (this.error_reporter.has_errors()) {
+            return false; // Return false to indicate interpretation failure
+        }
+
+        // Expand macros in the AST
+        this.macro_expander = MacroExpander(this.symbol_table, this.error_reporter);
+        let expanded_ast = this.macro_expander.expand_macros(ast);
+
+        // Build symbol table from the expanded AST
+        let builder = SymbolTableBuilder(this.error_reporter);
+        this.symbol_table = builder.build(expanded_ast);
+
+        // Check for semantic errors (like undefined variables)
+        if (this.error_reporter.has_errors()) {
+            return false; // Return false to indicate compilation failure
+        }
+
+        // Perform type checking on the expanded AST
+        this.type_checker = TypeChecker(this.symbol_table, this.error_reporter);
+        if (!this.type_checker.check(expanded_ast)) {
+            return false; // Return false to indicate type checking failure
+        }
+
+        // Interpret the expanded AST directly
+        let interpreter = Interpreter(this.error_reporter);
+        interpreter.interpret(expanded_ast);
+        
+        return !this.error_reporter.has_errors();
+    }
+    
+    fn get_errors() -> List<Error> {
+        return this.error_reporter.get_errors();
+    }
+    
+    fn has_errors() -> Bool {
+        return this.error_reporter.has_errors();
+    }
+    
+    fn get_symbol_table() -> SymbolTable {
+        return this.symbol_table;
+    }
+    
+    fn get_type_checker() -> TypeChecker {
+        return this.type_checker;
+    }
+    
+    fn get_macro_expander() -> MacroExpander {
+        return this.macro_expander;
+    }
+}
+
+// Main compiler function
+fn compile_source(source: String) -> Chunk {
+    let compiler = Compiler(source);
+    let result = compiler.compile();
+
+    if (compiler.has_errors()) {
+        println("Compilation failed with errors:");
+        for error in compiler.get_errors() {
+            println(error.to_string());
+        }
+        return nil;
+    }
+
+    return result;
+}
+
+// Main interpreter function
+fn interpret_source(source: String) -> Bool {
+    let compiler = Compiler(source);
+    let success = compiler.interpret();
+
+    if (!success) {
+        println("Interpretation failed with errors:");
+        for error in compiler.get_errors() {
+            println(error.to_string());
+        }
+    }
+
+    return success;
+}
+
+// Export the main compiler interface
+export compile_source;
+export interpret_source;
+export Compiler;
+export CodeGenerator;
+export Parser;
+export Lexer;
+export SymbolTable;
+export SymbolTableBuilder;
+export TypeChecker;
+export Type;
+export BasicType;
+export TypeInferenceContext;
+export MacroExpander;
+export Reflection;
+export MetaCodeGen;
+export AnnotationProcessor;
+export TemplateSystem;
+export ErrorReporter;
+export Error;
+export ErrorType;
+export ErrorMessages;
+export Token;
+export TokenType;
+export AstNode;
+export Expr;
+export Stmt;
+export Interpreter;
+export Environment;
+export Callable;
+export PulseFunction;
+export Class;
+export ClassInstance;
+export ReturnException;

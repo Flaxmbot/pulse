@@ -1,0 +1,315 @@
+// Lexer for Pulse language
+import "ast";
+
+class Lexer {
+    source: String;
+    tokens: List<Token>;
+    start: Int;
+    current: Int;
+    line: Int;
+    
+    init(source: String) {
+        this.source = source;
+        this.tokens = [];
+        this.start = 0;
+        this.current = 0;
+        this.line = 1;
+    }
+    
+    fn scan_tokens() -> List<Token> {
+        while (!this.is_at_end()) {
+            this.start = this.current;
+            this.scan_token();
+        }
+        
+        this.tokens.push(Token(TokenType.EOF, "", nil, this.line));
+        return this.tokens;
+    }
+    
+    fn scan_token() {
+        let c = this.advance();
+        match c {
+            '(' -> this.add_token(TokenType.LEFT_PAREN);
+            ')' -> this.add_token(TokenType.RIGHT_PAREN);
+            '{' -> this.add_token(TokenType.LEFT_BRACE);
+            '}' -> this.add_token(TokenType.RIGHT_BRACE);
+            '[' -> this.add_token(TokenType.LEFT_BRACKET);
+            ']' -> this.add_token(TokenType.RIGHT_BRACKET);
+            ',' -> this.add_token(TokenType.COMMA);
+            '.' -> this.add_token(TokenType.DOT);
+            '-' -> {
+                if (this.match('>')) {
+                    this.add_token(TokenType.ARROW);  // ->
+                } else {
+                    this.add_token(TokenType.MINUS);
+                }
+            }
+            '+' -> this.add_token(TokenType.PLUS);
+            ';' -> this.add_token(TokenType.SEMICOLON);
+            '*' -> this.add_token(TokenType.STAR);
+            '%' -> this.add_token(TokenType.PERCENT);
+            '!' -> {
+                if (this.match('=')) {
+                    this.add_token(TokenType.BANG_EQUAL);
+                } else {
+                    this.add_token(TokenType.BANG);
+                }
+            }
+            '=' -> {
+                if (this.match('=')) {
+                    this.add_token(TokenType.EQUAL_EQUAL);
+                } else if (this.match('>')) {
+                    this.add_token(TokenType.FAT_ARROW);  // =>
+                } else {
+                    this.add_token(TokenType.EQUAL);
+                }
+            }
+            '<' -> {
+                if (this.match('=')) {
+                    this.add_token(TokenType.LESS_EQUAL);
+                } else {
+                    this.add_token(TokenType.LESS);
+                }
+            }
+            '>' -> {
+                if (this.match('=')) {
+                    this.add_token(TokenType.GREATER_EQUAL);
+                } else {
+                    this.add_token(TokenType.GREATER);
+                }
+            }
+            '&' -> {
+                if (this.match('&')) {
+                    this.add_token(TokenType.LOGICAL_AND);
+                } else {
+                    this.add_token(TokenType.AMPERSAND);
+                }
+            }
+            '|' -> {
+                if (this.match('|')) {
+                    this.add_token(TokenType.LOGICAL_OR);
+                } else {
+                    this.add_token(TokenType.PIPE);
+                }
+            }
+            '/' -> {
+                if (this.match('/')) {
+                    // A comment goes until the end of the line
+                    while (this.peek() != '\n' && !this.is_at_end()) {
+                        this.advance();
+                    }
+                } else if (this.match('*')) {
+                    // Block comment
+                    while (!(this.peek() == '*' && this.peek_next() == '/') && !this.is_at_end()) {
+                        if (this.peek() == '\n') {
+                            this.line = this.line + 1;
+                        }
+                        this.advance();
+                    }
+                    this.advance(); // Consume '*'
+                    this.advance(); // Consume '/'
+                } else {
+                    this.add_token(TokenType.SLASH);
+                }
+            }
+            ' ' | '\r' | '\t' -> {
+                // Ignore whitespace
+            }
+            '\n' -> {
+                this.line = this.line + 1;
+            }
+            '"' -> this.string();
+            _ -> {
+                if (this.is_digit(c)) {
+                    this.number();
+                } else if (this.is_alpha(c)) {
+                    this.identifier();
+                } else {
+                    // Error handling would go here in a real implementation
+                    println("Error: Unexpected character: " + c);
+                }
+            }
+        }
+    }
+    
+    fn identifier() {
+        while (this.is_alphanumeric(this.peek())) {
+            this.advance();
+        }
+        
+        let text = substring(this.source, this.start, this.current);
+        let type = this.identifier_type(text);
+        this.add_token(type);
+    }
+    
+    fn identifier_type(text: String) -> TokenType {
+        match text {
+            // Keywords
+            "actor" -> TokenType.ACTOR,
+            "on" -> TokenType.ON,
+            "message" -> TokenType.MESSAGE,
+            "send" -> TokenType.SEND,
+            "spawn" -> TokenType.SPAWN,
+            "fn" -> TokenType.FN,
+            "let" -> TokenType.LET,
+            "if" -> TokenType.IF,
+            "else" -> TokenType.ELSE,
+            "while" -> TokenType.WHILE,
+            "print" -> TokenType.PRINT,
+            "for" -> TokenType.FOR,
+            "break" -> TokenType.BREAK,
+            "continue" -> TokenType.CONTINUE,
+            "return" -> TokenType.RETURN,
+            "true" -> TokenType.TRUE,
+            "false" -> TokenType.FALSE,
+            "nil" -> TokenType.NIL,
+            "and" -> TokenType.AND,
+            "or" -> TokenType.OR,
+            "receive" -> TokenType.RECEIVE,
+            "import" -> TokenType.IMPORT,
+            "link" -> TokenType.LINK,
+            "monitor" -> TokenType.MONITOR,
+            "spawn_link" -> TokenType.SPAWN_LINK,
+            "register" -> TokenType.REGISTER,
+            "unregister" -> TokenType.UNREGISTER,
+            "whereis" -> TokenType.WHEREIS,
+            "match" -> TokenType.MATCH,
+            "try" -> TokenType.TRY,
+            "catch" -> TokenType.CATCH,
+            "throw" -> TokenType.THROW,
+            "test" -> TokenType.TEST,
+            "def" -> TokenType.DEF,
+            "in" -> TokenType.IN,
+            "class" -> TokenType.CLASS,
+            "extends" -> TokenType.EXTENDS,
+            "super" -> TokenType.SUPER,
+            "this" -> TokenType.THIS,
+            // Type keywords
+            "Int" -> TokenType.TYPE_INT,
+            "Float" -> TokenType.TYPE_FLOAT,
+            "Bool" -> TokenType.TYPE_BOOL,
+            "String" -> TokenType.TYPE_STRING,
+            "Unit" -> TokenType.TYPE_UNIT,
+            "Pid" -> TokenType.TYPE_PID,
+            "List" -> TokenType.TYPE_LIST,
+            "Map" -> TokenType.TYPE_MAP,
+            "Fn" -> TokenType.TYPE_FN,
+            "Any" -> TokenType.TYPE_ANY,
+            // Shared memory keywords
+            "shared" -> TokenType.SHARED,
+            "memory" -> TokenType.MEMORY,
+            "lock" -> TokenType.LOCK,
+            "unlock" -> TokenType.UNLOCK,
+            _ -> TokenType.IDENTIFIER
+        }
+    }
+    
+    fn number() {
+        while (this.is_digit(this.peek())) {
+            this.advance();
+        }
+        
+        // Look for a fractional part
+        if (this.peek() == '.' && this.is_digit(this.peek_next())) {
+            // Consume the "."
+            this.advance();
+            
+            while (this.is_digit(this.peek())) {
+                this.advance();
+            }
+        }
+        
+        let num_str = substring(this.source, this.start, this.current);
+        let value = if (string_contains(num_str, ".")) {
+            num_str.to_float();
+        } else {
+            num_str.to_int();
+        };
+        
+        this.add_token_object(TokenType.NUMBER, value);
+    }
+    
+    fn string() {
+        while (this.peek() != '"' && !this.is_at_end()) {
+            if (this.peek() == '\n') {
+                this.line = this.line + 1;
+            }
+            this.advance();
+        }
+        
+        if (this.is_at_end()) {
+            // Error: Unterminated string
+            println("Error: Unterminated string.");
+            return;
+        }
+        
+        // The closing "
+        this.advance();
+        
+        // Trim the surrounding quotes
+        let value = substring(this.source, this.start + 1, this.current - 1);
+        this.add_token_object(TokenType.STRING, value);
+    }
+    
+    fn match(expected: String) -> Bool {
+        if (this.is_at_end()) {
+            return false;
+        }
+        if (substring(this.source, this.current, this.current + 1) != expected) {
+            return false;
+        }
+        
+        this.current = this.current + 1;
+        return true;
+    }
+    
+    fn peek() -> String {
+        if (this.is_at_end()) {
+            return "";
+        }
+        return substring(this.source, this.current, this.current + 1);
+    }
+    
+    fn peek_next() -> String {
+        if (this.current + 1 >= this.source.len()) {
+            return "";
+        }
+        return substring(this.source, this.current + 1, this.current + 2);
+    }
+    
+    fn is_alpha(c: String) -> Bool {
+        return (c >= 'a' && c <= 'z') ||
+               (c >= 'A' && c <= 'Z') ||
+               c == '_';
+    }
+    
+    fn is_alphanumeric(c: String) -> Bool {
+        return this.is_alpha(c) || this.is_digit(c);
+    }
+    
+    fn is_digit(c: String) -> Bool {
+        return c >= '0' && c <= '9';
+    }
+    
+    fn is_at_end() -> Bool {
+        return this.current >= this.source.len();
+    }
+    
+    fn advance() -> String {
+        this.current = this.current + 1;
+        return substring(this.source, this.current - 1, this.current);
+    }
+    
+    fn add_token(type: TokenType) {
+        let text = substring(this.source, this.start, this.current);
+        this.tokens.push(Token(type, text, nil, this.line));
+    }
+    
+    fn add_token_object(type: TokenType, literal: Any) {
+        let text = substring(this.source, this.start, this.current);
+        this.tokens.push(Token(type, text, literal, this.line));
+    }
+}
+
+// Export the main lexer interface
+export Lexer;

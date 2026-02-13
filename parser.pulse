@@ -1,0 +1,617 @@
+// Parser for Pulse language
+import "ast";
+import "error_reporting";
+
+class Parser {
+    tokens: List<Token>;
+    current: Int;
+    error_reporter: ErrorReporter;
+    
+    init(tokens: List<Token>, error_reporter: ErrorReporter) {
+        this.tokens = tokens;
+        this.current = 0;
+        this.error_reporter = error_reporter;
+    }
+    
+    fn parse() -> List<Stmt> {
+        let statements = [];
+        while (!this.is_at_end()) {
+            let stmt = this.declaration();
+            if (stmt != nil) {
+                statements.push(stmt);
+            }
+        }
+        
+        return statements;
+    }
+    
+    fn declaration() -> Stmt {
+        try {
+            if (this.match(TokenType.FUN)) {
+                return this.function("function");
+            }
+            if (this.match(TokenType.VAR)) {
+                return this.var_declaration();
+            }
+            if (this.match(TokenType.CLASS)) {
+                return this.class_declaration();
+            }
+            
+            return this.statement();
+        } catch err {
+            this.synchronize();
+            return nil;
+        }
+    }
+    
+    fn class_declaration() -> Stmt {
+        let name = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("class name"));
+        
+        let superclass = nil;
+        if (this.match(TokenType.EXTENDS)) {
+            this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("superclass name"));
+            superclass = Variable(this.previous());
+        }
+        
+        this.consume(TokenType.LEFT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "{"));
+        
+        let methods = [];
+        while (!this.check(TokenType.RIGHT_BRACE) && !this.is_at_end()) {
+            if (this.match(TokenType.FUN, TokenType.DEF)) {
+                methods.push(this.function("method"));
+            } else {
+                this.error(this.peek(), "Expect method definition in class.");
+                this.synchronize();
+            }
+        }
+        
+        this.consume(TokenType.RIGHT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "}"));
+        
+        return ClassStmt(name, superclass, methods);
+    }
+    
+    fn function(kind: String) -> Stmt {
+        let name = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable(kind + " name"));
+        this.consume(TokenType.LEFT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, "("));
+        
+        let parameters = [];
+        if (!this.check(TokenType.RIGHT_PAREN)) {
+            do {
+                if (parameters.len() >= 255) {
+                    this.error(this.peek(), ErrorMessages.too_many_parameters(255));
+                }
+                
+                let param = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("parameter name"));
+                parameters.push(param);
+                
+            } while (this.match(TokenType.COMMA));
+        }
+        
+        this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+        
+        // Optional return type annotation
+        if (this.match(TokenType.ARROW)) {
+            this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("return type"));
+        }
+        
+        this.consume(TokenType.LEFT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "{"));
+        let body = this.block();
+        return FunctionStmt(name, parameters, body);
+    }
+    
+    fn var_declaration() -> Stmt {
+        let name = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("variable name"));
+        
+        let initializer = nil;
+        if (this.match(TokenType.EQUAL)) {
+            initializer = this.expression();
+        }
+        
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        return VarStmt(name, initializer);
+    }
+    
+    fn statement() -> Stmt {
+        if (this.match(TokenType.PRINT)) {
+            return this.print_statement();
+        }
+        if (this.match(TokenType.LEFT_BRACE)) {
+            return BlockStmt(this.block());
+        }
+        if (this.match(TokenType.IF)) {
+            return this.if_statement();
+        }
+        if (this.match(TokenType.WHILE)) {
+            return this.while_statement();
+        }
+        if (this.match(TokenType.FOR)) {
+            return this.for_statement();
+        }
+        if (this.match(TokenType.RETURN)) {
+            return this.return_statement();
+        }
+        if (this.match(TokenType.BREAK)) {
+            return this.break_statement();
+        }
+        if (this.match(TokenType.CONTINUE)) {
+            return this.continue_statement();
+        }
+        if (this.match(TokenType.MATCH)) {
+            return this.match_statement();
+        }
+        if (this.match(TokenType.TRY)) {
+            return this.try_statement();
+        }
+        
+        return this.expression_statement();
+    }
+    
+    fn match_statement() -> Stmt {
+        // Match statement implementation would go here
+        // For now, we'll just skip to the next semicolon or block
+        this.expression(); // Match expression
+        this.consume(TokenType.LEFT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "{"));
+        
+        // Parse match arms
+        while (!this.check(TokenType.RIGHT_BRACE) && !this.is_at_end()) {
+            // Each arm would be parsed here
+            this.expression(); // Pattern
+            this.consume(TokenType.FAT_ARROW, ErrorMessages.unexpected_token(this.peek().lexeme, "=>"));
+            this.expression(); // Expression
+            
+            if (!this.check(TokenType.RIGHT_BRACE)) {
+                this.consume(TokenType.COMMA, ErrorMessages.unexpected_token(this.peek().lexeme, "comma or }"));
+            }
+        }
+        
+        this.consume(TokenType.RIGHT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "}"));
+        return ExpressionStmt(Literal(nil)); // Placeholder
+    }
+    
+    fn try_statement() -> Stmt {
+        this.consume(TokenType.LEFT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "{"));
+        let try_block = BlockStmt(this.block());
+        
+        if (this.match(TokenType.CATCH)) {
+            this.consume(TokenType.LEFT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, "("));
+            let error_var = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("exception variable"));
+            this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+            
+            this.consume(TokenType.LEFT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "{"));
+            let catch_block = BlockStmt(this.block());
+            
+            // For now, return a placeholder
+            return ExpressionStmt(Literal(nil));
+        }
+        
+        return try_block;
+    }
+    
+    fn print_statement() -> Stmt {
+        let value = this.expression();
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        return PrintStmt(value);
+    }
+    
+    fn if_statement() -> Stmt {
+        this.consume(TokenType.LEFT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, "("));
+        let condition = this.expression();
+        this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+        
+        let then_branch = this.statement();
+        let else_branch = nil;
+        if (this.match(TokenType.ELSE)) {
+            else_branch = this.statement();
+        }
+        
+        return IfStmt(condition, then_branch, else_branch);
+    }
+    
+    fn while_statement() -> Stmt {
+        this.consume(TokenType.LEFT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, "("));
+        let condition = this.expression();
+        this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+        
+        let body = this.statement();
+        
+        return WhileStmt(condition, body);
+    }
+    
+    fn for_statement() -> Stmt {
+        this.consume(TokenType.LEFT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, "("));
+        
+        // Initializer
+        let initializer = nil;
+        if (this.match(TokenType.SEMICOLON)) {
+            initializer = nil;
+        } else if (this.match(TokenType.VAR)) {
+            initializer = this.var_declaration();
+        } else {
+            initializer = this.expression_statement();
+        }
+        
+        // Condition
+        let condition = nil;
+        if (!this.check(TokenType.SEMICOLON)) {
+            condition = this.expression();
+        }
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        
+        // Increment
+        let increment = nil;
+        if (!this.check(TokenType.RIGHT_PAREN)) {
+            increment = this.expression();
+        }
+        this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+        
+        let body = this.statement();
+        
+        // Desugar for-loop to while-loop
+        if (increment != nil) {
+            body = BlockStmt([
+                body,
+                ExpressionStmt(increment)
+            ]);
+        }
+        
+        if (condition == nil) {
+            condition = Literal(true);
+        }
+        
+        body = WhileStmt(condition, body);
+        
+        if (initializer != nil) {
+            body = BlockStmt([initializer, body]);
+        }
+        
+        return body;
+    }
+    
+    fn return_statement() -> Stmt {
+        let keyword = this.previous();
+        let value = nil;
+        if (!this.check(TokenType.SEMICOLON)) {
+            value = this.expression();
+        }
+        
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        return ReturnStmt(keyword, value);
+    }
+    
+    fn break_statement() -> Stmt {
+        let keyword = this.previous();
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        return BreakStmt(keyword);
+    }
+    
+    fn continue_statement() -> Stmt {
+        let keyword = this.previous();
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        return ContinueStmt(keyword);
+    }
+    
+    fn block() -> List<Stmt> {
+        let statements = [];
+        
+        while (!this.check(TokenType.RIGHT_BRACE) && !this.is_at_end()) {
+            let stmt = this.declaration();
+            if (stmt != nil) {
+                statements.push(stmt);
+            }
+        }
+        
+        this.consume(TokenType.RIGHT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "}"));
+        return statements;
+    }
+    
+    fn expression_statement() -> Stmt {
+        let expr = this.expression();
+        this.consume(TokenType.SEMICOLON, ErrorMessages.unexpected_token(this.peek().lexeme, ";"));
+        return ExpressionStmt(expr);
+    }
+    
+    fn expression() -> Expr {
+        return this.assignment();
+    }
+    
+    fn assignment() -> Expr {
+        let expr = this.or();
+        
+        if (this.match(TokenType.EQUAL)) {
+            let equals = this.previous();
+            let value = this.assignment();
+            
+            if (expr is Variable) {
+                let name = expr.name;
+                return Assign(name, value);
+            } else if (expr is Get) {
+                return Set(expr.object, expr.name, value);
+            } else if (expr is ArrayAccess) {
+                return ArrayAssign(expr.array, expr.index, value);
+            }
+            
+            this.error(equals, ErrorMessages.invalid_assignment_target());
+        }
+        
+        return expr;
+    }
+    
+    fn or() -> Expr {
+        let expr = this.and();
+        
+        while (this.match(TokenType.LOGICAL_OR)) {
+            let operator = this.previous();
+            let right = this.and();
+            expr = Logical(expr, operator, right);
+        }
+        
+        return expr;
+    }
+    
+    fn and() -> Expr {
+        let expr = this.equality();
+        
+        while (this.match(TokenType.LOGICAL_AND)) {
+            let operator = this.previous();
+            let right = this.equality();
+            expr = Logical(expr, operator, right);
+        }
+        
+        return expr;
+    }
+    
+    fn equality() -> Expr {
+        let expr = this.comparison();
+        
+        while (this.match(TokenType.BANG_EQUAL, TokenType.EQUAL_EQUAL)) {
+            let operator = this.previous();
+            let right = this.comparison();
+            expr = Binary(expr, operator, right);
+        }
+        
+        return expr;
+    }
+    
+    fn comparison() -> Expr {
+        let expr = this.term();
+        
+        while (this.match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL)) {
+            let operator = this.previous();
+            let right = this.term();
+            expr = Binary(expr, operator, right);
+        }
+        
+        return expr;
+    }
+    
+    fn term() -> Expr {
+        let expr = this.factor();
+        
+        while (this.match(TokenType.MINUS, TokenType.PLUS)) {
+            let operator = this.previous();
+            let right = this.factor();
+            expr = Binary(expr, operator, right);
+        }
+        
+        return expr;
+    }
+    
+    fn factor() -> Expr {
+        let expr = this.unary();
+        
+        while (this.match(TokenType.SLASH, TokenType.STAR, TokenType.PERCENT)) {
+            let operator = this.previous();
+            let right = this.unary();
+            expr = Binary(expr, operator, right);
+        }
+        
+        return expr;
+    }
+    
+    fn unary() -> Expr {
+        if (this.match(TokenType.BANG, TokenType.MINUS)) {
+            let operator = this.previous();
+            let right = this.unary();
+            return Unary(operator, right);
+        }
+        
+        return this.call();
+    }
+    
+    fn call() -> Expr {
+        let expr = this.primary();
+        
+        while (true) {
+            if (this.match(TokenType.LEFT_PAREN)) {
+                expr = this.finish_call(expr);
+            } else if (this.match(TokenType.DOT)) {
+                let name = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("property name"));
+                expr = Get(expr, name);
+            } else if (this.match(TokenType.LEFT_BRACKET)) {
+                let index = this.expression();
+                this.consume(TokenType.RIGHT_BRACKET, ErrorMessages.unexpected_token(this.peek().lexeme, "]"));
+                expr = ArrayAccess(expr, index);
+            } else {
+                break;
+            }
+        }
+        
+        return expr;
+    }
+    
+    fn finish_call(callee: Expr) -> Expr {
+        let arguments = [];
+        if (!this.check(TokenType.RIGHT_PAREN)) {
+            do {
+                if (arguments.len() >= 255) {
+                    this.error(this.peek(), ErrorMessages.too_many_arguments(255));
+                }
+                arguments.push(this.expression());
+            } while (this.match(TokenType.COMMA));
+        }
+        
+        let paren = this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+        return Call(callee, paren, arguments);
+    }
+    
+    fn primary() -> Expr {
+        if (this.match(TokenType.FALSE)) {
+            return Literal(false);
+        }
+        if (this.match(TokenType.TRUE)) {
+            return Literal(true);
+        }
+        if (this.match(TokenType.NIL)) {
+            return Literal(nil);
+        }
+        
+        if (this.match(TokenType.NUMBER, TokenType.STRING)) {
+            return Literal(this.previous().literal);
+        }
+        
+        if (this.match(TokenType.SUPER)) {
+            let keyword = this.previous();
+            this.consume(TokenType.DOT, ErrorMessages.unexpected_token(this.peek().lexeme, "."));
+            let method = this.consume(TokenType.IDENTIFIER, ErrorMessages.undefined_variable("superclass method name"));
+            return Super(keyword, method);
+        }
+        
+        if (this.match(TokenType.THIS)) {
+            return This(this.previous());
+        }
+        
+        if (this.match(TokenType.IDENTIFIER)) {
+            return Variable(this.previous());
+        }
+        
+        if (this.match(TokenType.LEFT_PAREN)) {
+            let expr = this.expression();
+            this.consume(TokenType.RIGHT_PAREN, ErrorMessages.unexpected_token(this.peek().lexeme, ")"));
+            return Grouping(expr);
+        }
+        
+        if (this.match(TokenType.LEFT_BRACKET)) {
+            return this.list_literal();
+        }
+        
+        if (this.match(TokenType.LEFT_BRACE)) {
+            return this.map_literal();
+        }
+        
+        this.error(this.peek(), ErrorMessages.unexpected_token(this.peek().lexeme, "expression"));
+        return nil;
+    }
+    
+    fn list_literal() -> Expr {
+        let elements = [];
+
+        if (!this.check(TokenType.RIGHT_BRACKET)) {
+            do {
+                elements.push(this.expression());
+            } while (this.match(TokenType.COMMA));
+        }
+
+        let bracket_token = this.consume(TokenType.RIGHT_BRACKET, ErrorMessages.unexpected_token(this.peek().lexeme, "]"));
+        // Create proper ListLiteral AST node
+        return ListLiteral(elements, bracket_token.line);
+    }
+
+    fn map_literal() -> Expr {
+        let entries = [];  // List of (key, value) pairs
+
+        if (!this.check(TokenType.RIGHT_BRACE)) {
+            do {
+                let key = this.expression();
+                this.consume(TokenType.COLON, ErrorMessages.unexpected_token(this.peek().lexeme, ":"));
+                let value = this.expression();
+                entries.push((key, value));  // Store as tuple
+            } while (this.match(TokenType.COMMA));
+        }
+
+        let brace_token = this.consume(TokenType.RIGHT_BRACE, ErrorMessages.unexpected_token(this.peek().lexeme, "}"));
+        // Create proper MapLiteral AST node
+        return MapLiteral(entries, brace_token.line);
+    }
+    
+    fn match(types: TokenType...) -> Bool {
+        for type in types {
+            if (this.check(type)) {
+                this.advance();
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    fn check(type: TokenType) -> Bool {
+        if (this.is_at_end()) {
+            return false;
+        }
+        return this.peek().type == type;
+    }
+    
+    fn advance() -> Token {
+        if (!this.is_at_end()) {
+            this.current = this.current + 1;
+        }
+        return this.previous();
+    }
+    
+    fn is_at_end() -> Bool {
+        return this.peek().type == TokenType.EOF;
+    }
+    
+    fn peek() -> Token {
+        return this.tokens[this.current];
+    }
+    
+    fn previous() -> Token {
+        return this.tokens[this.current - 1];
+    }
+    
+    fn consume(type: TokenType, message: String) -> Token {
+        if (this.check(type)) {
+            return this.advance();
+        }
+        
+        this.error(this.peek(), message);
+        return nil;
+    }
+    
+    fn error(token: Token, message: String) {
+        if (this.error_reporter.has_errors()) {
+            return; // Don't report multiple errors for the same problem
+        }
+        
+        this.error_reporter.error_at_token(token, message);
+    }
+    
+    fn synchronize() {
+        this.advance();
+        
+        while (!this.is_at_end()) {
+            if (this.previous().type == TokenType.SEMICOLON) {
+                return;
+            }
+            
+            match this.peek().type {
+                TokenType.CLASS,
+                TokenType.FUN,
+                TokenType.VAR,
+                TokenType.FOR,
+                TokenType.IF,
+                TokenType.WHILE,
+                TokenType.PRINT,
+                TokenType.RETURN,
+                TokenType.BREAK,
+                TokenType.CONTINUE -> {
+                    return;
+                }
+                _ -> {}
+            }
+            
+            this.advance();
+        }
+    }
+}
