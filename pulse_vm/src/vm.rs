@@ -647,8 +647,14 @@ impl VM {
                                 let handle = self.heap.alloc(Object::Socket(s.clone()));
                                 Value::Obj(handle)
                             },
-                            Constant::SharedMemory(_) => panic!("SharedMemory constant loading not implemented"),
-                            Constant::Listener(_) => panic!("Listener constant loading not implemented"),
+                            Constant::SharedMemory(sm) => {
+                                let handle = self.heap.alloc(Object::SharedBuffer(sm.clone()));
+                                Value::Obj(handle)
+                            },
+                            Constant::Listener(l) => {
+                                let handle = self.heap.alloc(Object::Listener(l.clone()));
+                                Value::Obj(handle)
+                            }
                         };
                         self.push(val);
                         return Ok(VMStatus::Running);

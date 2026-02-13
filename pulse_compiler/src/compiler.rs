@@ -267,7 +267,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             return Err(PulseError::CompileError("Expected class name".into(), 0));
         };
 
-        let name_idx = self.identifier_constant(&Token::Identifier(class_name.clone()))? as u16;
+        let name_idx = self.identifier_constant(&Token::Identifier(class_name.clone()))?;
         
         self.declare_variable()?;
 
@@ -312,7 +312,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             if self.matches(Token::Fn)? || self.matches(Token::Def)? {
                 self.consume_identifier("Expected method name")?;
                 let method_name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
-                let method_name_idx = self.identifier_constant(&Token::Identifier(method_name.clone()))? as u16;
+                let method_name_idx = self.identifier_constant(&Token::Identifier(method_name.clone()))?;
 
                 if method_name == "init" {
                    self.function(FunctionType::Initializer, format!("{}.{}", class_name, method_name))?;
@@ -389,7 +389,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         
         // Define the shared memory in global scope
         self.emit_byte(Op::DefineGlobal as u8);
-        self.emit_u16(global as u16);
+        self.emit_u16(global);
         
         Ok(())
     }
@@ -841,11 +841,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn continue_statement(&mut self) -> PulseResult<()> {
         self.consume(Token::Semicolon, "Expect ';' after 'continue'.")?;
         
-        let start_ip = if let Some(loop_ctx) = self.loops.last() {
-            Some(loop_ctx.start_ip)
-        } else {
-            None
-        };
+        let start_ip = self.loops.last().map(|loop_ctx| loop_ctx.start_ip);
 
         if let Some(ip) = start_ip {
              self.emit_loop(ip)?;

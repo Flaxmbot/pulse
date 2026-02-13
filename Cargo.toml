@@ -8,4 +8,5 @@ members = [
     "pulse_runtime",
     "pulse_cli",
     "pulse_stdlib", "pulse_lsp", "pulse_aot_runtime",
+    "pulse_llvm_backend",
 ]

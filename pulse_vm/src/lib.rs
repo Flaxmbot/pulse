@@ -12,18 +12,21 @@ mod tests {
     use super::*;
     use pulse_core::{Chunk, Op, Value, Constant, ActorId};
 
-    #[test]
-    fn test_add() {
+    #[tokio::test]
+    async fn test_add() {
         let mut chunk = Chunk::new();
         let idx1 = chunk.add_constant(Constant::Int(10));
         let idx2 = chunk.add_constant(Constant::Int(32));
 
         // PUSH 10, PUSH 32, ADD, HALT
+        // VM uses u16 for constant indices, so we write two bytes (little endian)
         chunk.write(Op::Const as u8, 1);
-        chunk.write(idx1 as u8, 1);
+        chunk.write((idx1 & 0xFF) as u8, 1);
+        chunk.write(((idx1 >> 8) & 0xFF) as u8, 1);
 
         chunk.write(Op::Const as u8, 1);
-        chunk.write(idx2 as u8, 1);
+        chunk.write((idx2 & 0xFF) as u8, 1);
+        chunk.write(((idx2 >> 8) & 0xFF) as u8, 1);
 
         chunk.write(Op::Add as u8, 2);
 
@@ -31,7 +34,7 @@ mod tests {
 
         let pid = ActorId::new(1, 1);
         let mut vm = VM::new(chunk, pid);
-        let status = vm.run(100);
+        let status = vm.run(100).await;
 
         assert!(matches!(status, VMStatus::Halted));
 

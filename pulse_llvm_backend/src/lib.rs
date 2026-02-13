@@ -7,4 +7,4 @@ pub mod backend;
 pub mod jit;
 
 pub use backend::LLVMBackend;
-pub use jit::JITCompiler;
+pub use jit::{JITCompiler, JITError, JITResult, JITStats, quick_compile};

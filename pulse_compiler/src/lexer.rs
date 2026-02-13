@@ -84,14 +84,14 @@ impl<'a> Lexer<'a> {
                         if self.current == Some('/') {
                             self.advance();
                             let mut doc = String::new();
-                            while self.current != Some('\n') && self.current != None {
+                            while self.current != Some('\n') && self.current.is_some() {
                                 doc.push(self.current.unwrap());
                                 self.advance();
                             }
                             return Ok(Token::DocComment(doc.trim().to_string()));
                         } else {
                             // Regular comment
-                            while self.current != Some('\n') && self.current != None {
+                            while self.current != Some('\n') && self.current.is_some() {
                                 self.advance();
                             }
                         }
@@ -101,7 +101,7 @@ impl<'a> Lexer<'a> {
                         let is_doc = self.current == Some('*');
                         let mut doc = String::new();
                         loop {
-                            if self.current == None {
+                            if self.current.is_none() {
                                 break;
                             }
                             if self.current == Some('*') {
@@ -175,7 +175,7 @@ impl<'a> Lexer<'a> {
                     return Ok(Token::Greater);
                 }
                 Some('"') => return self.string(),
-                Some(c) if c.is_digit(10) => return self.number(),
+                Some(c) if c.is_ascii_digit() => return self.number(),
                 Some(c) if c.is_alphabetic() || c == '_' => return self.identifier(),
                 None => return Ok(Token::Eof),
                 Some(c) => return Err(PulseError::IoError(format!("Unexpected character: {}", c))),
@@ -267,7 +267,7 @@ impl<'a> Lexer<'a> {
     fn number(&mut self) -> Result<Token, PulseError> {
         let mut s = String::new();
         while let Some(c) = self.current {
-            if c.is_digit(10) {
+            if c.is_ascii_digit() {
                 s.push(c);
                 self.advance();
             } else {
@@ -279,7 +279,7 @@ impl<'a> Lexer<'a> {
              s.push('.');
              self.advance();
              while let Some(c) = self.current {
-                if c.is_digit(10) {
+                if c.is_ascii_digit() {
                     s.push(c);
                     self.advance();
                 } else {

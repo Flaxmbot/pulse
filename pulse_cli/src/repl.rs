@@ -115,7 +115,7 @@ fn handle_command(cmd: &str, runtime: &mut Runtime) -> bool {
             true
         }
         ":actors" => {
-            let count = runtime.actor_count();
+            let count = runtime.handle.get_actor_count();
             println!("Active actors: {}", count);
             true
         }

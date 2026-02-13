@@ -146,7 +146,7 @@ impl<'a> ParserV2<'a> {
         while !self.check(Token::RightBrace) && !self.is_at_end() {
             match self.declaration()? {
                 Decl::Stmt(s) => stmts.push(s),
-                Decl::Function(name, params, ret, body) => {
+                Decl::Function(_name, _params, _ret, _body) => {
                     // Local function - convert to a Let binding with a Closure?
                     // For now, let's just use Expression(Closure) wrapped in pseudo-Let if possible.
                     // Actually, let's just error for now to stay safe.

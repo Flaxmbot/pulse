@@ -9,5 +9,6 @@ pulse_stdlib = { path = "../pulse_stdlib" }
 async-trait = "0.1"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
 pulse_compiler = { path = "../pulse_compiler" }
 pulse_runtime = { path = "../pulse_runtime" }

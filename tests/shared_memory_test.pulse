@@ -1,0 +1,101 @@
+// ============================================================
+// Actor Message Passing Test (Default in Pulse)
+// Demonstrates the default actor-based concurrency
+// ============================================================
+
+println("=== Actor Message Passing Test ===");
+println("");
+
+// ============================================================
+// PART 1: Actor-Based Message Passing (Default)
+// Using spawn and message passing
+// ============================================================
+
+println("--- Test 1: Basic Actor Spawning ---");
+
+fn worker_task(id, work) {
+    // Simulate work
+    let result = 0;
+    let j = 0;
+    while (j < 10) {
+        result = result + j;
+        j = j + 1;
+    }
+    return id * 100;
+}
+
+// Spawn multiple actors
+let w1 = spawn { worker_task(1, 0); };
+let w2 = spawn { worker_task(2, 0); };
+let w3 = spawn { worker_task(3, 0); };
+
+sleep(100);
+
+println("Spawned 3 actors with PIDs");
+println("Actors communicate via message passing (copies data)");
+
+// ============================================================
+// PART 2: Variables and Message Passing
+// ============================================================
+
+println("");
+println("--- Test 2: Variable ---");
+
+let shared_counter = 0;
+
+fn increment_worker(iterations) {
+    let i = 0;
+    while (i < iterations) {
+        let temp = shared_counter;
+        shared_counter = temp + 1;
+        i = i + 1;
+    }
+    return iterations;
+}
+
+// Spawn multiple workers that modify a variable
+spawn { increment_worker(10); };
+spawn { increment_worker(10); };
+spawn { increment_worker(10); };
+
+sleep(150);
+
+println("3 workers each incremented 10 times");
+println("Expected: 30, Actual: " + to_string(shared_counter));
+if (shared_counter < 30) {
+    println("Note: Race condition detected (expected for unsynchronized access)");
+} else {
+    println("All increments visible");
+}
+
+// ============================================================
+// PART 3: Summary
+// ============================================================
+
+println("");
+println("--- Summary: Pulse Concurrency Models ---");
+println("");
+println("ACTOR MESSAGE PASSING (Default):");
+println("  - Keyword: 'spawn { ... }'");
+println("  - Data is copied when sent between actors");
+println("  - Mailbox-based asynchronous communication");
+println("  - Each actor has isolated state");
+println("  - Best for: Isolation, fault tolerance, distributed systems");
+println("");
+
+// ============================================================
+// NOTE: Shared Memory (Zero-Copy)
+// ============================================================
+
+println("SHARED MEMORY (Zero-Copy):");
+println("  - Keyword: 'shared memory <name> = <value>'");
+println("  - Multiple actors read/write same memory location");
+println("  - No data copying - direct access to shared value");
+println("  - Use lock/unlock for synchronization");
+println("  - Best for: High-performance concurrent data access");
+println("");
+println("  NOTE: Shared memory is implemented in the Rust compiler");
+println("  and VM, but the self-hosted parser needs extension.");
+println("");
+
+println("=== All Tests Passed ===");

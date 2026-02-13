@@ -150,7 +150,7 @@ impl Actor {
                      SystemMessage::Link(pid) => {
                          self.links.insert(pid);
                      },
-                     SystemMessage::Exit(pid, reason) => {
+                     SystemMessage::Exit(_pid, _reason) => {
                          if self.trapping_exits {
                              // Convert to message
                               // push {'EXIT', pid, reason}
