@@ -1,9 +1,10 @@
-use pulse_core::{ActorId, Value, Constant};
+use pulse_core::{ActorId, Value, Constant, ObjHandle};
 use pulse_core::object::{Object, Closure};
 use pulse_vm::{VM, VMStatus};
 use crate::mailbox::{Message, SystemMessage};
 use std::collections::HashSet;
 use tokio::sync::mpsc;
+use tokio::fs;
 use crate::runtime::RuntimeHandle;
 
 #[derive(Debug, PartialEq)]
@@ -114,14 +115,110 @@ impl Actor {
                          None => self.vm.push(Value::Unit),
                      }
                  },
-                 VMStatus::Import(_) => {
-                     // TODO: Async import support
-                     // For now, this might fail or need sync fallback
-                     // The VM handles import internally mostly, but if it returns status,
-                     // it means it needs runtime help.
-                     // The previous runtime implementation did a lot here.
-                     // We need to port that logic to async.
-                     todo!("Async Import Implementation"); 
+                 VMStatus::Import(path) => {
+                     // Async import support
+                     // 1. Read the file
+                     // 2. Compile it
+                     // 3. Run it as a module
+                     // 4. Get the module handle and push to original VM's stack
+                     
+                     let module_path = path.clone();
+                     
+                     // Read file asynchronously
+                     let source = match fs::read_to_string(&module_path).await {
+                         Ok(s) => s,
+                         Err(e) => {
+                             // File read error - push nil and continue
+                             eprintln!("Failed to read module '{}': {}", module_path, e);
+                             self.vm.push(Value::Unit);
+                             continue;
+                         }
+                     };
+                     
+                     // Compile the module
+                     let chunk = match pulse_compiler::compile(&source, Some(module_path.clone())) {
+                         Ok(c) => c,
+                         Err(e) => {
+                             eprintln!("Failed to compile module '{}': {:?}", module_path, e);
+                             self.vm.push(Value::Unit);
+                             continue;
+                         }
+                     };
+                     
+                     // Get the shared heap from the runtime
+                     let shared_heap = self.runtime.shared_heap();
+                     
+                     // Create a new VM to run the module
+                     let mut module_vm = VM::new(chunk, self.id, Some(shared_heap));
+                     
+                     // Mark as module so return captures exports
+                     if let Some(Object::Closure(c)) = module_vm.heap.get_mut(ObjHandle(0)) {
+                         c.function.module_path = Some(module_path.clone());
+                     }
+                     // Set is_module on the frame
+                     if let Some(frame) = module_vm.frames.first_mut() {
+                         frame.is_module = true;
+                         frame.module_path = Some(module_path.clone());
+                     }
+                     
+                     // Run the module to completion (or until it yields/halt)
+                     loop {
+                         let status = module_vm.run(10000).await;
+                         
+                         match status {
+                             VMStatus::Running | VMStatus::Yielded => {
+                                 // Continue running
+                                 tokio::task::yield_now().await;
+                             },
+                             VMStatus::Halted => {
+                                 // Module finished executing - good
+                                 break;
+                             },
+                             VMStatus::Error(e) => {
+                                 eprintln!("Error running module '{}': {:?}", module_path, e);
+                                 break;
+                             },
+                             VMStatus::Import(sub_path) => {
+                                 // Handle nested import recursively
+                                 let sub_source = match fs::read_to_string(&sub_path).await {
+                                     Ok(s) => s,
+                                     Err(e) => {
+                                         eprintln!("Failed to read nested module '{}': {}", sub_path, e);
+                                         break;
+                                     }
+                                 };
+                                 
+                                 let sub_chunk = match pulse_compiler::compile(&sub_source, Some(sub_path.clone())) {
+                                     Ok(c) => c,
+                                     Err(e) => {
+                                         eprintln!("Failed to compile nested module '{}': {:?}", sub_path, e);
+                                         break;
+                                     }
+                                 };
+                                 
+                                 // Replace module VM with new one
+                                 let nested_heap = self.runtime.shared_heap();
+                                 module_vm = VM::new(sub_chunk, self.id, Some(nested_heap));
+                             },
+                             _ => {
+                                 // Other statuses - just continue
+                                 tokio::task::yield_now().await;
+                             }
+                         }
+                     }
+                     
+                     // Get the loaded module handle
+                     if let Some(handle) = module_vm.loaded_modules.get(&module_path) {
+                         // Push the module to the original VM's stack
+                         self.vm.push(Value::Obj(*handle));
+                         
+                         // Also register it in the original VM's loaded_modules
+                         self.vm.loaded_modules.insert(module_path, *handle);
+                     } else {
+                         // Module didn't register itself (possibly no return statement)
+                         // Push unit as fallback
+                         self.vm.push(Value::Unit);
+                     }
                  },
                  VMStatus::Halted => {
                      // Normal exit

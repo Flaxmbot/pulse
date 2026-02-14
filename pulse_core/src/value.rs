@@ -74,7 +74,45 @@ impl<'de> Deserialize<'de> for PulseListener {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)] 
+// Wrapper enum for serializable constants only (excludes runtime handles)
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SerializableConstant {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Unit,
+    Function(Function),
+}
+
+impl From<Constant> for Option<SerializableConstant> {
+    fn from(c: Constant) -> Self {
+        match c {
+            Constant::Bool(b) => Some(SerializableConstant::Bool(b)),
+            Constant::Int(i) => Some(SerializableConstant::Int(i)),
+            Constant::Float(f) => Some(SerializableConstant::Float(f)),
+            Constant::String(s) => Some(SerializableConstant::String(s)),
+            Constant::Unit => Some(SerializableConstant::Unit),
+            Constant::Function(f) => Some(SerializableConstant::Function(*f)),
+            _ => None, // Runtime handles cannot be serialized
+        }
+    }
+}
+
+impl From<SerializableConstant> for Constant {
+    fn from(c: SerializableConstant) -> Self {
+        match c {
+            SerializableConstant::Bool(b) => Constant::Bool(b),
+            SerializableConstant::Int(i) => Constant::Int(i),
+            SerializableConstant::Float(f) => Constant::Float(f),
+            SerializableConstant::String(s) => Constant::String(s),
+            SerializableConstant::Unit => Constant::Unit,
+            SerializableConstant::Function(f) => Constant::Function(Box::new(f)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Constant {
     Bool(bool),
     Int(i64),
@@ -85,6 +123,122 @@ pub enum Constant {
     Socket(PulseSocket),
     Listener(PulseListener),
     Function(Box<Function>),
+}
+
+impl Serialize for Constant {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        use serde::ser::SerializeStruct;
+        
+        match self {
+            Constant::Bool(b) => {
+                let mut s = serializer.serialize_struct("Constant", 2)?;
+                s.serialize_field("type", "Bool")?;
+                s.serialize_field("value", b)?;
+                s.end()
+            },
+            Constant::Int(i) => {
+                let mut s = serializer.serialize_struct("Constant", 2)?;
+                s.serialize_field("type", "Int")?;
+                s.serialize_field("value", i)?;
+                s.end()
+            },
+            Constant::Float(f) => {
+                let mut s = serializer.serialize_struct("Constant", 2)?;
+                s.serialize_field("type", "Float")?;
+                s.serialize_field("value", f)?;
+                s.end()
+            },
+            Constant::String(s) => {
+                let mut ser = serializer.serialize_struct("Constant", 2)?;
+                ser.serialize_field("type", "String")?;
+                ser.serialize_field("value", s)?;
+                ser.end()
+            },
+            Constant::Unit => {
+                let mut s = serializer.serialize_struct("Constant", 1)?;
+                s.serialize_field("type", "Unit")?;
+                s.end()
+            },
+            Constant::SharedMemory(_) => {
+                Err(serde::ser::Error::custom("Cannot serialize SharedMemory - runtime reference"))
+            },
+            Constant::Socket(_) => {
+                Err(serde::ser::Error::custom("Cannot serialize Socket - runtime reference"))
+            },
+            Constant::Listener(_) => {
+                Err(serde::ser::Error::custom("Cannot serialize Listener - runtime reference"))
+            },
+            Constant::Function(func) => {
+                let mut s = serializer.serialize_struct("Constant", 2)?;
+                s.serialize_field("type", "Function")?;
+                s.serialize_field("value", func.as_ref())?;
+                s.end()
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Constant {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: Deserializer<'de> {
+        use serde::de::Visitor;
+        use std::fmt;
+        
+        struct ConstantVisitor;
+        
+        impl<'de> Visitor<'de> for ConstantVisitor {
+            type Value = Constant;
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a valid Constant")
+            }
+            
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where A: serde::de::MapAccess<'de> {
+                let mut type_val: Option<String> = None;
+                
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "type" => {
+                            type_val = Some(map.next_value()?);
+                        },
+                        "value" => {
+                            let const_type = type_val.ok_or_else(|| serde::de::Error::custom("Missing type field"))?;
+                            return match const_type.as_str() {
+                                "Bool" => {
+                                    let val: bool = map.next_value()?;
+                                    Ok(Constant::Bool(val))
+                                },
+                                "Int" => {
+                                    let val: i64 = map.next_value()?;
+                                    Ok(Constant::Int(val))
+                                },
+                                "Float" => {
+                                    let val: f64 = map.next_value()?;
+                                    Ok(Constant::Float(val))
+                                },
+                                "String" => {
+                                    let val: String = map.next_value()?;
+                                    Ok(Constant::String(val))
+                                },
+                                "Unit" => Ok(Constant::Unit),
+                                "Function" => {
+                                    let func: Function = map.next_value()?;
+                                    Ok(Constant::Function(Box::new(func)))
+                                },
+                                _ => Err(serde::de::Error::custom(format!("Unknown Constant type: {}", const_type))),
+                            };
+                        },
+                        _ => return Err(serde::de::Error::custom("Unknown field")),
+                    }
+                }
+                Err(serde::de::Error::custom("Missing value field"))
+            }
+        }
+        
+        deserializer.deserialize_map(ConstantVisitor)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,6 +312,14 @@ impl Value {
         match self {
             Value::Int(i) => Ok(*i),
             _ => Err(PulseError::TypeMismatch { expected: "int".into(), got: self.type_name() }),
+        }
+    }
+
+    pub fn as_float(&self) -> PulseResult<f64> {
+        match self {
+            Value::Float(f) => Ok(*f),
+            Value::Int(i) => Ok(*i as f64),
+            _ => Err(PulseError::TypeMismatch { expected: "float".into(), got: self.type_name() }),
         }
     }
 

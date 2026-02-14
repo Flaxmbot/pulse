@@ -28,9 +28,13 @@ pub enum Token {
     // Class/Object keywords
     Class, Extends, Super, This,
     // Type keywords
-    TypeInt, TypeFloat, TypeBool, TypeString, TypeUnit, TypePid, TypeList, TypeMap, TypeFn, TypeAny,
+    TypeInt, TypeFloat, TypeBool, TypeString, TypeUnit, TypePid, TypeList, TypeMap, TypeFn, TypeAny, TypeAtomic,
     // Shared Memory keywords
     Shared, Memory, Lock, Unlock,
+    // Atomic keywords
+    Atomic,
+    // Memory Fence keywords
+    Fence, Acquire, Release,
     
     Error,
     // Interpolated String Parts
@@ -356,11 +360,18 @@ impl<'a> Lexer<'a> {
             "Map" => Ok(Token::TypeMap),
             "Fn" => Ok(Token::TypeFn),
             "Any" => Ok(Token::TypeAny),
+            "Atomic" => Ok(Token::TypeAtomic),
             // Shared memory keywords
             "shared" => Ok(Token::Shared),
             "memory" => Ok(Token::Memory),
             "lock" => Ok(Token::Lock),
             "unlock" => Ok(Token::Unlock),
+            // Atomic keywords
+            "atomic" => Ok(Token::Atomic),
+            // Memory Fence keywords
+            "fence" => Ok(Token::Fence),
+            "acquire" => Ok(Token::Acquire),
+            "release" => Ok(Token::Release),
             _ => Ok(Token::Identifier(s)),
         }
     }

@@ -468,3 +468,132 @@ pub fn string_lowercase_native(heap: &mut dyn HeapInterface, args: &[Value]) -> 
     let handle = heap.alloc_object(Object::String(lower));
     Ok(Value::Obj(handle))
 }
+
+// ============================================================================
+// ADDITIONAL STRING OPERATIONS
+// ============================================================================
+
+/// Helper to extract a string from a Value
+fn extract_str(heap: &dyn HeapInterface, val: &Value) -> PulseResult<String> {
+    match val {
+        Value::Obj(h) => {
+            if let Some(Object::String(s)) = heap.get_object(*h) {
+                Ok(s.clone())
+            } else {
+                Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() })
+            }
+        }
+        _ => Err(PulseError::TypeMismatch { expected: "string".into(), got: val.type_name() }),
+    }
+}
+
+/// index_of_string(str: String, substr: String) -> Int
+/// Returns the index of the first occurrence of substr in str, or -1 if not found
+pub fn index_of_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("index_of_string expects 2 arguments".into()));
+    }
+
+    let input = extract_str(heap, &args[0])?;
+    let substr = extract_str(heap, &args[1])?;
+
+    match input.find(&substr) {
+        Some(idx) => Ok(Value::Int(idx as i64)),
+        None => Ok(Value::Int(-1)),
+    }
+}
+
+/// char_at(str: String, index: Int) -> String
+/// Returns the character at the given index as a single-character string
+pub fn char_at_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("char_at expects 2 arguments".into()));
+    }
+
+    let input = extract_str(heap, &args[0])?;
+    let idx = args[1].as_int()?;
+
+    if idx < 0 || idx >= input.len() as i64 {
+        return Err(PulseError::RuntimeError(format!(
+            "Index {} out of bounds for string of length {}", idx, input.len()
+        )));
+    }
+
+    let ch = input.chars().nth(idx as usize)
+        .ok_or_else(|| PulseError::RuntimeError("Invalid character index".into()))?;
+    let handle = heap.alloc_object(Object::String(ch.to_string()));
+    Ok(Value::Obj(handle))
+}
+
+/// repeat_string(str: String, count: Int) -> String
+/// Repeats a string count times
+pub fn repeat_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("repeat_string expects 2 arguments".into()));
+    }
+
+    let input = extract_str(heap, &args[0])?;
+    let count = args[1].as_int()?;
+
+    if count < 0 {
+        return Err(PulseError::RuntimeError("repeat_string count cannot be negative".into()));
+    }
+
+    let result = input.repeat(count as usize);
+    let handle = heap.alloc_object(Object::String(result));
+    Ok(Value::Obj(handle))
+}
+
+/// pad_start(str: String, target_len: Int, pad_char: String) -> String
+/// Pads the start of a string to reach the target length
+pub fn pad_start_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 3 {
+        return Err(PulseError::RuntimeError("pad_start expects 3 arguments (str, target_len, pad_char)".into()));
+    }
+
+    let input = extract_str(heap, &args[0])?;
+    let target_len = args[1].as_int()? as usize;
+    let pad_str = extract_str(heap, &args[2])?;
+
+    if pad_str.is_empty() {
+        return Err(PulseError::RuntimeError("pad_start pad string cannot be empty".into()));
+    }
+
+    let result = if input.len() >= target_len {
+        input
+    } else {
+        let pad_needed = target_len - input.len();
+        let padding = pad_str.repeat((pad_needed / pad_str.len()) + 1);
+        format!("{}{}", &padding[..pad_needed], input)
+    };
+
+    let handle = heap.alloc_object(Object::String(result));
+    Ok(Value::Obj(handle))
+}
+
+/// pad_end(str: String, target_len: Int, pad_char: String) -> String
+/// Pads the end of a string to reach the target length
+pub fn pad_end_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 3 {
+        return Err(PulseError::RuntimeError("pad_end expects 3 arguments (str, target_len, pad_char)".into()));
+    }
+
+    let input = extract_str(heap, &args[0])?;
+    let target_len = args[1].as_int()? as usize;
+    let pad_str = extract_str(heap, &args[2])?;
+
+    if pad_str.is_empty() {
+        return Err(PulseError::RuntimeError("pad_end pad string cannot be empty".into()));
+    }
+
+    let result = if input.len() >= target_len {
+        input
+    } else {
+        let pad_needed = target_len - input.len();
+        let padding = pad_str.repeat((pad_needed / pad_str.len()) + 1);
+        format!("{}{}", input, &padding[..pad_needed])
+    };
+
+    let handle = heap.alloc_object(Object::String(result));
+    Ok(Value::Obj(handle))
+}

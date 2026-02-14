@@ -1,6 +1,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicUsize, Ordering}};
+use std::net::SocketAddr;
 use tokio::sync::{mpsc, RwLock, Notify};
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -8,9 +9,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use pulse_core::{ActorId, PulseError, PulseResult, Chunk};
 use pulse_core::object::{Object, ObjHandle};
 use pulse_vm::VM;
+use pulse_vm::shared_heap::create_shared_heap;
 use crate::actor::Actor;
 use crate::mailbox::{Message, SystemMessage};
 use crate::network::MessageEnvelope;
+use crate::cluster::{Cluster, NodeId, Node, create_cluster};
 
 pub struct Runtime {
     pub handle: RuntimeHandle,
@@ -24,6 +27,8 @@ pub struct RuntimeHandle {
 struct RuntimeState {
     node_id: u64,
     next_pid: AtomicU32,
+    // Shared heap for zero-copy cross-actor communication
+    shared_heap: Arc<pulse_vm::shared_heap::SharedHeap>,
     // Map ActorId to the Sender for that actor
     actors: RwLock<HashMap<ActorId, mpsc::UnboundedSender<Message>>>,
 
@@ -35,6 +40,9 @@ struct RuntimeState {
     // Active actor count
     active_count: AtomicUsize,
     shutdown_notify: Notify,
+    
+    // Cluster management
+    cluster: RwLock<Option<Cluster>>,
 }
 
 impl Runtime {
@@ -42,11 +50,13 @@ impl Runtime {
         let state = RuntimeState {
             node_id,
             next_pid: AtomicU32::new(1),
+            shared_heap: create_shared_heap(),
             actors: RwLock::new(HashMap::new()),
             registry: RwLock::new(HashMap::new()),
             peers: RwLock::new(HashMap::new()),
             active_count: AtomicUsize::new(0),
             shutdown_notify: Notify::new(),
+            cluster: RwLock::new(None),
         };
         
         Self {
@@ -75,20 +85,29 @@ impl RuntimeHandle {
          let state = RuntimeState {
             node_id: 0,
             next_pid: AtomicU32::new(1),
+            shared_heap: create_shared_heap(),
             actors: RwLock::new(HashMap::new()),
             registry: RwLock::new(HashMap::new()),
             peers: RwLock::new(HashMap::new()),
             active_count: AtomicUsize::new(0),
             shutdown_notify: Notify::new(),
+            cluster: RwLock::new(None),
         };
         Self { state: Arc::new(state) }
+    }
+    
+    /// Get the shared heap for cross-actor communication
+    pub fn shared_heap(&self) -> Arc<pulse_vm::shared_heap::SharedHeap> {
+        self.state.shared_heap.clone()
     }
 
     pub async fn spawn(&self, chunk: Chunk, module_path: Option<String>) -> ActorId {
         let pid_num = self.state.next_pid.fetch_add(1, Ordering::Relaxed);
         let pid = ActorId::new(self.state.node_id, pid_num);
         
-        let mut vm = VM::new(chunk, pid);
+        // Pass the shared heap to the VM for zero-copy shared memory
+        let shared_heap = self.state.shared_heap.clone();
+        let mut vm = VM::new(chunk, pid, Some(shared_heap));
         // Patch module path in top-level closure if it exists
         // (This logic was in old runtime, reproducing it)
         // Note: VM::new creates a closure for the chunk.
@@ -103,9 +122,9 @@ impl RuntimeHandle {
         let pid_num = self.state.next_pid.fetch_add(1, Ordering::Relaxed);
         let pid = ActorId::new(self.state.node_id, pid_num);
         
-        // VM::new_spawn creates a new VM sharing constants etc (via checking Arc<Chunk>)
-        // But here we clone the Arc<Chunk>
-        let vm = VM::new_spawn(chunk, pid, ip);
+        // Pass the shared heap to the VM for zero-copy shared memory
+        let shared_heap = self.state.shared_heap.clone();
+        let vm = VM::new_spawn(chunk, pid, ip, Some(shared_heap));
         
         self.spawn_actor_process(pid, vm).await
     }
@@ -272,5 +291,85 @@ impl RuntimeHandle {
         });
         
         Ok(())
+    }
+    
+    // ============== Cluster Management API ==============
+    
+    /// Start cluster mode on the given port
+    pub async fn cluster_start(&self, port: u16) -> PulseResult<()> {
+        let cluster = create_cluster(port).await
+            .map_err(|e| PulseError::RuntimeError(format!("Failed to start cluster: {}", e)))?;
+        
+        let mut cluster_lock = self.state.cluster.write().await;
+        *cluster_lock = Some(cluster);
+        
+        tracing::info!("Cluster started on port {}", port);
+        Ok(())
+    }
+    
+    /// Join an existing cluster at the given address
+    pub async fn cluster_join(&self, address: SocketAddr) -> PulseResult<()> {
+        let cluster_lock = self.state.cluster.read().await;
+        if let Some(cluster) = cluster_lock.as_ref() {
+            cluster.join(address).await
+                .map_err(|e| PulseError::RuntimeError(format!("Failed to join cluster: {}", e)))?;
+            tracing::info!("Joined cluster at {}", address);
+            Ok(())
+        } else {
+            Err(PulseError::RuntimeError("Cluster not started".to_string()))
+        }
+    }
+    
+    /// Leave the current cluster
+    pub async fn cluster_leave(&self) -> PulseResult<()> {
+        let cluster_lock = self.state.cluster.read().await;
+        if let Some(cluster) = cluster_lock.as_ref() {
+            cluster.leave().await
+                .map_err(|e| PulseError::RuntimeError(format!("Failed to leave cluster: {}", e)))?;
+            tracing::info!("Left cluster");
+            Ok(())
+        } else {
+            Err(PulseError::RuntimeError("Cluster not started".to_string()))
+        }
+    }
+    
+    /// Get current node ID
+    pub async fn cluster_node_id(&self) -> Option<String> {
+        let cluster_lock = self.state.cluster.read().await;
+        if let Some(cluster) = cluster_lock.as_ref() {
+            Some(cluster.node_id().await.0)
+        } else {
+            None
+        }
+    }
+    
+    /// Get all cluster members
+    pub async fn cluster_members(&self) -> Vec<Node> {
+        let cluster_lock = self.state.cluster.read().await;
+        if let Some(cluster) = cluster_lock.as_ref() {
+            cluster.members().await
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Get cluster member count
+    pub async fn cluster_member_count(&self) -> usize {
+        let cluster_lock = self.state.cluster.read().await;
+        if let Some(cluster) = cluster_lock.as_ref() {
+            cluster.member_count().await
+        } else {
+            0
+        }
+    }
+    
+    /// Check if this node is part of a cluster
+    pub async fn is_clustered(&self) -> bool {
+        let cluster_lock = self.state.cluster.read().await;
+        if let Some(cluster) = cluster_lock.as_ref() {
+            cluster.is_clustered().await
+        } else {
+            false
+        }
     }
 }

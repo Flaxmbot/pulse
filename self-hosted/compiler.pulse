@@ -1,0 +1,215 @@
+// Self-Hosted Compiler: Main Entry Point
+// Ties together the lexer, parser, type checker, and bytecode generator
+
+let l_mod = import "./lexer.pulse";
+let p_mod = import "./parser.pulse";
+let tc_mod = import "./type_checker.pulse";
+let bc_mod = import "./bytecode_gen.pulse";
+
+// Compiler options
+fn make_options() {
+    return {
+        "verbose": false,
+        "check_types": true,
+        "generate_bytecode": true,
+        "print_ast": false,
+        "print_tokens": false
+    };
+}
+
+// Main compile function
+fn compile(source, options) {
+    if (options == nil) {
+        options = make_options();
+    }
+    
+    let result = {
+        "success": false,
+        "errors": [],
+        "warnings": [],
+        "ast": nil,
+        "bytecode": nil,
+        "tokens": []
+    };
+    
+    // Step 1: Lexical Analysis
+    if (options["verbose"]) {
+        print("Step 1: Lexical Analysis...");
+    }
+    
+    let tokens = l_mod["tokenize"](source);
+    result["tokens"] = tokens;
+    
+    if (options["print_tokens"]) {
+        print("Tokens:");
+        let i = 0;
+        while (i < len(tokens)) {
+            print("  ", tokens[i]);
+            i = i + 1;
+        }
+    }
+    
+    // Check for lexer errors
+    let has_lexer_error = false;
+    i = 0;
+    while (i < len(tokens)) {
+        if (tokens[i]["type"] == "ERROR") {
+            push(result["errors"], "Lexer error at line " + to_string(tokens[i]["line"]) + ": " + tokens[i]["lexeme"]);
+            has_lexer_error = true;
+        }
+        i = i + 1;
+    }
+    
+    if (has_lexer_error) {
+        return result;
+    }
+    
+    // Step 2: Parsing
+    if (options["verbose"]) {
+        print("Step 2: Parsing...");
+    }
+    
+    let parse_result = p_mod["parse"](source);
+    
+    if (parse_result["had_error"]) {
+        result["errors"] = result["errors"] + parse_result["errors"];
+        return result;
+    }
+    
+    result["ast"] = parse_result["statements"];
+    
+    if (options["print_ast"]) {
+        print("AST:");
+        print_ast(result["ast"], 0);
+    }
+    
+    // Step 3: Type Checking (optional)
+    if (options["check_types"]) {
+        if (options["verbose"]) {
+            print("Step 3: Type Checking...");
+        }
+        
+        let type_result = tc_mod["check_types"](result["ast"]);
+        
+        if (len(type_result["errors"]) > 0) {
+            result["errors"] = result["errors"] + type_result["errors"];
+        }
+    }
+    
+    // Step 4: Bytecode Generation
+    if (options["generate_bytecode"]) {
+        if (options["verbose"]) {
+            print("Step 4: Bytecode Generation...");
+        }
+        
+        let bytecode_result = bc_mod["compile"](result["ast"]);
+        result["bytecode"] = bytecode_result;
+    }
+    
+    result["success"] = len(result["errors"]) == 0;
+    return result;
+}
+
+// Print AST recursively
+fn print_ast(node, indent) {
+    let prefix = "";
+    let i = 0;
+    while (i < indent) {
+        prefix = prefix + "  ";
+        i = i + 1;
+    }
+    
+    if (node == nil) {
+        print(prefix, "nil");
+        return;
+    }
+    
+    if (type_of(node) == "List") {
+        let j = 0;
+        while (j < len(node)) {
+            print_ast(node[j], indent);
+            j = j + 1;
+        }
+        return;
+    }
+    
+    if (type_of(node) == "Map") {
+        print(prefix, "{");
+        let keys = map_keys(node);
+        let k = 0;
+        while (k < len(keys)) {
+            print(prefix, "  ", keys[k], ": ");
+            print_ast(node[keys[k]], indent + 2);
+            k = k + 1;
+        }
+        print(prefix, "}");
+        return;
+    }
+    
+    print(prefix, node);
+}
+
+// Run the compiler
+fn run_compiler() {
+    print("=== Pulse Self-Hosted Compiler ===");
+    print("");
+    
+    // Test source code
+    let test_source = "
+let x = 42;
+let y = 10;
+
+fn add(a, b) {
+    return a + b;
+}
+
+print(add(x, y));
+";
+    
+    print("Compiling test source:");
+    print(test_source);
+    print("");
+    
+    let opts = make_options();
+    opts["verbose"] = true;
+    opts["check_types"] = true;
+    opts["generate_bytecode"] = true;
+    
+    let result = compile(test_source, opts);
+    
+    print("");
+    print("Compilation result:");
+    print("  Success: ", result["success"]);
+    print("  Errors: ", len(result["errors"]));
+    print("  Warnings: ", len(result["warnings"]));
+    
+    if (len(result["errors"]) > 0) {
+        print("");
+        print("Errors:");
+        let i = 0;
+        while (i < len(result["errors"])) {
+            print("  ", result["errors"][i]);
+            i = i + 1;
+        }
+    }
+    
+    if (result["bytecode"] != nil) {
+        print("");
+        print("Bytecode generated:");
+        print("  Code length: ", len(result["bytecode"]["bytecode"]));
+        print("  Constants: ", result["bytecode"]["constants"]);
+    }
+}
+
+// Export the compiler
+let self_hosted_compiler = {
+    "compile": compile,
+    "make_options": make_options,
+    "run": run_compiler,
+    "lexer": l_mod,
+    "parser": p_mod,
+    "type_checker": tc_mod,
+    "bytecode_gen": bc_mod
+};
+
+self_hosted_compiler

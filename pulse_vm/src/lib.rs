@@ -1,10 +1,12 @@
 pub mod vm;
 pub mod heap;
+pub mod shared_heap;
 pub mod debug;
 // mod send_check;
 
 pub use vm::{VM, VMStatus, CallFrame};
 pub use heap::Heap;
+pub use shared_heap::{SharedHeap, SharedHandle, create_shared_heap};
 pub use debug::{DebugContext, StepMode};
 
 #[cfg(test)]
@@ -33,7 +35,7 @@ mod tests {
         chunk.write(Op::Halt as u8, 4);
 
         let pid = ActorId::new(1, 1);
-        let mut vm = VM::new(chunk, pid);
+        let mut vm = VM::new(chunk, pid, None);
         let status = vm.run(100).await;
 
         assert!(matches!(status, VMStatus::Halted));

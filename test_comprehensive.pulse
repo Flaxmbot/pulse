@@ -1,0 +1,32 @@
+// Comprehensive test for Pulse language features
+
+println("=== Testing Variables ===");
+let a = 10;
+let b = 20;
+let c = a + b;
+println("a + b = ");
+println(c);
+
+println("=== Testing If-Else ===");
+if a > b {
+    println("a > b");
+} else {
+    println("a <= b");
+}
+
+println("=== Testing For Loop ===");
+let sum = 0;
+for i in 0..5 {
+    sum = sum + i;
+}
+println("Sum of 0..5 = ");
+println(sum);
+
+println("=== Testing String Operations ===");
+let s = "Hello, World!";
+println(s);
+let len = len(s);
+println("Length: ");
+println(len);
+
+println("=== All Tests Completed! ===");

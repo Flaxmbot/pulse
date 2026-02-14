@@ -1,0 +1,39 @@
+// math_lib.pulse - A test module for the import system
+
+let add = fn(a, b) {
+    return a + b;
+};
+
+let subtract = fn(a, b) {
+    return a - b;
+};
+
+let multiply = fn(a, b) {
+    return a * b;
+};
+
+let divide = fn(a, b) {
+    if (b == 0) {
+        return nil;
+    }
+    return a / b;
+};
+
+let PI = 3.14159;
+
+let factorial = fn(n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+};
+
+// Export all definitions by returning them
+return {
+    add: add,
+    subtract: subtract,
+    multiply: multiply,
+    divide: divide,
+    PI: PI,
+    factorial: factorial,
+};

@@ -1,0 +1,279 @@
+// Self-Hosted Compiler: Bytecode Generator in Pulse
+// Generates bytecode for the Pulse VM
+
+// Bytecode opcodes
+let OpCodes = {
+    "OP_CONSTANT": 0,
+    "OP_NIL": 1,
+    "OP_TRUE": 2,
+    "OP_FALSE": 3,
+    "OP_POP": 4,
+    "OP_GET_GLOBAL": 5,
+    "OP_DEFINE_GLOBAL": 6,
+    "OP_SET_GLOBAL": 7,
+    "OP_GET_LOCAL": 8,
+    "OP_SET_LOCAL": 9,
+    "OP_GET_UPVALUE": 10,
+    "OP_SET_UPVALUE": 11,
+    "OP_GET_PROPERTY": 12,
+    "OP_SET_PROPERTY": 13,
+    "OP_GET_INDEX": 14,
+    "OP_SET_INDEX": 15,
+    "OP_EQUAL": 16,
+    "OP_GREATER": 17,
+    "OP_LESS": 18,
+    "OP_ADD": 19,
+    "OP_SUBTRACT": 20,
+    "OP_MULTIPLY": 21,
+    "OP_DIVIDE": 22,
+    "OP_MODULO": 23,
+    "OP_NOT": 24,
+    "OP_NEGATE": 25,
+    "OP_JUMP": 26,
+    "OP_JUMP_IF_FALSE": 27,
+    "OP_LOOP": 28,
+    "OP_CALL": 29,
+    "OP_INVOKE": 30,
+    "OP_SUPER_INVOKE": 31,
+    "OP_CLOSURE": 32,
+    "OP_CLOSE_UPVALUE": 33,
+    "OP_RETURN": 34,
+    "OP_CLASS": 35,
+    "OP_INHERIT": 36,
+    "OP_METHOD": 37,
+    "OP_SPAWN": 38,
+    "OP_SEND": 39,
+    "OP_RECEIVE": 40,
+    "OP_PRINT": 41,
+    "OP_HALT": 42
+};
+
+// Create a new bytecode chunk
+fn make_chunk() {
+    return {
+        "code": [],
+        "constants": [],
+        "lines": []
+    };
+}
+
+// Write a byte to the chunk
+fn write_byte(chunk, byte, line) {
+    push(chunk["code"], byte);
+    push(chunk["lines"], line);
+}
+
+// Write a constant index to the chunk
+fn write_constant(chunk, index, line) {
+    write_byte(chunk, OpCodes["OP_CONSTANT"], line);
+    write_byte(chunk, index, line);
+}
+
+// Add a constant to the chunk and return its index
+fn add_constant(chunk, value) {
+    push(chunk["constants"], value);
+    return len(chunk["constants"]) - 1;
+}
+
+// Simple code generation context
+fn make_compiler() {
+    return {
+        "chunk": make_chunk(),
+        "locals": [],
+        "scope_depth": 0,
+        "upvalues": [],
+        "functions": [],
+        "current_function": 0
+    };
+}
+
+// Emit simple instructions
+fn emit_byte(compiler, byte) {
+    write_byte(compiler["chunk"], byte, 0);
+}
+
+fn emit_return(compiler) {
+    emit_byte(compiler, OpCodes["OP_RETURN"]);
+}
+
+fn emit_halt(compiler) {
+    emit_byte(compiler, OpCodes["OP_HALT"]);
+}
+
+// Generate bytecode for literals
+fn compile_literal(compiler, value) {
+    let index = add_constant(compiler["chunk"], value);
+    write_constant(compiler["chunk"], index, 0);
+}
+
+// Generate bytecode for a binary expression
+fn compile_binary(compiler, left, operator, right) {
+    // For simplicity, we'll generate: left, right, op
+    // In a real compiler, we'd use stack-based evaluation
+    if (operator == "+") {
+        emit_byte(compiler, OpCodes["OP_ADD"]);
+    } else if (operator == "-") {
+        emit_byte(compiler, OpCodes["OP_SUBTRACT"]);
+    } else if (operator == "*") {
+        emit_byte(compiler, OpCodes["OP_MULTIPLY"]);
+    } else if (operator == "/") {
+        emit_byte(compiler, OpCodes["OP_DIVIDE"]);
+    } else if (operator == "%") {
+        emit_byte(compiler, OpCodes["OP_MODULO"]);
+    } else if (operator == "==") {
+        emit_byte(compiler, OpCodes["OP_EQUAL"]);
+    } else if (operator == "!=") {
+        emit_byte(compiler, OpCodes["OP_NOT"]);
+        emit_byte(compiler, OpCodes["OP_EQUAL"]);
+    } else if (operator == ">") {
+        emit_byte(compiler, OpCodes["OP_GREATER"]);
+    } else if (operator == "<") {
+        emit_byte(compiler, OpCodes["OP_LESS"]);
+    } else if (operator == ">=") {
+        emit_byte(compiler, OpCodes["OP_LESS"]);
+        emit_byte(compiler, OpCodes["OP_NOT"]);
+    } else if (operator == "<=") {
+        emit_byte(compiler, OpCodes["OP_GREATER"]);
+        emit_byte(compiler, OpCodes["OP_NOT"]);
+    }
+}
+
+// Compile a simple let statement
+fn compile_let_stmt(compiler, stmt) {
+    let name = stmt["name"];
+    let initializer = stmt["initializer"];
+    
+    // Compile initializer if present
+    if (initializer != nil) {
+        compile_expression(compiler, initializer);
+    } else {
+        emit_byte(compiler, OpCodes["OP_NIL"]);
+    }
+    
+    // Define global
+    let index = add_constant(compiler["chunk"], name);
+    emit_byte(compiler, OpCodes["OP_DEFINE_GLOBAL"]);
+    write_byte(compiler["chunk"], index, 0);
+}
+
+// Compile an expression
+fn compile_expression(compiler, expr) {
+    if (expr == nil) {
+        emit_byte(compiler, OpCodes["OP_NIL"]);
+        return;
+    }
+    
+    let kind = expr["kind"];
+    
+    if (kind == "literal") {
+        let value = expr["value"];
+        if (value == nil) {
+            emit_byte(compiler, OpCodes["OP_NIL"]);
+        } else if (value == true) {
+            emit_byte(compiler, OpCodes["OP_TRUE"]);
+        } else if (value == false) {
+            emit_byte(compiler, OpCodes["OP_FALSE"]);
+        } else {
+            compile_literal(compiler, value);
+        }
+    } else if (kind == "variable") {
+        let name = expr["name"];
+        let index = add_constant(compiler["chunk"], name);
+        emit_byte(compiler, OpCodes["OP_GET_GLOBAL"]);
+        write_byte(compiler["chunk"], index, 0);
+    } else if (kind == "binary") {
+        compile_expression(compiler, expr["left"]);
+        compile_expression(compiler, expr["right"]);
+        compile_binary(compiler, nil, expr["operator"], nil);
+    } else if (kind == "unary") {
+        compile_expression(compiler, expr["right"]);
+        if (expr["operator"] == "-") {
+            emit_byte(compiler, OpCodes["OP_NEGATE"]);
+        } else if (expr["operator"] == "!") {
+            emit_byte(compiler, OpCodes["OP_NOT"]);
+        }
+    }
+}
+
+// Compile a simple statement
+fn compile_statement(compiler, stmt) {
+    if (stmt == nil) return;
+    
+    let kind = stmt["kind"];
+    
+    if (kind == "let") {
+        compile_let_stmt(compiler, stmt);
+    } else if (kind == "print") {
+        compile_expression(compiler, stmt["expression"]);
+        emit_byte(compiler, OpCodes["OP_PRINT"]);
+    } else if (kind == "expression") {
+        compile_expression(compiler, stmt["expression"]);
+        emit_byte(compiler, OpCodes["OP_POP"]);
+    } else if (kind == "return") {
+        if (stmt["value"] != nil) {
+            compile_expression(compiler, stmt["value"]);
+        } else {
+            emit_byte(compiler, OpCodes["OP_NIL"]);
+        }
+        emit_byte(compiler, OpCodes["OP_RETURN"]);
+    } else if (kind == "block") {
+        let stmts = stmt["statements"];
+        let i = 0;
+        while (i < len(stmts)) {
+            compile_statement(compiler, stmts[i]);
+            i = i + 1;
+        }
+    }
+}
+
+// Compile a function declaration
+fn compile_fn_decl(compiler, decl) {
+    let name = decl["name"];
+    let body = decl["body"];
+    
+    // For now, just compile the body as a block
+    if (body != nil) {
+        compile_statement(compiler, body);
+    }
+    
+    emit_byte(compiler, OpCodes["OP_RETURN"]);
+}
+
+// Main compile function
+fn compile(statements) {
+    let compiler = make_compiler();
+    
+    let i = 0;
+    while (i < len(statements)) {
+        let stmt = statements[i];
+        let decl_kind = stmt["kind"];
+        
+        if (decl_kind == "function") {
+            compile_fn_decl(compiler, stmt);
+        } else {
+            compile_statement(compiler, stmt);
+        }
+        
+        i = i + 1;
+    }
+    
+    // Add HALT at the end
+    emit_halt(compiler);
+    
+    return {
+        "bytecode": compiler["chunk"]["code"],
+        "constants": compiler["chunk"]["constants"],
+        "locals": compiler["locals"]
+    };
+}
+
+// Export bytecode generator functions
+let bytecode_mod = {
+    "OpCodes": OpCodes,
+    "make_chunk": make_chunk,
+    "make_compiler": make_compiler,
+    "compile": compile,
+    "add_constant": add_constant
+};
+
+bytecode_mod

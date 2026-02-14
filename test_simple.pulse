@@ -1,1 +1,7 @@
-let x = 42; let y = 10; println(x + y);  
+// Simple test
+println("Hello from Pulse!");
+let x = 10 + 5;
+println(x);
+let y = x * 2;
+println(y);
+println("Test completed!");

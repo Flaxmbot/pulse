@@ -3,7 +3,7 @@ pub mod mailbox;
 pub mod runtime;
 pub mod network;
 pub mod stdlib;
-// mod send_debug;
+pub mod cluster;
 
 pub use actor::Actor;
 

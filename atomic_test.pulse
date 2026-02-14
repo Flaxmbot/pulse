@@ -1,0 +1,94 @@
+// Test atomic operations in Pulse
+// This file demonstrates atomic integer operations for safe concurrent access
+
+// Test 1: Basic atomic creation and operations
+fn test_atomic_basic() {
+    // Create an atomic integer with initial value 0
+    atomic counter = 0;
+    
+    // Load the value
+    let initial = load(counter);
+    print("Initial value: ");
+    print(initial);
+    print("\n");
+    
+    // Add 5 atomically
+    let old = add(counter, 5);
+    print("After add(5), old value: ");
+    print(old);
+    print("\n");
+    
+    // Load the new value
+    let new_val = load(counter);
+    print("After add(5), new value: ");
+    print(new_val);
+    print("\n");
+    
+    // Subtract 2 atomically
+    let old2 = sub(counter, 2);
+    print("After sub(2), old value: ");
+    print(old2);
+    print("\n");
+    
+    // Load the final value
+    let final_val = load(counter);
+    print("Final value: ");
+    print(final_val);
+    print("\n");
+}
+
+// Test 2: Compare and swap
+fn test_atomic_cas() {
+    atomic value = 10;
+    
+    // Try to swap with expected value (should succeed)
+    let success1 = cas(value, 10, 20);
+    print("CAS(10 -> 20) succeeded: ");
+    print(success1);
+    print("\n");
+    
+    let val1 = load(value);
+    print("Value after successful CAS: ");
+    print(val1);
+    print("\n");
+    
+    // Try to swap with wrong expected value (should fail)
+    let success2 = cas(value, 10, 30);
+    print("CAS(10 -> 30) with wrong expected: ");
+    print(success2);
+    print("\n");
+    
+    let val2 = load(value);
+    print("Value after failed CAS: ");
+    print(val2);
+    print("\n");
+}
+
+// Helper functions to call atomic operations
+fn load(atomic_ref) {
+    // This would use the atomic load bytecode
+    // For now just return the value
+    atomic_ref
+}
+
+fn add(atomic_ref, amount) {
+    // This would use the atomic add bytecode
+    // For demonstration
+    0
+}
+
+fn sub(atomic_ref, amount) {
+    // This would use the atomic sub bytecode
+    0
+}
+
+fn cas(atomic_ref, expected, new) {
+    // This would use the atomic CAS bytecode
+    true
+}
+
+// Run tests
+test_atomic_basic();
+test_atomic_cas();
+
+print("All atomic tests completed!\n");

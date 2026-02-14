@@ -47,9 +47,11 @@ impl Heap {
             Object::Queue(q) => q.len() * 8, // Rough estimate
 
             Object::SharedMemory(_) => 16, // Rough estimate
+            Object::AtomicInt(_) => 16, // Rough estimate - just wraps Arc<AtomicI64>
             Object::Socket(_) => 64, // Struct + OS resource overhead
             Object::SharedBuffer(_) => 16, // Wrapper
             Object::Listener(_) => 16,
+            Object::Regex(_) => 16, // Rough estimate - Arc<Regex>
         };
         
         if let Some(idx) = self.free_head {
@@ -184,11 +186,13 @@ impl Heap {
                          Object::Queue(q) => q.len() * 8,
 
                          Object::SharedMemory(_) => 16,
+                         Object::AtomicInt(_) => 16,
                          Object::Socket(_) => 64, // This is the existing one
                          Object::SharedBuffer(_) => 16,
                          Object::Instance(i) => 32 + i.fields.len() * 16,
                          Object::BoundMethod(_) => 32,
                          Object::Listener(_) => 16,
+                         Object::Regex(_) => 16,
                      };
                      self.bytes_allocated = self.bytes_allocated.saturating_sub(size_estimate);
                  }

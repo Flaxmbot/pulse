@@ -1,7 +1,7 @@
 use crate::lexer::Token;
 use pulse_core::{Chunk, Op, PulseError, PulseResult, Constant}; 
 use pulse_core::object::Function;
-use crate::parser::Parser;
+use crate::parser_v2::ParserV2 as Parser;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
@@ -64,6 +64,7 @@ struct CompilerUpvalue {
 #[derive(PartialEq, Clone, Copy)]
 pub enum FunctionType {
     Script,
+    Module,  // Module can return from top-level
     Function,
     Method,
     Initializer,
@@ -83,7 +84,9 @@ pub struct Compiler<'a, 'b> {
 
 pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> {
     let mut parser = Parser::new(source);
-    let mut compiler = Compiler::new(&mut parser as *mut Parser, std::ptr::null_mut(), FunctionType::Script, module_path);
+    // Use Module type when module_path is provided, otherwise use Script
+    let function_type = if module_path.is_some() { FunctionType::Module } else { FunctionType::Script };
+    let mut compiler = Compiler::new(&mut parser as *mut Parser, std::ptr::null_mut(), function_type, module_path);
     compiler.compile_script()
 }
 
@@ -142,6 +145,10 @@ impl<'a, 'b> Compiler<'a, 'b> {
             self.class_declaration()
         } else if self.matches(Token::Shared)? {
             self.shared_memory_declaration()
+        } else if self.matches(Token::Atomic)? {
+            self.atomic_declaration()
+        } else if self.matches(Token::Fence)? || self.matches(Token::Acquire)? || self.matches(Token::Release)? {
+            self.fence_statement()
         } else {
             self.statement()
         }
@@ -371,8 +378,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn shared_memory_declaration(&mut self) -> PulseResult<()> {
-        // Parse: shared memory IDENTIFIER = expression;
-        self.consume(Token::Memory, "Expect 'memory' after 'shared'.")?;
+        // Parse: shared [memory] IDENTIFIER = expression;
+        // The 'memory' keyword is optional for simpler syntax: shared x = value
+        if self.check(Token::Memory) {
+            self.advance()?;
+        }
         
         let global = self.parse_variable("Expect shared memory name.")?;
         let _name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
@@ -390,6 +400,51 @@ impl<'a, 'b> Compiler<'a, 'b> {
         // Define the shared memory in global scope
         self.emit_byte(Op::DefineGlobal as u8);
         self.emit_u16(global);
+        
+        Ok(())
+    }
+
+    fn atomic_declaration(&mut self) -> PulseResult<()> {
+        // Parse: atomic IDENTIFIER = expression;
+        let global = self.parse_variable("Expect atomic variable name.")?;
+        let _name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+
+        self.consume(Token::Equal, "Expect '=' after atomic variable name.")?;
+        
+        // Parse the initial value for the atomic int
+        self.expression()?;
+        
+        self.consume(Token::Semicolon, "Expect ';' after atomic declaration.")?;
+        
+        // Emit instruction to create atomic int
+        self.emit_byte(Op::AtomicCreate as u8);
+        
+        // Define the atomic in global scope
+        self.emit_byte(Op::DefineGlobal as u8);
+        self.emit_u16(global);
+        
+        Ok(())
+    }
+
+    fn fence_statement(&mut self) -> PulseResult<()> {
+        // Parse: fence; | acquire; | release;
+        // Consume the fence/acquire/release keyword (already consumed by matches_any)
+        
+        self.consume(Token::Semicolon, "Expect ';' after fence statement.")?;
+        
+        // Emit the appropriate fence instruction based on the previous token
+        match &self.parser().previous {
+            Token::Fence => {
+                self.emit_byte(Op::MemoryFenceSeqCst as u8);
+            }
+            Token::Acquire => {
+                self.emit_byte(Op::MemoryFenceAcquire as u8);
+            }
+            Token::Release => {
+                self.emit_byte(Op::MemoryFenceRelease as u8);
+            }
+            _ => return Err(PulseError::CompileError("Expected fence keyword".into(), 0)),
+        }
         
         Ok(())
     }
@@ -821,6 +876,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn return_statement(&mut self) -> PulseResult<()> {
+        // Module and Function types can return, but Script cannot
         if self.function_type == FunctionType::Script {
             return Err(PulseError::CompileError("Cannot return from top-level script.".into(), 0));
         }
@@ -1378,12 +1434,12 @@ impl<'a, 'b> Compiler<'a, 'b> {
                 }
                 StringPart::Expr(expr_src) => {
                     // Parse and compile the expression
-                    let mut expr_parser = crate::parser::Parser::new(&expr_src);
+                    let mut expr_parser = Parser::new(&expr_src);
                     expr_parser.advance()?;
                     
                     // Save current parser
-                    let saved_parser = self.parser as *mut crate::parser::Parser<'a>;
-                    self.parser = &mut expr_parser as *mut crate::parser::Parser<'_> as *mut crate::parser::Parser<'a>;
+                    let saved_parser = self.parser as *mut Parser<'a>;
+                    self.parser = &mut expr_parser as *mut Parser<'_> as *mut Parser<'a>;
                     
                     self.expression()?;
                     
@@ -1696,6 +1752,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             Token::TypeUnit => Ok(Type::Unit),
             Token::TypePid => Ok(Type::Pid),
             Token::TypeAny => Ok(Type::Any),
+            Token::TypeAtomic => Ok(Type::Atomic),
             Token::TypeList => {
                 // List<ElementType>
                 if self.matches(Token::Less)? {
@@ -1782,14 +1839,16 @@ impl<'a, 'b> Compiler<'a, 'b> {
             },
             Token::Percent => self.emit_byte(Op::Mod as u8),
             Token::LogicalAnd => {
-                // For logical operators, we need short-circuit evaluation
-                // This is a simplified approach - ideally we'd implement proper short-circuiting
-                // For now, emit as regular boolean AND
-                self.emit_byte(Op::And as u8);  // Use existing AND operation
+                // Note: This branch is unreachable in practice.
+                // LogicalAnd is routed to Self::and_() via the parse rule table,
+                // which implements proper short-circuit evaluation.
+                self.emit_byte(Op::And as u8);
             },
             Token::LogicalOr => {
-                // Similar for OR
-                self.emit_byte(Op::Or as u8);  // Use existing OR operation
+                // Note: This branch is unreachable in practice.
+                // LogicalOr is routed to Self::or_() via the parse rule table,
+                // which implements proper short-circuit evaluation.
+                self.emit_byte(Op::Or as u8);
             },
             _ => return Err(PulseError::CompileError("Invalid binary operator".into(), 0)),
         }
@@ -2011,7 +2070,6 @@ impl<'a, 'b> Compiler<'a, 'b> {
             let can_assign = precedence <= Precedence::Assignment;
             prefix_fn(self, can_assign)?;
         } else {
-            println!("DEBUG: Expect expression failed on token: {:?}", previous);
             return Err(PulseError::CompileError("Expect expression.".into(), 0));
         }
 
@@ -2076,7 +2134,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn consume(&mut self, expected: Token, msg: &str) -> PulseResult<()> {
-        self.parser().consume(expected, msg)
+        self.parser().consume(expected, msg)?;
+        Ok(())
     }
 
     fn matches(&mut self, expected: Token) -> PulseResult<bool> {
@@ -2120,7 +2179,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn emit_byte(&mut self, byte: u8) {
-        let line = self.parser().previous_line;
+        let line = self.parser().previous_line();
         self.chunk.write(byte, line);
     }
 

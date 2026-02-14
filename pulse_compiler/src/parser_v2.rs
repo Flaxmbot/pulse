@@ -4,9 +4,10 @@ use crate::types::{Type, TypedParam};
 use pulse_core::{PulseError, PulseResult, Constant};
 
 pub struct ParserV2<'a> {
-    lexer: Lexer<'a>,
-    current: Token,
-    previous: Token,
+    pub lexer: Lexer<'a>,
+    pub current: Token,
+    pub previous: Token,
+    previous_line: usize,
 }
 
 impl<'a> ParserV2<'a> {
@@ -15,6 +16,7 @@ impl<'a> ParserV2<'a> {
             lexer: Lexer::new(source),
             current: Token::Eof,
             previous: Token::Eof,
+            previous_line: 1,
         }
     }
 
@@ -27,7 +29,8 @@ impl<'a> ParserV2<'a> {
         Ok(Script { declarations })
     }
 
-    fn advance(&mut self) -> PulseResult<()> {
+    pub fn advance(&mut self) -> PulseResult<()> {
+        self.previous_line = self.lexer.line;
         self.previous = self.current.clone();
         self.current = self.lexer.next_token()?;
         Ok(())
@@ -50,7 +53,7 @@ impl<'a> ParserV2<'a> {
         self.current == Token::Eof
     }
 
-    fn consume(&mut self, expected: Token, message: &str) -> PulseResult<Token> {
+    pub fn consume(&mut self, expected: Token, message: &str) -> PulseResult<Token> {
         if self.check(expected) {
             let t = self.current.clone();
             self.advance()?;
@@ -58,6 +61,14 @@ impl<'a> ParserV2<'a> {
         } else {
             Err(PulseError::CompileError(message.to_string(), self.lexer.line))
         }
+    }
+
+    pub fn line(&self) -> usize {
+        self.lexer.line
+    }
+
+    pub fn previous_line(&self) -> usize {
+        self.previous_line
     }
 
     // --- Declarations ---

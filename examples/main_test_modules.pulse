@@ -1,0 +1,35 @@
+// main_test_modules.pulse - Main test file that imports math_lib
+
+// Import the math module (using absolute path for testing)
+let math = import "c:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\examples\\math_lib.pulse";
+
+// Test the imported functions
+let result_add = math.add(10, 5);
+println("10 + 5 = ");
+println(result_add);
+
+let result_sub = math.subtract(10, 5);
+println("10 - 5 = ");
+println(result_sub);
+
+let result_mul = math.multiply(10, 5);
+println("10 * 5 = ");
+println(result_mul);
+
+let result_div = math.divide(10, 5);
+println("10 / 5 = ");
+println(result_div);
+
+println("PI = ");
+println(math.PI);
+
+let fact5 = math.factorial(5);
+println("5! = ");
+println(fact5);
+
+// Test nested module lookup
+let x = math.add(math.multiply(2, 3), math.divide(10, 2));
+println("2 * 3 + 10 / 2 = ");
+println(x);
+
+println("Module test completed!");

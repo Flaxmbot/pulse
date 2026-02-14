@@ -1,0 +1,9 @@
+// Test shared memory keyword - simpler syntax
+fn test_shared() {
+    shared counter = 0;
+    print("Created shared counter\n");
+}
+
+test_shared();
+
+print("Test completed!\n");

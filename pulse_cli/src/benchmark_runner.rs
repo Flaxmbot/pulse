@@ -37,7 +37,7 @@ fn run_pulse_test(filename: &str) {
     // Compile and run the test
     match pulse_compiler::compile(&source, Some(filename.to_string())) {
         Ok(chunk) => {
-            let mut vm = pulse_vm::VM::new(chunk, pulse_core::ActorId::new(0, 1));
+            let mut vm = pulse_vm::VM::new(chunk, pulse_core::ActorId::new(0, 1), None);
             let status = vm.run(1000000); // Run for up to 1M steps
             
             match status {

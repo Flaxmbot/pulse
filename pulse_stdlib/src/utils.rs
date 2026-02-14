@@ -93,6 +93,8 @@ pub fn type_of_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
                     Object::Socket(_) => "Socket",
                     Object::SharedBuffer(_) => "SharedBuffer",
                     Object::Listener(_) => "Listener",
+                    Object::AtomicInt(_) => "AtomicInt",
+                    Object::Regex(_) => "Regex",
                 }
             } else {
                 "Unknown"
@@ -144,6 +146,8 @@ fn value_to_string(val: &Value, heap: &dyn HeapInterface) -> String {
                     Object::Socket(_) => "<socket>".to_string(),
                     Object::SharedBuffer(_) => "<shared buffer>".to_string(),
                     Object::Listener(_) => "<listener>".to_string(),
+                    Object::AtomicInt(_) => "<atomic>".to_string(),
+                    Object::Regex(_) => "<regex>".to_string(),
                 }
             } else {
                 "<invalid>".to_string()
@@ -349,6 +353,8 @@ pub fn println_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
 
                         Object::SharedBuffer(_) => print!("<shared buffer>"),
                         Object::Listener(_) => print!("<listener>"),
+                        Object::AtomicInt(_) => print!("<atomic>"),
+                        Object::Regex(_) => print!("<regex>"),
                     }
                 } else {
                     print!("<invalid>");
@@ -874,4 +880,470 @@ pub fn deep_copy_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
         Value::Unit => Ok(Value::Unit),
         Value::Pid(pid) => Ok(Value::Pid(*pid)),
     }
+}
+
+// ============================================================================
+// INPUT / READLINE
+// ============================================================================
+
+/// input() -> String
+/// Reads a line from stdin (blocking)
+pub fn input_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if !args.is_empty() {
+        return Err(PulseError::RuntimeError("input expects 0 arguments (use input_prompt for prompted input)".into()));
+    }
+
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_line(&mut buf)
+        .map_err(|e| PulseError::IoError(format!("Failed to read stdin: {}", e)))?;
+    // Strip trailing newline
+    if buf.ends_with('\n') {
+        buf.pop();
+        if buf.ends_with('\r') {
+            buf.pop();
+        }
+    }
+    let handle = heap.alloc_object(Object::String(buf));
+    Ok(Value::Obj(handle))
+}
+
+/// input_prompt(prompt: String) -> String
+/// Prints a prompt then reads a line from stdin
+pub fn input_prompt_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 1 {
+        return Err(PulseError::RuntimeError("input_prompt expects 1 argument".into()));
+    }
+
+    // Print the prompt
+    let prompt = match &args[0] {
+        Value::Obj(h) => {
+            if let Some(Object::String(s)) = heap.get_object(*h) {
+                s.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "string".into(), got: args[0].type_name() }),
+    };
+
+    use std::io::Write;
+    print!("{}", prompt);
+    std::io::stdout().flush().map_err(|e| PulseError::IoError(format!("{}", e)))?;
+
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_line(&mut buf)
+        .map_err(|e| PulseError::IoError(format!("Failed to read stdin: {}", e)))?;
+    if buf.ends_with('\n') {
+        buf.pop();
+        if buf.ends_with('\r') {
+            buf.pop();
+        }
+    }
+    let handle = heap.alloc_object(Object::String(buf));
+    Ok(Value::Obj(handle))
+}
+
+// ============================================================================
+// CONVERSION
+// ============================================================================
+
+/// to_float(val: Value) -> Float
+/// Converts a value to a float
+pub fn to_float_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 1 {
+        return Err(PulseError::RuntimeError("to_float expects 1 argument".into()));
+    }
+
+    match &args[0] {
+        Value::Float(f) => Ok(Value::Float(*f)),
+        Value::Int(i) => Ok(Value::Float(*i as f64)),
+        Value::Bool(b) => Ok(Value::Float(if *b { 1.0 } else { 0.0 })),
+        Value::Obj(h) => {
+            if let Some(Object::String(s)) = heap.get_object(*h) {
+                s.parse::<f64>()
+                    .map(Value::Float)
+                    .map_err(|_| PulseError::RuntimeError(format!("Cannot convert '{}' to float", s)))
+            } else {
+                Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() })
+            }
+        }
+        _ => Err(PulseError::TypeMismatch {
+            expected: "int, float, bool, or string".into(),
+            got: args[0].type_name()
+        }),
+    }
+}
+
+// ============================================================================
+// SCALAR MIN / MAX
+// ============================================================================
+
+/// min_val(a, b) -> a | b
+/// Returns the smaller of two numeric values
+pub fn min_val_native(_heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("min_val expects 2 arguments".into()));
+    }
+
+    match (&args[0], &args[1]) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(*a.min(b))),
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.min(*b))),
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float((*a as f64).min(*b))),
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.min(*b as f64))),
+        _ => Err(PulseError::TypeMismatch {
+            expected: "numeric".into(),
+            got: format!("{} and {}", args[0].type_name(), args[1].type_name())
+        }),
+    }
+}
+
+/// max_val(a, b) -> a | b
+/// Returns the larger of two numeric values
+pub fn max_val_native(_heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("max_val expects 2 arguments".into()));
+    }
+
+    match (&args[0], &args[1]) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(*a.max(b))),
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.max(*b))),
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float((*a as f64).max(*b))),
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.max(*b as f64))),
+        _ => Err(PulseError::TypeMismatch {
+            expected: "numeric".into(),
+            got: format!("{} and {}", args[0].type_name(), args[1].type_name())
+        }),
+    }
+}
+
+// ============================================================================
+// LIST OPERATIONS
+// ============================================================================
+
+/// sort_list(list: List) -> List
+/// Returns a new sorted list (numeric values sorted numerically, strings lexicographically)
+pub fn sort_list_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 1 {
+        return Err(PulseError::RuntimeError("sort_list expects 1 argument".into()));
+    }
+
+    let list = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let mut sorted = list;
+    sorted.sort_by(|a, b| {
+        match (a, b) {
+            (Value::Int(x), Value::Int(y)) => x.cmp(y),
+            (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+            (Value::Int(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+            (Value::Float(x), Value::Int(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(std::cmp::Ordering::Equal),
+            (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+            _ => std::cmp::Ordering::Equal,
+        }
+    });
+
+    let handle = heap.alloc_object(Object::List(sorted));
+    Ok(Value::Obj(handle))
+}
+
+/// reverse_list(list: List) -> List
+/// Returns a new reversed list
+pub fn reverse_list_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 1 {
+        return Err(PulseError::RuntimeError("reverse_list expects 1 argument".into()));
+    }
+
+    let list = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let mut reversed = list;
+    reversed.reverse();
+    let handle = heap.alloc_object(Object::List(reversed));
+    Ok(Value::Obj(handle))
+}
+
+/// index_of(list: List, val: Any) -> Int
+/// Returns the index of the first occurrence of val in the list, or -1 if not found
+pub fn index_of_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("index_of expects 2 arguments".into()));
+    }
+
+    let list = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let needle = &args[1];
+    for (i, item) in list.iter().enumerate() {
+        let matches = match (item, needle) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            _ => false, // Object comparison by handle not reliable here
+        };
+        if matches {
+            return Ok(Value::Int(i as i64));
+        }
+    }
+    Ok(Value::Int(-1))
+}
+
+/// list_insert(list: List, index: Int, val: Any) -> Unit
+/// Inserts a value at the given index in the list (in-place)
+pub fn list_insert_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 3 {
+        return Err(PulseError::RuntimeError("list_insert expects 3 arguments (list, index, value)".into()));
+    }
+
+    let idx = args[1].as_int()?;
+    let val = args[2].clone();
+
+    match args[0] {
+        Value::Obj(handle) => {
+            if let Some(obj) = heap.get_mut_object(handle) {
+                match obj {
+                    Object::List(vec) => {
+                        if idx < 0 || idx > vec.len() as i64 {
+                            return Err(PulseError::RuntimeError(format!("Index {} out of bounds for list of length {}", idx, vec.len())));
+                        }
+                        vec.insert(idx as usize, val);
+                        Ok(Value::Unit)
+                    }
+                    _ => Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() }),
+                }
+            } else {
+                Err(PulseError::RuntimeError("Invalid handle".into()))
+            }
+        }
+        _ => Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    }
+}
+
+/// list_remove(list: List, index: Int) -> Any
+/// Removes and returns the element at the given index
+pub fn list_remove_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("list_remove expects 2 arguments (list, index)".into()));
+    }
+
+    let idx = args[1].as_int()?;
+
+    match args[0] {
+        Value::Obj(handle) => {
+            if let Some(obj) = heap.get_mut_object(handle) {
+                match obj {
+                    Object::List(vec) => {
+                        if idx < 0 || idx >= vec.len() as i64 {
+                            return Err(PulseError::RuntimeError(format!("Index {} out of bounds for list of length {}", idx, vec.len())));
+                        }
+                        Ok(vec.remove(idx as usize))
+                    }
+                    _ => Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() }),
+                }
+            } else {
+                Err(PulseError::RuntimeError("Invalid handle".into()))
+            }
+        }
+        _ => Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    }
+}
+
+/// list_slice(list: List, start: Int, end: Int) -> List
+/// Returns a new list containing elements from index start (inclusive) to end (exclusive)
+pub fn list_slice_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 3 {
+        return Err(PulseError::RuntimeError("list_slice expects 3 arguments (list, start, end)".into()));
+    }
+
+    let start = args[1].as_int()?;
+    let end = args[2].as_int()?;
+
+    let list = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let len = list.len() as i64;
+    let s = start.max(0) as usize;
+    let e = end.min(len) as usize;
+    let sliced = if s <= e { list[s..e].to_vec() } else { Vec::new() };
+
+    let handle = heap.alloc_object(Object::List(sliced));
+    Ok(Value::Obj(handle))
+}
+
+/// list_contains(list: List, val: Any) -> Bool
+/// Returns true if the list contains the given value
+pub fn list_contains_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("list_contains expects 2 arguments".into()));
+    }
+
+    let list = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let needle = &args[1];
+    for item in &list {
+        let matches = match (item, needle) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            _ => false,
+        };
+        if matches {
+            return Ok(Value::Bool(true));
+        }
+    }
+    Ok(Value::Bool(false))
+}
+
+/// list_concat(list1: List, list2: List) -> List
+/// Returns a new list that is the concatenation of list1 and list2
+pub fn list_concat_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 2 {
+        return Err(PulseError::RuntimeError("list_concat expects 2 arguments".into()));
+    }
+
+    let list1 = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let list2 = match args[1] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[1].type_name() }),
+    };
+
+    let mut result = list1;
+    result.extend(list2);
+    let handle = heap.alloc_object(Object::List(result));
+    Ok(Value::Obj(handle))
+}
+
+/// range(start: Int, end: Int) -> List
+/// Creates a list of integers from start (inclusive) to end (exclusive)
+pub fn range_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() < 1 || args.len() > 3 {
+        return Err(PulseError::RuntimeError("range expects 1-3 arguments: range(end) or range(start, end) or range(start, end, step)".into()));
+    }
+
+    let (start, end, step) = match args.len() {
+        1 => (0i64, args[0].as_int()?, 1i64),
+        2 => (args[0].as_int()?, args[1].as_int()?, 1i64),
+        3 => {
+            let s = args[2].as_int()?;
+            if s == 0 {
+                return Err(PulseError::RuntimeError("range step cannot be zero".into()));
+            }
+            (args[0].as_int()?, args[1].as_int()?, s)
+        }
+        _ => unreachable!(),
+    };
+
+    let mut list = Vec::new();
+    if step > 0 {
+        let mut i = start;
+        while i < end {
+            list.push(Value::Int(i));
+            i += step;
+        }
+    } else {
+        let mut i = start;
+        while i > end {
+            list.push(Value::Int(i));
+            i += step;
+        }
+    }
+
+    let handle = heap.alloc_object(Object::List(list));
+    Ok(Value::Obj(handle))
+}
+
+/// list_flatten(list: List) -> List
+/// Flattens a list of lists into a single list (one level deep)
+pub fn list_flatten_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+    if args.len() != 1 {
+        return Err(PulseError::RuntimeError("list_flatten expects 1 argument".into()));
+    }
+
+    let list = match args[0] {
+        Value::Obj(handle) => {
+            if let Some(Object::List(l)) = heap.get_object(handle) {
+                l.clone()
+            } else {
+                return Err(PulseError::TypeMismatch { expected: "list".into(), got: "other".into() });
+            }
+        }
+        _ => return Err(PulseError::TypeMismatch { expected: "list".into(), got: args[0].type_name() }),
+    };
+
+    let mut result = Vec::new();
+    for item in &list {
+        match item {
+            Value::Obj(h) => {
+                if let Some(Object::List(inner)) = heap.get_object(*h) {
+                    result.extend(inner.clone());
+                } else {
+                    result.push(item.clone());
+                }
+            }
+            _ => result.push(item.clone()),
+        }
+    }
+
+    let handle = heap.alloc_object(Object::List(result));
+    Ok(Value::Obj(handle))
 }

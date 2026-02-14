@@ -1,0 +1,43 @@
+{
+    "name": "pulse-language",
+    "displayName": "Pulse Language",
+    "description": "Language support for Pulse - a concurrent actor-based programming language",
+    "version": "0.1.0",
+    "publisher": "pulse-lang",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:pulse"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [{
+            "id": "pulse",
+            "aliases": ["Pulse", "pulse"],
+            "extensions": [".pulse"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "pulse",
+            "scopeName": "source.pulse",
+            "path": "./syntaxes/pulse.tmLanguage.json"
+        }]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.75.0",
+        "@types/node": "^18.0.0",
+        "typescript": "^5.0.0"
+    }
+}

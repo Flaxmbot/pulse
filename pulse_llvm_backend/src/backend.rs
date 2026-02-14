@@ -376,6 +376,8 @@ impl<'ctx> LLVMBackend<'ctx> {
             Op::Register => { *ip += 1; let _ = self.pop_value(); }
             Op::Unregister => { *ip += 1; }
             Op::WhereIs => { *ip += 1; self.push_value(self.context.i64_type().const_zero().as_basic_value_enum()); }
+            // Atomic operations not supported in AOT mode yet
+            _ => {}
         }
 
         *ip += 1;

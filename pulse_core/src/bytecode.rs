@@ -95,6 +95,19 @@ pub enum Op {
     BuildClass = 0x73,  // u8 name_idx, u8 has_super, [u8 super_idx if has_super], u8 method_count, [u8 method_name_idx for each method]
     GetSuper = 0x74,    // u16 method_name_idx. Pops super, this. Pushes BoundMethod.
     Method = 0x75,      // u16 name_idx. Pops closure, peeks class, adds method.
+    
+    // Atomic Operations
+    AtomicCreate = 0x76,  // Create atomic int, pops initial value
+    AtomicLoad = 0x77,    // Load from atomic, pushes value
+    AtomicStore = 0x78,   // Store to atomic, pops value, pushes old value
+    AtomicAdd = 0x79,     // Atomic add, pops value, pushes old value
+    AtomicSub = 0x7A,     // Atomic subtract, pops value, pushes old value
+    AtomicCompareAndSwap = 0x7B,  // CAS, pops expected, new, pushes success (bool)
+    
+    // Memory Fences
+    MemoryFenceAcquire = 0x7C,  // Acquire fence - all reads after this see writes before matching release
+    MemoryFenceRelease = 0x7D,  // Release fence - all writes before this are visible to threads doing acquire
+    MemoryFenceSeqCst = 0x7E,  // Full memory barrier (Sequentially consistent)
 }
 
 impl From<u8> for Op {
@@ -167,6 +180,15 @@ impl From<u8> for Op {
             0x73 => Op::BuildClass,
             0x74 => Op::GetSuper,
             0x75 => Op::Method,
+            0x76 => Op::AtomicCreate,
+            0x77 => Op::AtomicLoad,
+            0x78 => Op::AtomicStore,
+            0x79 => Op::AtomicAdd,
+            0x7A => Op::AtomicSub,
+            0x7B => Op::AtomicCompareAndSwap,
+            0x7C => Op::MemoryFenceAcquire,
+            0x7D => Op::MemoryFenceRelease,
+            0x7E => Op::MemoryFenceSeqCst,
             _ => Op::Halt, // Default to halt for invalid opcodes
         }
     }

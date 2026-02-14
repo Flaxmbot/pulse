@@ -1,0 +1,114 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Pulse",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#constants"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#operators"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.pulse",
+                    "match": "//.*$"
+                },
+                {
+                    "name": "comment.block.pulse",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                },
+                {
+                    "name": "comment.line.documentation.pulse",
+                    "match": "///.*$"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.pulse",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.pulse",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.pulse",
+                    "match": "\\b(if|else|while|for|in|break|continue|return|match|try|catch|throw)\\b"
+                },
+                {
+                    "name": "keyword.declaration.pulse",
+                    "match": "\\b(fn|def|let|actor|on|import)\\b"
+                },
+                {
+                    "name": "keyword.actor.pulse",
+                    "match": "\\b(spawn|spawn_link|send|receive|link|monitor|register|unregister|whereis)\\b"
+                }
+            ]
+        },
+        "constants": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.pulse",
+                    "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+                },
+                {
+                    "name": "constant.language.pulse",
+                    "match": "\\b(true|false|nil)\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.pulse",
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\("
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "entity.name.type.pulse",
+                    "match": "\\b(Int|Float|Bool|String|Unit|Pid|List|Map|Fn|Any)\\b"
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.pulse",
+                    "match": "(\\+|-|\\*|/|==|!=|<=|>=|<|>|=>|->|\\|)"
+                }
+            ]
+        }
+    },
+    "scopeName": "source.pulse"
+}

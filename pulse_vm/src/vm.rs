@@ -4,6 +4,7 @@ use pulse_core::object::{Object, ObjHandle, HeapInterface, Function, Closure, In
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::Heap;
+use crate::shared_heap::{SharedHeap, SharedHandle};
 use pulse_stdlib::utils::{clock_native, println_native, gc_native, len_native, push_native, pop_native};
 #[derive(Debug, Clone)]
 pub struct CallFrame {
@@ -52,6 +53,9 @@ pub struct VM {
     pub builtins: HashMap<String, Value>,
     global_cache: HashMap<String, Value>, // Cache for frequently accessed globals
     pub heap: Heap,
+    /// Shared heap for zero-copy cross-actor communication
+    /// This heap stores shared memory objects that all actors can access
+    pub shared_heap: Option<Arc<SharedHeap>>,
     pub open_upvalues: Vec<ObjHandle>, // Tracks upvalues still on stack
     pub loaded_modules: HashMap<String, ObjHandle>,
     pub exception_frames: Vec<ExceptionFrame>,
@@ -61,7 +65,7 @@ pub struct VM {
 // unsafe impl Send for VM {}
 
 impl VM {
-    pub fn new(chunk: Chunk, pid: ActorId) -> Self {
+    pub fn new(chunk: Chunk, pid: ActorId, shared_heap: Option<Arc<SharedHeap>>) -> Self {
         let mut heap = Heap::new();
         
         // Wrap script in Function/Closure
@@ -106,6 +110,7 @@ impl VM {
             builtins: HashMap::new(),
             global_cache: HashMap::new(),
             heap,
+            shared_heap,
             open_upvalues: Vec::new(),
             loaded_modules: HashMap::new(),
             exception_frames: Vec::new(),
@@ -209,9 +214,308 @@ impl VM {
         
         // Memory isolation natives
         self.define_native("deep_copy", pulse_stdlib::utils::deep_copy_native);
+
+        // ====================================================================
+        // STATISTICS LIBRARY
+        // ====================================================================
+        self.define_native("stats_mean", pulse_stdlib::stats::mean_native);
+        self.define_native("stats_median", pulse_stdlib::stats::median_native);
+        self.define_native("stats_mode", pulse_stdlib::stats::mode_native);
+        self.define_native("stats_std", pulse_stdlib::stats::std_native);
+        self.define_native("stats_variance", pulse_stdlib::stats::variance_native);
+        self.define_native("stats_min", pulse_stdlib::stats::min_native);
+        self.define_native("stats_max", pulse_stdlib::stats::max_native);
+        self.define_native("stats_describe", pulse_stdlib::stats::describe_native);
+        self.define_native("normal_pdf", pulse_stdlib::stats::normal_pdf_native);
+        self.define_native("normal_cdf", pulse_stdlib::stats::normal_cdf_native);
+        self.define_native("normal_sample", pulse_stdlib::stats::normal_sample_native);
+        self.define_native("binomial_pmf", pulse_stdlib::stats::binomial_pmf_native);
+        self.define_native("poisson_pmf", pulse_stdlib::stats::poisson_pmf_native);
+        self.define_native("ttest", pulse_stdlib::stats::ttest_native);
+        self.define_native("chisquare", pulse_stdlib::stats::chisquare_native);
+        self.define_native("correlation", pulse_stdlib::stats::correlation_native);
+        self.define_native("linear_regression", pulse_stdlib::stats::linear_regression_native);
+        self.define_native("covariance", pulse_stdlib::stats::covariance_native);
+
+        // ====================================================================
+        // RANDOM NUMBER GENERATION LIBRARY
+        // ====================================================================
+        self.define_native("rand_int", pulse_stdlib::random::rand_int_native);
+        self.define_native("rand_int_range", pulse_stdlib::random::rand_int_range_native);
+        self.define_native("rand_float", pulse_stdlib::random::rand_float_native);
+        self.define_native("rand_float_range", pulse_stdlib::random::rand_float_range_native);
+        self.define_native("rand_bool", pulse_stdlib::random::rand_bool_native);
+        self.define_native("seed_rng", pulse_stdlib::random::seed_rng_native);
+        self.define_native("rng_state", pulse_stdlib::random::rng_state_native);
+        self.define_native("uniform_sample", pulse_stdlib::random::uniform_sample_native);
+        self.define_native("random_normal_sample", pulse_stdlib::random::normal_sample_native);
+        self.define_native("exponential_sample", pulse_stdlib::random::exponential_sample_native);
+        self.define_native("poisson_sample", pulse_stdlib::random::poisson_sample_native);
+        self.define_native("choice", pulse_stdlib::random::choice_native);
+        self.define_native("shuffle", pulse_stdlib::random::shuffle_native);
+        self.define_native("sample", pulse_stdlib::random::sample_native);
+        self.define_native("choices", pulse_stdlib::random::choices_native);
+        self.define_native("random_bytes", pulse_stdlib::random::random_bytes_native);
+        self.define_native("random_hex", pulse_stdlib::random::random_hex_native);
+        self.define_native("random_string", pulse_stdlib::random::random_string_native);
+
+        // ====================================================================
+        // LINEAR ALGEBRA LIBRARY
+        // ====================================================================
+        // Vector operations
+        self.define_native("vector_dot", pulse_stdlib::linalg::vector_dot_native);
+        self.define_native("vector_cross", pulse_stdlib::linalg::vector_cross_native);
+        self.define_native("vector_normalize", pulse_stdlib::linalg::vector_normalize_native);
+        self.define_native("vector_magnitude", pulse_stdlib::linalg::vector_magnitude_native);
+        // Matrix operations
+        self.define_native("matrix_multiply", pulse_stdlib::linalg::matrix_multiply_native);
+        self.define_native("matrix_transpose", pulse_stdlib::linalg::matrix_transpose_native);
+        self.define_native("matrix_inverse", pulse_stdlib::linalg::matrix_inverse_native);
+        self.define_native("matrix_determinant", pulse_stdlib::linalg::matrix_determinant_native);
+        // Matrix decomposition
+        self.define_native("matrix_lu", pulse_stdlib::linalg::matrix_lu_native);
+        self.define_native("matrix_qr", pulse_stdlib::linalg::matrix_qr_native);
+        self.define_native("matrix_svd", pulse_stdlib::linalg::matrix_svd_native);
+        // Linear system solver
+        self.define_native("solve_linear", pulse_stdlib::linalg::solve_linear_native);
+        // Matrix creation
+        self.define_native("matrix_identity", pulse_stdlib::linalg::matrix_identity_native);
+        self.define_native("matrix_zeros", pulse_stdlib::linalg::matrix_zeros_native);
+        self.define_native("matrix_ones", pulse_stdlib::linalg::matrix_ones_native);
+
+        // ====================================================================
+        // NUMPY-STYLE ARRAY LIBRARY
+        // ====================================================================
+        // Array creation
+        self.define_native("np_array", pulse_stdlib::numpy::array_create_native);
+        self.define_native("np_zeros", pulse_stdlib::numpy::array_zeros_native);
+        self.define_native("np_ones", pulse_stdlib::numpy::array_ones_native);
+        self.define_native("np_eye", pulse_stdlib::numpy::array_eye_native);
+        self.define_native("np_linspace", pulse_stdlib::numpy::array_linspace_native);
+        self.define_native("np_arange", pulse_stdlib::numpy::array_arange_native);
+        // Array operations
+        self.define_native("np_shape", pulse_stdlib::numpy::array_shape_native);
+        self.define_native("np_reshape", pulse_stdlib::numpy::array_reshape_native);
+        self.define_native("np_get", pulse_stdlib::numpy::array_get_native);
+        self.define_native("np_set", pulse_stdlib::numpy::array_set_native);
+        self.define_native("np_slice", pulse_stdlib::numpy::array_slice_native);
+        // Matrix operations
+        self.define_native("np_matmul", pulse_stdlib::numpy::matmul_native);
+        self.define_native("np_dot", pulse_stdlib::numpy::dot_native);
+        self.define_native("np_transpose", pulse_stdlib::numpy::transpose_native);
+        self.define_native("np_inverse", pulse_stdlib::numpy::inverse_native);
+        self.define_native("np_determinant", pulse_stdlib::numpy::determinant_native);
+        // Element-wise operations
+        self.define_native("np_add", pulse_stdlib::numpy::add_native);
+        self.define_native("np_sub", pulse_stdlib::numpy::sub_native);
+        self.define_native("np_mul", pulse_stdlib::numpy::mul_native);
+        self.define_native("np_div", pulse_stdlib::numpy::div_native);
+        self.define_native("np_sqrt", pulse_stdlib::numpy::sqrt_native);
+        self.define_native("np_abs", pulse_stdlib::numpy::abs_native);
+        self.define_native("np_pow", pulse_stdlib::numpy::pow_native);
+        self.define_native("np_sin", pulse_stdlib::numpy::sin_native);
+        self.define_native("np_cos", pulse_stdlib::numpy::cos_native);
+        self.define_native("np_tan", pulse_stdlib::numpy::tan_native);
+        self.define_native("np_exp", pulse_stdlib::numpy::exp_native);
+        self.define_native("np_log", pulse_stdlib::numpy::numpy_log_native);
+        self.define_native("np_log10", pulse_stdlib::numpy::log10_native);
+        self.define_native("np_floor", pulse_stdlib::numpy::floor_native);
+        self.define_native("np_ceil", pulse_stdlib::numpy::ceil_native);
+        self.define_native("np_round", pulse_stdlib::numpy::round_native);
+        self.define_native("np_negate", pulse_stdlib::numpy::negate_native);
+        // Aggregations
+        self.define_native("np_sum", pulse_stdlib::numpy::sum_native);
+        self.define_native("np_mean", pulse_stdlib::numpy::mean_native);
+        self.define_native("np_std", pulse_stdlib::numpy::std_native);
+        self.define_native("np_var", pulse_stdlib::numpy::var_native);
+        self.define_native("np_min", pulse_stdlib::numpy::min_native);
+        self.define_native("np_max", pulse_stdlib::numpy::max_native);
+        self.define_native("np_argmin", pulse_stdlib::numpy::argmin_native);
+        self.define_native("np_argmax", pulse_stdlib::numpy::argmax_native);
+        // Constants
+        self.define_native("np_pi", pulse_stdlib::numpy::pi_native);
+        self.define_native("np_e", pulse_stdlib::numpy::e_native);
+
+        // ====================================================================
+        // PANDAS DATAFRAME LIBRARY
+        // ====================================================================
+        // DataFrame creation
+        self.define_native("df_create", pulse_stdlib::pandas::df_create_native);
+        self.define_native("df_from_list", pulse_stdlib::pandas::df_from_list_native);
+        self.define_native("df_from_csv", pulse_stdlib::pandas::df_from_csv_native);
+        self.define_native("df_from_json", pulse_stdlib::pandas::df_from_json_native);
+        // DataFrame operations
+        self.define_native("df_columns", pulse_stdlib::pandas::df_columns_native);
+        self.define_native("df_shape", pulse_stdlib::pandas::df_shape_native);
+        self.define_native("df_head", pulse_stdlib::pandas::df_head_native);
+        self.define_native("df_tail", pulse_stdlib::pandas::df_tail_native);
+        self.define_native("df_select", pulse_stdlib::pandas::df_select_native);
+        self.define_native("df_filter", pulse_stdlib::pandas::df_filter_native);
+        self.define_native("df_sort", pulse_stdlib::pandas::df_sort_native);
+        // Data operations
+        self.define_native("df_group_by", pulse_stdlib::pandas::df_group_by_native);
+        self.define_native("df_aggregate", pulse_stdlib::pandas::df_aggregate_native);
+        self.define_native("df_join", pulse_stdlib::pandas::df_join_native);
+        self.define_native("df_concat", pulse_stdlib::pandas::df_concat_native);
+        // Column operations
+        self.define_native("df_add_column", pulse_stdlib::pandas::df_add_column_native);
+        self.define_native("df_drop_column", pulse_stdlib::pandas::df_drop_column_native);
+        self.define_native("df_rename", pulse_stdlib::pandas::df_rename_native);
+        // Statistics
+        self.define_native("df_describe", pulse_stdlib::pandas::df_describe_native);
+        self.define_native("df_corr", pulse_stdlib::pandas::df_corr_native);
+
+        // ====================================================================
+        // PLOTTING LIBRARY (ASCII)
+        // ====================================================================
+        self.define_native("bar_chart", pulse_stdlib::plotting::bar_chart_native);
+        self.define_native("line_chart", pulse_stdlib::plotting::line_chart_native);
+        self.define_native("histogram", pulse_stdlib::plotting::histogram_native);
+        self.define_native("box_plot", pulse_stdlib::plotting::box_plot_native);
+        self.define_native("scatter_plot", pulse_stdlib::plotting::scatter_plot_native);
+        self.define_native("hbar_chart", pulse_stdlib::plotting::hbar_chart_native);
+
+        // ====================================================================
+        // FILESYSTEM LIBRARY (async)
+        // ====================================================================
+        self.define_native_async("read_dir", pulse_stdlib::fs::read_dir_native);
+        self.define_native_async("create_dir", pulse_stdlib::fs::create_dir_native);
+        self.define_native_async("remove_dir", pulse_stdlib::fs::remove_dir_native);
+        self.define_native_async("remove_file", pulse_stdlib::fs::remove_file_native);
+        self.define_native_async("get_metadata", pulse_stdlib::fs::get_metadata_native);
+        self.define_native_async("copy_file", pulse_stdlib::fs::copy_file_native);
+        self.define_native_async("rename_file", pulse_stdlib::fs::rename_file_native);
+        self.define_native_async("list_dir", pulse_stdlib::fs::list_dir_native);
+        self.define_native_async("is_file", pulse_stdlib::fs::is_file_native);
+        self.define_native_async("is_dir", pulse_stdlib::fs::is_dir_native);
+        self.define_native_async("read_bytes", pulse_stdlib::fs::read_bytes_native);
+        self.define_native_async("write_bytes", pulse_stdlib::fs::write_bytes_native);
+        self.define_native_async("get_current_dir", pulse_stdlib::fs::get_current_dir_native);
+        self.define_native_async("set_current_dir", pulse_stdlib::fs::set_current_dir_native);
+
+        // ====================================================================
+        // PROCESS MANAGEMENT LIBRARY
+        // ====================================================================
+        self.define_native("spawn_process", pulse_stdlib::process::spawn_process_native);
+        self.define_native("wait_process", pulse_stdlib::process::wait_process_native);
+        self.define_native("kill_process", pulse_stdlib::process::kill_process_native);
+        self.define_native("exit_code", pulse_stdlib::process::exit_code_native);
+        self.define_native("process_running", pulse_stdlib::process::process_running_native);
+        self.define_native_async("shell", pulse_stdlib::process::shell_native);
+        self.define_native("system_info", pulse_stdlib::process::system_info_native);
+        self.define_native("get_env", pulse_stdlib::process::get_env_native);
+        self.define_native("set_env", pulse_stdlib::process::set_env_native);
+        self.define_native("get_args", pulse_stdlib::process::get_args_native);
+        self.define_native("get_pid", pulse_stdlib::process::get_pid_native);
+
+        // ====================================================================
+        // TIME LIBRARY
+        // ====================================================================
+        self.define_native("current_timestamp", pulse_stdlib::time::current_timestamp_native);
+        self.define_native("current_timestamp_millis", pulse_stdlib::time::current_timestamp_millis_native);
+        self.define_native("current_timestamp_micros", pulse_stdlib::time::current_timestamp_micros_native);
+        self.define_native_async("sleep_seconds", pulse_stdlib::time::sleep_seconds_native);
+        self.define_native("now", pulse_stdlib::time::now_native);
+        self.define_native("format_time", pulse_stdlib::time::format_time_native);
+        self.define_native("parse_time", pulse_stdlib::time::parse_time_native);
+        self.define_native("duration_create", pulse_stdlib::time::duration_create_native);
+        self.define_native("duration_add", pulse_stdlib::time::duration_add_native);
+        self.define_native_async("measure_time", pulse_stdlib::time::measure_time_native);
+        self.define_native("unix_to_datetime", pulse_stdlib::time::unix_to_datetime_native);
+        self.define_native("datetime_to_unix", pulse_stdlib::time::datetime_to_unix_native);
+
+        // ====================================================================
+        // DATABASE LIBRARY (SQLite)
+        // ====================================================================
+        self.define_native("db_open", pulse_stdlib::database::db_open_native);
+        self.define_native("db_open_memory", pulse_stdlib::database::db_open_memory_native);
+        self.define_native("db_execute", pulse_stdlib::database::db_execute_native);
+        self.define_native("db_query", pulse_stdlib::database::db_query_native);
+        self.define_native("db_close", pulse_stdlib::database::db_close_native);
+        self.define_native("db_begin", pulse_stdlib::database::db_begin_native);
+        self.define_native("db_commit", pulse_stdlib::database::db_commit_native);
+        self.define_native("db_rollback", pulse_stdlib::database::db_rollback_native);
+        self.define_native("db_tables", pulse_stdlib::database::db_tables_native);
+
+        // ====================================================================
+        // UUID LIBRARY
+        // ====================================================================
+        self.define_native("uuid_generate", pulse_stdlib::uuid::uuid_generate_native);
+        self.define_native("uuid_v4", pulse_stdlib::uuid::uuid_v4_native);
+        self.define_native("uuid_parse", pulse_stdlib::uuid::uuid_parse_native);
+        self.define_native("uuid_to_string", pulse_stdlib::uuid::uuid_to_string_native);
+        self.define_native("uuid_is_valid", pulse_stdlib::uuid::uuid_is_valid_native);
+        self.define_native("uuid_nil", pulse_stdlib::uuid::uuid_nil_native);
+        self.define_native("uuid_namespace_dns", pulse_stdlib::uuid::uuid_namespace_ns_dns_native);
+        self.define_native("uuid_namespace_url", pulse_stdlib::uuid::uuid_namespace_ns_url_native);
+        self.define_native("uuid_namespace_oid", pulse_stdlib::uuid::uuid_namespace_ns_oid_native);
+        self.define_native("uuid_namespace_x500", pulse_stdlib::uuid::uuid_namespace_x500_native);
+        self.define_native("uuid_from_bytes", pulse_stdlib::uuid::uuid_from_bytes_native);
+
+        // ====================================================================
+        // LOGGING LIBRARY
+        // ====================================================================
+        self.define_native("set_log_level", pulse_stdlib::logging::set_log_level_native);
+        self.define_native("get_log_level", pulse_stdlib::logging::get_log_level_native);
+        self.define_native("log_debug", pulse_stdlib::logging::debug_native);
+        self.define_native("log_info", pulse_stdlib::logging::info_native);
+        self.define_native("log_warn", pulse_stdlib::logging::warn_native);
+        self.define_native("log_error", pulse_stdlib::logging::error_native);
+        self.define_native("log", pulse_stdlib::logging::log_native);
+        self.define_native("set_log_format", pulse_stdlib::logging::set_log_format_native);
+        self.define_native("enable_logging", pulse_stdlib::logging::enable_logging_native);
+        self.define_native("disable_logging", pulse_stdlib::logging::disable_logging_native);
+        self.define_native("logging_enabled", pulse_stdlib::logging::logging_enabled_native);
+        self.define_native("log_fatal", pulse_stdlib::logging::log_fatal_native);
+        self.define_native("log_debug_if", pulse_stdlib::logging::log_debug_if_native);
+        self.define_native("log_info_if", pulse_stdlib::logging::log_info_if_native);
+        self.define_native("log_trace", pulse_stdlib::logging::trace_native);
+        self.define_native("log_with_context", pulse_stdlib::logging::log_with_context_native);
+
+        // ====================================================================
+        // HTTP CLIENT LIBRARY (additional methods)
+        // ====================================================================
+        self.define_native("http_put", pulse_stdlib::http::http_put_native);
+        self.define_native("http_delete", pulse_stdlib::http::http_delete_native);
+        self.define_native("http_request", pulse_stdlib::http::http_request_native);
+        self.define_native("http_get_body", pulse_stdlib::http::http_get_body_native);
+
+        // ====================================================================
+        // PHASE 2: CRITICAL MISSING FUNCTIONS
+        // ====================================================================
+
+        // Input / Readline
+        self.define_native("input", pulse_stdlib::utils::input_native);
+        self.define_native("input_prompt", pulse_stdlib::utils::input_prompt_native);
+
+        // Type conversion
+        self.define_native("to_float", pulse_stdlib::utils::to_float_native);
+
+        // Scalar min / max
+        self.define_native("min_val", pulse_stdlib::utils::min_val_native);
+        self.define_native("max_val", pulse_stdlib::utils::max_val_native);
+
+        // List operations
+        self.define_native("sort_list", pulse_stdlib::utils::sort_list_native);
+        self.define_native("reverse_list", pulse_stdlib::utils::reverse_list_native);
+        self.define_native("index_of", pulse_stdlib::utils::index_of_native);
+        self.define_native("list_insert", pulse_stdlib::utils::list_insert_native);
+        self.define_native("list_remove", pulse_stdlib::utils::list_remove_native);
+        self.define_native("list_slice", pulse_stdlib::utils::list_slice_native);
+        self.define_native("list_contains", pulse_stdlib::utils::list_contains_native);
+        self.define_native("list_concat", pulse_stdlib::utils::list_concat_native);
+        self.define_native("range", pulse_stdlib::utils::range_native);
+        self.define_native("list_flatten", pulse_stdlib::utils::list_flatten_native);
+
+        // String operations
+        self.define_native("index_of_string", pulse_stdlib::string_utils::index_of_string_native);
+        self.define_native("char_at", pulse_stdlib::string_utils::char_at_native);
+        self.define_native("repeat_string", pulse_stdlib::string_utils::repeat_string_native);
+        self.define_native("pad_start", pulse_stdlib::string_utils::pad_start_native);
+        self.define_native("pad_end", pulse_stdlib::string_utils::pad_end_native);
     }
 
-    pub fn new_spawn(chunk: Arc<Chunk>, pid: ActorId, start_ip: usize) -> Self {
+    pub fn new_spawn(chunk: Arc<Chunk>, pid: ActorId, start_ip: usize, shared_heap: Option<Arc<SharedHeap>>) -> Self {
         let mut heap = Heap::new();
         
         let script_func = Function {
@@ -250,6 +554,7 @@ impl VM {
             builtins: HashMap::new(),
             global_cache: HashMap::new(),
             heap,
+            shared_heap,
             open_upvalues: Vec::new(),
             loaded_modules: HashMap::new(),
             exception_frames: Vec::new(),
@@ -482,9 +787,11 @@ impl VM {
                                     Object::Set(s) => format!("<set len={}>", s.len()),
                                     Object::Queue(q) => format!("<queue len={}>", q.len()),
                                     Object::SharedMemory(sm) => format!("<shared memory locked={}>", sm.locked),
+                                    Object::AtomicInt(ai) => format!("<atomic {}>", ai.load(std::sync::atomic::Ordering::SeqCst)),
                                     Object::Socket(_) => "<socket>".to_string(),
                                     Object::SharedBuffer(_) => "<shared buffer>".to_string(),
                                     Object::Listener(_) => "<listener>".to_string(),
+                                    Object::Regex(_) => "<regex>".to_string(),
                                 }
                             }
                         };
@@ -1190,6 +1497,8 @@ impl VM {
                                         Object::Socket(s) => Constant::Socket(s.clone()),
                                         Object::Listener(l) => Constant::Listener(l.clone()),
                                         Object::SharedBuffer(sm) => Constant::SharedMemory(sm.clone()),
+                                        Object::AtomicInt(ai) => return Err(PulseError::RuntimeError("Cannot serialize AtomicInt".into())),
+                                        Object::Regex(_) => return Err(PulseError::RuntimeError("Cannot serialize Regex".into())),
                                     }
                                 } else {
                                     return Err(PulseError::RuntimeError("Cannot send freed object".into()));
@@ -1587,8 +1896,17 @@ impl VM {
                             locked: false,
                         };
                         
-                        let handle = self.heap.alloc(Object::SharedMemory(shared_mem));
-                        self.push(Value::Obj(handle));
+                        // Use shared heap if available, otherwise fall back to local heap
+                        // This enables zero-copy access across actors
+                        if let Some(ref shared_heap) = self.shared_heap {
+                            let handle = shared_heap.alloc(pulse_core::object::Object::SharedMemory(shared_mem));
+                            // Push a special marker indicating this is a shared handle
+                            self.push(Value::Obj(ObjHandle::from_shared_handle(handle.0)));
+                        } else {
+                            // Fallback to local heap (no zero-copy across actors)
+                            let handle = self.heap.alloc(pulse_core::object::Object::SharedMemory(shared_mem));
+                            self.push(Value::Obj(handle));
+                        }
                         return Ok(VMStatus::Running);
                     }
 
@@ -1596,6 +1914,20 @@ impl VM {
                         // Pop the shared memory reference
                         let shared_mem_val = self.pop()?;
                         
+                        // Try to read from shared heap first (zero-copy path)
+                        if let Value::Obj(handle) = shared_mem_val {
+                            if let Some(shared_handle_idx) = handle.to_shared_handle() {
+                                if let Some(ref shared_heap) = self.shared_heap {
+                                    if let Some(sm) = shared_heap.get(SharedHandle(shared_handle_idx)) {
+                                        // Return the value directly (for primitives this copies, for objects it copies the handle)
+                                        self.push(sm.value);
+                                        return Ok(VMStatus::Running);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Fallback: read from local heap (slower path for backward compatibility)
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
@@ -1603,8 +1935,8 @@ impl VM {
                         
                         // Read the value from shared memory
                         let obj = self.heap.get(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
-                        if let Object::SharedMemory(shared_mem) = obj {
-                            self.push(shared_mem.value.clone());
+                        if let pulse_core::object::Object::SharedMemory(shared_mem) = obj {
+                            self.push(shared_mem.value);  // Don't clone - Value is Copy for primitives
                         } else {
                             return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
                         }
@@ -1616,6 +1948,20 @@ impl VM {
                         let value_to_write = self.pop()?;
                         let shared_mem_val = self.pop()?;
                         
+                        // Try to write to shared heap first (zero-copy path)
+                        if let Value::Obj(handle) = shared_mem_val {
+                            if let Some(shared_handle_idx) = handle.to_shared_handle() {
+                                if let Some(ref shared_heap) = self.shared_heap {
+                                    if shared_heap.set(SharedHandle(shared_handle_idx), value_to_write) {
+                                        // Push the written value as the result
+                                        self.push(value_to_write);
+                                        return Ok(VMStatus::Running);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Fallback: write to local heap
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
@@ -1623,8 +1969,8 @@ impl VM {
                         
                         // Write the value to shared memory
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
-                        if let Object::SharedMemory(ref mut shared_mem) = obj {
-                            shared_mem.value = value_to_write.clone();
+                        if let pulse_core::object::Object::SharedMemory(ref mut shared_mem) = obj {
+                            shared_mem.value = value_to_write;  // Value is Copy
                         } else {
                             return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
                         }
@@ -1638,6 +1984,18 @@ impl VM {
                         // Pop the shared memory reference
                         let shared_mem_val = self.pop()?;
                         
+                        // Try to lock in shared heap first
+                        if let Value::Obj(handle) = shared_mem_val {
+                            if let Some(shared_handle_idx) = handle.to_shared_handle() {
+                                if let Some(ref shared_heap) = self.shared_heap {
+                                    let locked = shared_heap.try_lock(SharedHandle(shared_handle_idx));
+                                    self.push(Value::Bool(locked));
+                                    return Ok(VMStatus::Running);
+                                }
+                            }
+                        }
+                        
+                        // Fallback to local heap
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
@@ -1645,11 +2003,45 @@ impl VM {
                         
                         // Attempt to lock the shared memory
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
-                        if let Object::SharedMemory(ref mut shared_mem) = obj {
+                        if let pulse_core::object::Object::SharedMemory(ref mut shared_mem) = obj {
                             if shared_mem.locked {
-                                return Err(PulseError::RuntimeError("Shared memory already locked".into()));
+                                self.push(Value::Bool(false));
+                            } else {
+                                shared_mem.locked = true;
+                                self.push(Value::Bool(true));
                             }
-                            shared_mem.locked = true;
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
+                        }
+                        
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::UnlockSharedMemory => {
+                        // Pop the shared memory reference
+                        let shared_mem_val = self.pop()?;
+                        
+                        // Try to unlock in shared heap first
+                        if let Value::Obj(handle) = shared_mem_val {
+                            if let Some(shared_handle_idx) = handle.to_shared_handle() {
+                                if let Some(ref shared_heap) = self.shared_heap {
+                                    let unlocked = shared_heap.unlock(SharedHandle(shared_handle_idx));
+                                    self.push(Value::Bool(unlocked));
+                                    return Ok(VMStatus::Running);
+                                }
+                            }
+                        }
+                        
+                        // Fallback to local heap
+                        let handle = match shared_mem_val {
+                            Value::Obj(h) => h,
+                            _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
+                        };
+                        
+                        // Unlock the shared memory
+                        let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
+                        if let pulse_core::object::Object::SharedMemory(ref mut shared_mem) = obj {
+                            shared_mem.locked = false;
                         } else {
                             return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
                         }
@@ -1659,25 +2051,167 @@ impl VM {
                         return Ok(VMStatus::Running);
                     }
 
-                    Op::UnlockSharedMemory => {
-                        // Pop the shared memory reference
-                        let shared_mem_val = self.pop()?;
-                        
-                        let handle = match shared_mem_val {
-                            Value::Obj(h) => h,
-                            _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
+                    // Atomic Operations
+                    Op::AtomicCreate => {
+                        // Pop the initial value for the atomic int
+                        let initial_val = self.pop()?;
+                        let initial = match initial_val {
+                            Value::Int(i) => i,
+                            _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: initial_val.type_name()}),
                         };
                         
-                        // Unlock the shared memory
-                        let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
-                        if let Object::SharedMemory(ref mut shared_mem) = obj {
-                            shared_mem.locked = false;
-                        } else {
-                            return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
-                        }
+                        // Create atomic int
+                        let atomic_int = pulse_core::object::AtomicInt::new(initial);
+                        let handle = self.heap.alloc(pulse_core::object::Object::AtomicInt(atomic_int));
+                        self.push(Value::Obj(handle));
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::AtomicLoad => {
+                        // Pop the atomic int reference
+                        let atomic_val = self.pop()?;
+                        let handle = match atomic_val {
+                            Value::Obj(h) => h,
+                            _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
+                        };
                         
-                        // Push success indicator
-                        self.push(Value::Bool(true));
+                        let obj = self.heap.get(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
+                        if let pulse_core::object::Object::AtomicInt(atomic_int) = obj {
+                            let value = atomic_int.load(std::sync::atomic::Ordering::SeqCst);
+                            self.push(Value::Int(value));
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: "other object".into()});
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::AtomicStore => {
+                        // Pop the value to store and the atomic int reference
+                        let value_to_store = self.pop()?;
+                        let atomic_val = self.pop()?;
+                        
+                        let value = match value_to_store {
+                            Value::Int(i) => i,
+                            _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: value_to_store.type_name()}),
+                        };
+                        
+                        let handle = match atomic_val {
+                            Value::Obj(h) => h,
+                            _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
+                        };
+                        
+                        let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
+                        if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
+                            // Store returns (), so we need to load first to get old value
+                            let old_value = atomic_int.load(std::sync::atomic::Ordering::SeqCst);
+                            atomic_int.store(value, std::sync::atomic::Ordering::SeqCst);
+                            self.push(Value::Int(old_value));
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: "other object".into()});
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::AtomicAdd => {
+                        // Pop the value to add and the atomic int reference
+                        let add_val = self.pop()?;
+                        let atomic_val = self.pop()?;
+                        
+                        let add = match add_val {
+                            Value::Int(i) => i,
+                            _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: add_val.type_name()}),
+                        };
+                        
+                        let handle = match atomic_val {
+                            Value::Obj(h) => h,
+                            _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
+                        };
+                        
+                        let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
+                        if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
+                            let old_value = atomic_int.fetch_add(add, std::sync::atomic::Ordering::SeqCst);
+                            self.push(Value::Int(old_value));
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: "other object".into()});
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::AtomicSub => {
+                        // Pop the value to subtract and the atomic int reference
+                        let sub_val = self.pop()?;
+                        let atomic_val = self.pop()?;
+                        
+                        let sub = match sub_val {
+                            Value::Int(i) => i,
+                            _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: sub_val.type_name()}),
+                        };
+                        
+                        let handle = match atomic_val {
+                            Value::Obj(h) => h,
+                            _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
+                        };
+                        
+                        let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
+                        if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
+                            let old_value = atomic_int.fetch_sub(sub, std::sync::atomic::Ordering::SeqCst);
+                            self.push(Value::Int(old_value));
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: "other object".into()});
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::AtomicCompareAndSwap => {
+                        // Pop new value, expected value, and atomic int reference
+                        let new_val = self.pop()?;
+                        let expected_val = self.pop()?;
+                        let atomic_val = self.pop()?;
+                        
+                        let new = match new_val {
+                            Value::Int(i) => i,
+                            _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: new_val.type_name()}),
+                        };
+                        
+                        let expected = match expected_val {
+                            Value::Int(i) => i,
+                            _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: expected_val.type_name()}),
+                        };
+                        
+                        let handle = match atomic_val {
+                            Value::Obj(h) => h,
+                            _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
+                        };
+                        
+                        let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
+                        if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
+                            let result = atomic_int.compare_exchange(expected, new, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst);
+                            match result {
+                                Ok(_) => self.push(Value::Bool(true)),
+                                Err(_) => self.push(Value::Bool(false)),
+                            }
+                        } else {
+                            return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: "other object".into()});
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    // Memory Fences
+                    Op::MemoryFenceAcquire => {
+                        // Acquire fence - ensures all reads after this see writes before matching release
+                        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::MemoryFenceRelease => {
+                        // Release fence - ensures all writes before this are visible to threads doing acquire
+                        std::sync::atomic::fence(std::sync::atomic::Ordering::Release);
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::MemoryFenceSeqCst => {
+                        // Full memory barrier (Sequentially consistent)
+                        std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
                         return Ok(VMStatus::Running);
                     }
                 }
@@ -1843,8 +2377,10 @@ impl VM {
                         Object::Set(s) => print!("<set len={}>", s.len()),
                         Object::Queue(q) => print!("<queue len={}>", q.len()),
                         Object::SharedMemory(sm) => print!("<shared memory locked={}>", sm.locked),
+                        Object::AtomicInt(ai) => print!("<atomic {}>", ai.load(std::sync::atomic::Ordering::SeqCst)),
                         Object::Socket(_) => print!("<socket>"),
                         Object::Listener(_) => print!("<listener>"),
+                        Object::Regex(_) => print!("<regex>"),
                     }
                 } else {
                     print!("<freed object>");
@@ -1993,9 +2529,11 @@ impl VM {
                         Object::Queue(q) => format!("<queue len={}>", q.len()),
 
                         Object::SharedMemory(_sm) => "SharedMemory".to_string(),
+                        Object::AtomicInt(_) => "AtomicInt".to_string(),
                         Object::Socket(_) => "Socket".to_string(),
                         Object::Listener(_) => "Listener".to_string(),
                         Object::SharedBuffer(_) => "SharedBuffer".to_string(),
+                        Object::Regex(_) => "Regex".to_string(),
                     }
                 } else {
                     "<invalid handle>".to_string()

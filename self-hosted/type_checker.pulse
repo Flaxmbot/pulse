@@ -1,0 +1,325 @@
+// Self-Hosted Compiler: Type Checker in Pulse
+// A simple type checker for the Pulse language
+
+// Built-in types
+let PrimitiveTypes = {
+    "Int": "Int",
+    "Float": "Float", 
+    "Bool": "Bool",
+    "String": "String",
+    "Unit": "Unit",
+    "List": "List",
+    "Map": "Map",
+    "Fn": "Fn",
+    "Any": "Any"
+};
+
+// Type environment
+fn make_type_env() {
+    return {
+        "types": {},
+        "functions": {},
+        "current_scope": 0,
+        "scopes": [{}]
+    };
+}
+
+fn enter_scope(env) {
+    env["current_scope"] = env["current_scope"] + 1;
+    push(env["scopes"], {});
+}
+
+fn exit_scope(env) {
+    if (env["current_scope"] > 0) {
+        env["current_scope"] = env["current_scope"] - 1;
+    }
+}
+
+fn define_type(env, name, type_expr) {
+    let scope = env["scopes"][env["current_scope"]];
+    scope[name] = type_expr;
+}
+
+fn lookup_type(env, name) {
+    let i = env["current_scope"];
+    while (i >= 0) {
+        let scope = env["scopes"][i];
+        if (scope[name] != null) {
+            return scope[name];
+        }
+        i = i - 1;
+    }
+    return null;
+}
+
+// Type expressions
+fn make_type_var(name) {
+    return { "type": "type_var", "name": name };
+}
+
+fn make_type_fn(params, return_type) {
+    return { "type": "type_fn", "params": params, "return_type": return_type };
+}
+
+fn make_type_list(element_type) {
+    return { "type": "type_list", "element_type": element_type };
+}
+
+fn make_type_map(key_type, value_type) {
+    return { "type": "type_map", "key_type": key_type, "value_type": value_type };
+}
+
+// Type checking expressions
+fn typeof_expr(env, expr) {
+    if (expr == nil) {
+        return make_type_var("Unit");
+    }
+    
+    let kind = expr["kind"];
+    
+    if (kind == "literal") {
+        let value = expr["value"];
+        if (value == nil) {
+            return make_type_var("Unit");
+        } else if (type_of(value) == "Int") {
+            return make_type_var("Int");
+        } else if (type_of(value) == "Float") {
+            return make_type_var("Float");
+        } else if (type_of(value) == "String") {
+            return make_type_var("String");
+        } else if (type_of(value) == "Bool") {
+            return make_type_var("Bool");
+        } else if (type_of(value) == "List") {
+            return make_type_list(make_type_var("Any"));
+        } else if (type_of(value) == "Map") {
+            return make_type_map(make_type_var("Any"), make_type_var("Any"));
+        }
+        return make_type_var("Any");
+    }
+    
+    if (kind == "variable") {
+        let var_type = lookup_type(env, expr["name"]);
+        if (var_type != null) {
+            return var_type;
+        }
+        return make_type_var("Any");
+    }
+    
+    if (kind == "binary") {
+        let left_type = typeof_expr(env, expr["left"]);
+        let right_type = typeof_expr(env, expr["right"]);
+        let op = expr["operator"];
+        
+        // Arithmetic operators
+        if (op == "+" or op == "-" or op == "*" or op == "/" or op == "%") {
+            // For now, return the type of the left operand
+            return left_type;
+        }
+        
+        // Comparison operators return Bool
+        if (op == "==" or op == "!=" or op == "<" or op == ">" or op == "<=" or op == ">=") {
+            return make_type_var("Bool");
+        }
+        
+        return make_type_var("Any");
+    }
+    
+    if (kind == "unary") {
+        let right_type = typeof_expr(env, expr["right"]);
+        let op = expr["operator"];
+        
+        if (op == "-") {
+            return right_type;
+        }
+        if (op == "!") {
+            return make_type_var("Bool");
+        }
+        
+        return make_type_var("Any");
+    }
+    
+    if (kind == "call") {
+        let callee = expr["callee"];
+        
+        // Check if it's a known function
+        if (callee["kind"] == "variable") {
+            let fn_type = lookup_type(env, callee["name"]);
+            if (fn_type != null and fn_type["type"] == "type_fn") {
+                return fn_type["return_type"];
+            }
+        }
+        
+        // Check call arguments
+        let args = expr["arguments"];
+        let i = 0;
+        while (i < len(args)) {
+            typeof_expr(env, args[i]);
+            i = i + 1;
+        }
+        
+        return make_type_var("Any");
+    }
+    
+    if (kind == "list") {
+        let elements = expr["elements"];
+        if (len(elements) > 0) {
+            return make_type_list(typeof_expr(env, elements[0]));
+        }
+        return make_type_list(make_type_var("Any"));
+    }
+    
+    if (kind == "map") {
+        return make_type_map(make_type_var("Any"), make_type_var("Any"));
+    }
+    
+    if (kind == "lambda") {
+        return make_type_fn(expr["params"], make_type_var("Any"));
+    }
+    
+    return make_type_var("Any");
+}
+
+// Type checking statements
+fn check_statement(env, stmt) {
+    if (stmt == nil) return;
+    
+    let kind = stmt["kind"];
+    
+    if (kind == "let") {
+        let var_type = make_type_var("Any");
+        
+        // Check if there's a type annotation
+        if (stmt["type_annotation"] != nil) {
+            var_type = make_type_var(stmt["type_annotation"]);
+        }
+        
+        // Check initializer
+        if (stmt["initializer"] != nil) {
+            let init_type = typeof_expr(env, stmt["initializer"]);
+            // For now, we just check that there's no obvious mismatch
+        }
+        
+        define_type(env, stmt["name"], var_type);
+    }
+    
+    if (kind == "function") {
+        let fn_name = stmt["name"];
+        let params = stmt["params"];
+        let return_type = make_type_var("Any");
+        
+        if (stmt["return_type"] != nil) {
+            return_type = make_type_var(stmt["return_type"]);
+        }
+        
+        // Define function type
+        let param_types = [];
+        let i = 0;
+        while (i < len(params)) {
+            push(param_types, make_type_var("Any"));
+            i = i + 1;
+        }
+        
+        let fn_type = make_type_fn(param_types, return_type);
+        define_type(env, fn_name, fn_type);
+        
+        // Enter new scope for function body
+        enter_scope(env);
+        
+        // Define parameters
+        i = 0;
+        while (i < len(params)) {
+            define_type(env, params[i], param_types[i]);
+            i = i + 1;
+        }
+        
+        // Check function body
+        if (stmt["body"] != nil) {
+            typeof_expr(env, stmt["body"]);
+        }
+        
+        exit_scope(env);
+    }
+    
+    if (kind == "if") {
+        typeof_expr(env, stmt["condition"]);
+        check_statement(env, stmt["then_branch"]);
+        if (stmt["else_branch"] != nil) {
+            check_statement(env, stmt["else_branch"]);
+        }
+    }
+    
+    if (kind == "while") {
+        typeof_expr(env, stmt["condition"]);
+        check_statement(env, stmt["body"]);
+    }
+    
+    if (kind == "for") {
+        typeof_expr(env, stmt["collection"]);
+        check_statement(env, stmt["body"]);
+    }
+    
+    if (kind == "return") {
+        if (stmt["value"] != nil) {
+            typeof_expr(env, stmt["value"]);
+        }
+    }
+    
+    if (kind == "print") {
+        typeof_expr(env, stmt["expression"]);
+    }
+    
+    if (kind == "block") {
+        enter_scope(env);
+        let stmts = stmt["statements"];
+        let i = 0;
+        while (i < len(stmts)) {
+            check_statement(env, stmts[i]);
+            i = i + 1;
+        }
+        exit_scope(env);
+    }
+    
+    if (kind == "expression") {
+        typeof_expr(env, stmt["expression"]);
+    }
+}
+
+// Main type check function
+fn check_types(statements) {
+    let env = make_type_env();
+    
+    // Define primitive types
+    define_type(env, "Int", make_type_var("Int"));
+    define_type(env, "Float", make_type_var("Float"));
+    define_type(env, "Bool", make_type_var("Bool"));
+    define_type(env, "String", make_type_var("String"));
+    define_type(env, "Unit", make_type_var("Unit"));
+    define_type(env, "Any", make_type_var("Any"));
+    
+    let errors = [];
+    
+    let i = 0;
+    while (i < len(statements)) {
+        check_statement(env, statements[i]);
+        i = i + 1;
+    }
+    
+    return {
+        "errors": errors,
+        "environment": env
+    };
+}
+
+// Export type checker functions
+let type_checker_mod = {
+    "PrimitiveTypes": PrimitiveTypes,
+    "make_type_env": make_type_env,
+    "typeof_expr": typeof_expr,
+    "check_types": check_types,
+    "make_type_var": make_type_var,
+    "make_type_fn": make_type_fn,
+    "make_type_list": make_type_list,
+    "make_type_map": make_type_map
+};
+
+type_checker_mod

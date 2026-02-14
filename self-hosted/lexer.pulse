@@ -1,0 +1,347 @@
+// Self-Hosted Compiler: Lexer in Pulse
+// A complete lexer implementation written in Pulse for bootstrapping
+
+// Token types
+let TOKEN_TYPES = {
+    "LEFT_PAREN": "LEFT_PAREN", 
+    "RIGHT_PAREN": "RIGHT_PAREN", 
+    "LEFT_BRACE": "LEFT_BRACE", 
+    "RIGHT_BRACE": "RIGHT_BRACE", 
+    "LEFT_BRACKET": "LEFT_BRACKET", 
+    "RIGHT_BRACKET": "RIGHT_BRACKET",
+    "COMMA": "COMMA", 
+    "DOT": "DOT", 
+    "MINUS": "MINUS", 
+    "PLUS": "PLUS", 
+    "SEMICOLON": "SEMICOLON", 
+    "SLASH": "SLASH", 
+    "STAR": "STAR", 
+    "PERCENT": "PERCENT", 
+    "AMPERSAND": "AMPERSAND", 
+    "COLON": "COLON",
+    "BANG": "BANG", 
+    "BANG_EQUAL": "BANG_EQUAL",
+    "EQUAL": "EQUAL", 
+    "EQUAL_EQUAL": "EQUAL_EQUAL",
+    "GREATER": "GREATER", 
+    "GREATER_EQUAL": "GREATER_EQUAL",
+    "LESS": "LESS", 
+    "LESS_EQUAL": "LESS_EQUAL",
+    "IDENTIFIER": "IDENTIFIER", 
+    "STRING": "STRING", 
+    "INT": "INT", 
+    "FLOAT": "FLOAT",
+    "TRUE": "TRUE",
+    "FALSE": "FALSE",
+    "NIL": "NIL",
+    "FN": "FN",
+    "LET": "LET",
+    "IF": "IF",
+    "ELSE": "ELSE",
+    "WHILE": "WHILE",
+    "FOR": "FOR",
+    "IN": "IN",
+    "RETURN": "RETURN",
+    "PRINT": "PRINT",
+    "ACTOR": "ACTOR",
+    "CLASS": "CLASS",
+    "RECEIVE": "RECEIVE",
+    "MESSAGE": "MESSAGE",
+    "SPAWN": "SPAWN",
+    "SEND": "SEND",
+    "IMPORT": "IMPORT",
+    "ARROW": "ARROW",
+    "NEWLINE": "NEWLINE",
+    "EOF": "EOF", 
+    "ERROR": "ERROR"
+};
+
+// Keywords map
+let KEYWORDS = {
+    "actor": "ACTOR", 
+    "on": "MESSAGE", 
+    "message": "MESSAGE", 
+    "send": "SEND", 
+    "spawn": "SPAWN", 
+    "fn": "FN", 
+    "def": "FN", 
+    "let": "LET", 
+    "if": "IF", 
+    "else": "ELSE", 
+    "while": "WHILE", 
+    "for": "FOR", 
+    "in": "IN", 
+    "return": "RETURN", 
+    "print": "PRINT", 
+    "true": "TRUE", 
+    "false": "FALSE", 
+    "nil": "NIL", 
+    "receive": "RECEIVE", 
+    "class": "CLASS"
+};
+
+// Helper functions
+fn is_digit(c) {
+    return c >= "0" and c <= "9";
+}
+
+fn is_alpha(c) {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_";
+}
+
+fn is_alphanumeric(c) {
+    return is_alpha(c) or is_digit(c);
+}
+
+fn substring(chars, start, end) {
+    let result = "";
+    let i = start;
+    while (i < end) {
+        result = result + chars[i];
+        i = i + 1;
+    }
+    return result;
+}
+
+// --- Lexer Implementation ---
+
+fn make_lexer(source) {
+    let chars = string_to_list(source);
+    let lexer = {
+        "chars": chars,
+        "pos": 0,
+        "line": 1,
+        "length": len(chars),
+        "current": ""
+    };
+    
+    if (lexer["length"] > 0) {
+        lexer["current"] = chars[0];
+    }
+    
+    return lexer;
+}
+
+fn advance(lexer) {
+    if (lexer["pos"] < lexer["length"]) {
+        lexer["pos"] = lexer["pos"] + 1;
+        if (lexer["pos"] < lexer["length"]) {
+            lexer["current"] = lexer["chars"][lexer["pos"]];
+        } else {
+            lexer["current"] = "";
+        }
+    }
+    return lexer["current"];
+}
+
+fn peek(lexer) {
+    if (lexer["pos"] + 1 < lexer["length"]) {
+        return lexer["chars"][lexer["pos"] + 1];
+    }
+    return "";
+}
+
+fn peek_next(lexer) {
+    if (lexer["pos"] + 2 < lexer["length"]) {
+        return lexer["chars"][lexer["pos"] + 2];
+    }
+    return "";
+}
+
+fn skip_whitespace(lexer) {
+    while (lexer["current"] == " " or lexer["current"] == "\r" or lexer["current"] == "\t") {
+        advance(lexer);
+    }
+    // Handle newlines separately
+    if (lexer["current"] == "\n") {
+        lexer["line"] = lexer["line"] + 1;
+        advance(lexer);
+        skip_whitespace(lexer);
+    }
+}
+
+fn skip_comment(lexer) {
+    while (lexer["current"] != "\n" and lexer["current"] != "") {
+        advance(lexer);
+    }
+}
+
+fn scan_number(lexer) {
+    let start_pos = lexer["pos"];
+    let is_float = false;
+    
+    while (is_digit(lexer["current"])) {
+        advance(lexer);
+    }
+    
+    // Check for decimal part
+    if (lexer["current"] == "." and is_digit(peek(lexer))) {
+        is_float = true;
+        advance(lexer); // consume .
+        while (is_digit(lexer["current"])) {
+            advance(lexer);
+        }
+    }
+    
+    // Check for scientific notation
+    if (lexer["current"] == "e" or lexer["current"] == "E") {
+        is_float = true;
+        advance(lexer);
+        if (lexer["current"] == "+" or lexer["current"] == "-") {
+            advance(lexer);
+        }
+        while (is_digit(lexer["current"])) {
+            advance(lexer);
+        }
+    }
+    
+    let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
+    let type = TOKEN_TYPES["INT"];
+    if (is_float) {
+        type = TOKEN_TYPES["FLOAT"];
+    }
+    
+    return { "type": type, "lexeme": lexeme, "line": lexer["line"] };
+}
+
+fn scan_identifier(lexer) {
+    let start_pos = lexer["pos"];
+    while (is_alphanumeric(lexer["current"])) {
+        advance(lexer);
+    }
+    
+    let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
+    
+    if (type_of(KEYWORDS[lexeme]) != "Unit") {
+        return { "type": KEYWORDS[lexeme], "lexeme": lexeme, "line": lexer["line"] };
+    }
+    
+    return { "type": TOKEN_TYPES["IDENTIFIER"], "lexeme": lexeme, "line": lexer["line"] };
+}
+
+fn scan_string(lexer) {
+    advance(lexer); // consume opening "
+    let start_pos = lexer["pos"];
+    
+    while (lexer["current"] != "\"" and lexer["current"] != "") {
+        if (lexer["current"] == "\n") {
+            lexer["line"] = lexer["line"] + 1;
+        }
+        advance(lexer);
+    }
+    
+    if (lexer["current"] == "") {
+        return { "type": TOKEN_TYPES["ERROR"], "lexeme": "Unterminated string", "line": lexer["line"] };
+    }
+    
+    let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
+    advance(lexer); // consume closing "
+    
+    return { "type": TOKEN_TYPES["STRING"], "lexeme": lexeme, "line": lexer["line"] };
+}
+
+fn next_token(lexer) {
+    skip_whitespace(lexer);
+    
+    // Skip comments
+    if (lexer["current"] == "/" and peek(lexer) == "/") {
+        skip_comment(lexer);
+        return next_token(lexer);
+    }
+    
+    if (lexer["pos"] >= lexer["length"]) {
+        return { "type": TOKEN_TYPES["EOF"], "lexeme": "", "line": lexer["line"] };
+    }
+    
+    let c = lexer["current"];
+    
+    if (is_digit(c)) return scan_number(lexer);
+    if (is_alpha(c)) return scan_identifier(lexer);
+    if (c == "\"") return scan_string(lexer);
+    
+    advance(lexer);
+    
+    // Single character tokens
+    if (c == "(") return { "type": TOKEN_TYPES["LEFT_PAREN"], "lexeme": "(", "line": lexer["line"] };
+    if (c == ")") return { "type": TOKEN_TYPES["RIGHT_PAREN"], "lexeme": ")", "line": lexer["line"] };
+    if (c == "{") return { "type": TOKEN_TYPES["LEFT_BRACE"], "lexeme": "{", "line": lexer["line"] };
+    if (c == "}") return { "type": TOKEN_TYPES["RIGHT_BRACE"], "lexeme": "}", "line": lexer["line"] };
+    if (c == "[") return { "type": TOKEN_TYPES["LEFT_BRACKET"], "lexeme": "[", "line": lexer["line"] };
+    if (c == "]") return { "type": TOKEN_TYPES["RIGHT_BRACKET"], "lexeme": "]", "line": lexer["line"] };
+    if (c == ",") return { "type": TOKEN_TYPES["COMMA"], "lexeme": ",", "line": lexer["line"] };
+    if (c == ".") return { "type": TOKEN_TYPES["DOT"], "lexeme": ".", "line": lexer["line"] };
+    if (c == ";") return { "type": TOKEN_TYPES["SEMICOLON"], "lexeme": ";", "line": lexer["line"] };
+    if (c == "+") return { "type": TOKEN_TYPES["PLUS"], "lexeme": "+", "line": lexer["line"] };
+    if (c == "-") return { "type": TOKEN_TYPES["MINUS"], "lexeme": "-", "line": lexer["line"] };
+    if (c == "*") return { "type": TOKEN_TYPES["STAR"], "lexeme": "*", "line": lexer["line"] };
+    if (c == "/") return { "type": TOKEN_TYPES["SLASH"], "lexeme": "/", "line": lexer["line"] };
+    if (c == "%") return { "type": TOKEN_TYPES["PERCENT"], "lexeme": "%", "line": lexer["line"] };
+    if (c == "&") return { "type": TOKEN_TYPES["AMPERSAND"], "lexeme": "&", "line": lexer["line"] };
+    if (c == ":") return { "type": TOKEN_TYPES["COLON"], "lexeme": ":", "line": lexer["line"] };
+    
+    // Two character tokens
+    if (c == "!") {
+        if (lexer["current"] == "=") {
+            advance(lexer);
+            return { "type": TOKEN_TYPES["BANG_EQUAL"], "lexeme": "!=", "line": lexer["line"] };
+        }
+        return { "type": TOKEN_TYPES["BANG"], "lexeme": "!", "line": lexer["line"] };
+    }
+    
+    if (c == "=") {
+        if (lexer["current"] == "=") {
+            advance(lexer);
+            return { "type": TOKEN_TYPES["EQUAL_EQUAL"], "lexeme": "==", "line": lexer["line"] };
+        }
+        if (lexer["current"] == ">") {
+            advance(lexer);
+            return { "type": TOKEN_TYPES["ARROW"], "lexeme": "=>", "line": lexer["line"] };
+        }
+        return { "type": TOKEN_TYPES["EQUAL"], "lexeme": "=", "line": lexer["line"] };
+    }
+    
+    if (c == "<") {
+        if (lexer["current"] == "=") {
+            advance(lexer);
+            return { "type": TOKEN_TYPES["LESS_EQUAL"], "lexeme": "<=", "line": lexer["line"] };
+        }
+        return { "type": TOKEN_TYPES["LESS"], "lexeme": "<", "line": lexer["line"] };
+    }
+    
+    if (c == ">") {
+        if (lexer["current"] == "=") {
+            advance(lexer);
+            return { "type": TOKEN_TYPES["GREATER_EQUAL"], "lexeme": ">=", "line": lexer["line"] };
+        }
+        return { "type": TOKEN_TYPES["GREATER"], "lexeme": ">", "line": lexer["line"] };
+    }
+    
+    return { "type": TOKEN_TYPES["ERROR"], "lexeme": c, "line": lexer["line"] };
+}
+
+// Tokenize a complete source string
+fn tokenize(source) {
+    let lexer = make_lexer(source);
+    let tokens = [];
+    
+    loop {
+        let tok = next_token(lexer);
+        push(tokens, tok);
+        if (tok["type"] == "EOF") {
+            break;
+        }
+    }
+    
+    return tokens;
+}
+
+// Export lexer functions
+let lexer_mod = {
+    "make_lexer": make_lexer,
+    "next_token": next_token,
+    "tokenize": tokenize,
+    "TOKEN_TYPES": TOKEN_TYPES,
+    "KEYWORDS": KEYWORDS
+};
+
+lexer_mod

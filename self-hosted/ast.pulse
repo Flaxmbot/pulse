@@ -1,0 +1,328 @@
+// Self-Hosted Compiler: AST Node Definitions
+// Abstract Syntax Tree node types for the Pulse language
+
+// --- Expression Constructors ---
+
+fn literal_expr(value, line) {
+    return {
+        "node_type": "expression",
+        "kind": "literal",
+        "value": value,
+        "line": line
+    };
+}
+
+fn variable_expr(name, line) {
+    return {
+        "node_type": "expression",
+        "kind": "variable",
+        "name": name,
+        "line": line
+    };
+}
+
+fn binary_expr(left, operator, right, line) {
+    return {
+        "node_type": "expression",
+        "kind": "binary",
+        "left": left,
+        "operator": operator,
+        "right": right,
+        "line": line
+    };
+}
+
+fn unary_expr(operator, right, line) {
+    return {
+        "node_type": "expression",
+        "kind": "unary",
+        "operator": operator,
+        "right": right,
+        "line": line
+    };
+}
+
+fn logical_expr(left, operator, right, line) {
+    return {
+        "node_type": "expression",
+        "kind": "logical",
+        "left": left,
+        "operator": operator,
+        "right": right,
+        "line": line
+    };
+}
+
+fn call_expr(callee, arguments, line) {
+    return {
+        "node_type": "expression",
+        "kind": "call",
+        "callee": callee,
+        "arguments": arguments,
+        "line": line
+    };
+}
+
+fn list_expr(elements, line) {
+    return {
+        "node_type": "expression",
+        "kind": "list",
+        "elements": elements,
+        "line": line
+    };
+}
+
+fn map_expr(entries, line) {
+    return {
+        "node_type": "expression",
+        "kind": "map",
+        "entries": entries,
+        "line": line
+    };
+}
+
+fn index_expr(object, index, line) {
+    return {
+        "node_type": "expression",
+        "kind": "index",
+        "object": object,
+        "index": index,
+        "line": line
+    };
+}
+
+fn assignment_expr(name, value, line) {
+    return {
+        "node_type": "expression",
+        "kind": "assignment",
+        "name": name,
+        "value": value,
+        "line": line
+    };
+}
+
+fn get_expr(object, name, line) {
+    return {
+        "node_type": "expression",
+        "kind": "get",
+        "object": object,
+        "name": name,
+        "line": line
+    };
+}
+
+fn set_expr(object, name, value, line) {
+    return {
+        "node_type": "expression",
+        "kind": "set",
+        "object": object,
+        "name": name,
+        "value": value,
+        "line": line
+    };
+}
+
+fn lambda_expr(params, body, line) {
+    return {
+        "node_type": "expression",
+        "kind": "lambda",
+        "params": params,
+        "body": body,
+        "line": line
+    };
+}
+
+// --- Statement Constructors ---
+
+fn expression_stmt(expression, line) {
+    return {
+        "node_type": "statement",
+        "kind": "expression",
+        "expression": expression,
+        "line": line
+    };
+}
+
+fn let_stmt(name, initializer, type_annotation, line) {
+    return {
+        "node_type": "statement",
+        "kind": "let",
+        "name": name,
+        "initializer": initializer,
+        "type_annotation": type_annotation,
+        "line": line
+    };
+}
+
+fn if_stmt(condition, then_branch, else_branch, line) {
+    return {
+        "node_type": "statement",
+        "kind": "if",
+        "condition": condition,
+        "then_branch": then_branch,
+        "else_branch": else_branch,
+        "line": line
+    };
+}
+
+fn while_stmt(condition, body, line) {
+    return {
+        "node_type": "statement",
+        "kind": "while",
+        "condition": condition,
+        "body": body,
+        "line": line
+    };
+}
+
+fn for_stmt(name, collection, body, line) {
+    return {
+        "node_type": "statement",
+        "kind": "for",
+        "name": name,
+        "collection": collection,
+        "body": body,
+        "line": line
+    };
+}
+
+fn return_stmt(value, line) {
+    return {
+        "node_type": "statement",
+        "kind": "return",
+        "value": value,
+        "line": line
+    };
+}
+
+fn print_stmt(expression, line) {
+    return {
+        "node_type": "statement",
+        "kind": "print",
+        "expression": expression,
+        "line": line
+    };
+}
+
+fn block_stmt(statements, line) {
+    return {
+        "node_type": "statement",
+        "kind": "block",
+        "statements": statements,
+        "line": line
+    };
+}
+
+fn break_stmt(line) {
+    return {
+        "node_type": "statement",
+        "kind": "break",
+        "line": line
+    };
+}
+
+fn continue_stmt(line) {
+    return {
+        "node_type": "statement",
+        "kind": "continue",
+        "line": line
+    };
+}
+
+// --- Declaration Constructors ---
+
+fn fn_decl(name, params, body, return_type, line) {
+    return {
+        "node_type": "declaration",
+        "kind": "function",
+        "name": name,
+        "params": params,
+        "body": body,
+        "return_type": return_type,
+        "line": line
+    };
+}
+
+fn actor_decl(name, fields, methods, line) {
+    return {
+        "node_type": "declaration",
+        "kind": "actor",
+        "name": name,
+        "fields": fields,
+        "methods": methods,
+        "line": line
+    };
+}
+
+fn class_decl(name, fields, methods, superclass, line) {
+    return {
+        "node_type": "declaration",
+        "kind": "class",
+        "name": name,
+        "fields": fields,
+        "methods": methods,
+        "superclass": superclass,
+        "line": line
+    };
+}
+
+// --- AST Visitor ---
+
+fn get_node_kind(node) {
+    return node["kind"];
+}
+
+fn is_expression(node) {
+    return node["node_type"] == "expression";
+}
+
+fn is_statement(node) {
+    return node["node_type"] == "statement";
+}
+
+fn is_declaration(node) {
+    return node["node_type"] == "declaration";
+}
+
+// Export AST constructors
+let ast_mod = {
+    // Expressions
+    "literal_expr": literal_expr,
+    "variable_expr": variable_expr,
+    "binary_expr": binary_expr,
+    "unary_expr": unary_expr,
+    "logical_expr": logical_expr,
+    "call_expr": call_expr,
+    "list_expr": list_expr,
+    "map_expr": map_expr,
+    "index_expr": index_expr,
+    "assignment_expr": assignment_expr,
+    "get_expr": get_expr,
+    "set_expr": set_expr,
+    "lambda_expr": lambda_expr,
+    
+    // Statements
+    "expression_stmt": expression_stmt,
+    "let_stmt": let_stmt,
+    "if_stmt": if_stmt,
+    "while_stmt": while_stmt,
+    "for_stmt": for_stmt,
+    "return_stmt": return_stmt,
+    "print_stmt": print_stmt,
+    "block_stmt": block_stmt,
+    "break_stmt": break_stmt,
+    "continue_stmt": continue_stmt,
+    
+    // Declarations
+    "fn_decl": fn_decl,
+    "actor_decl": actor_decl,
+    "class_decl": class_decl,
+    
+    // Utilities
+    "get_node_kind": get_node_kind,
+    "is_expression": is_expression,
+    "is_statement": is_statement,
+    "is_declaration": is_declaration
+};
+
+ast_mod
