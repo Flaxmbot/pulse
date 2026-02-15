@@ -2,6 +2,9 @@ use crate::lexer::Token;
 use pulse_core::{Chunk, Op, PulseError, PulseResult, Constant}; 
 use pulse_core::object::Function;
 use crate::parser_v2::ParserV2 as Parser;
+
+use std::rc::Rc;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
@@ -37,11 +40,11 @@ impl Precedence {
     }
 }
 
-type ParseFn<'a, 'b> = fn(&mut Compiler<'a, 'b>, bool) -> PulseResult<()>;
+type ParseFn<'a> = fn(&mut Compiler<'a>, bool) -> PulseResult<()>;
 
-struct ParseRule<'a, 'b> {
-    prefix: Option<ParseFn<'a, 'b>>,
-    infix: Option<ParseFn<'a, 'b>>,
+struct ParseRule<'a> {
+    prefix: Option<ParseFn<'a>>,
+    infix: Option<ParseFn<'a>>,
     precedence: Precedence,
 }
 
@@ -70,28 +73,20 @@ pub enum FunctionType {
     Initializer,
 }
 
-pub struct Compiler<'a, 'b> {
-    parser: *mut Parser<'a>,
-    enclosing: *mut Compiler<'a, 'b>,
+
+struct CompilerState {
     chunk: Chunk,
     locals: Vec<Local>,
     upvalues: Vec<CompilerUpvalue>,
     scope_depth: i32,
     loops: Vec<Loop>,
     function_type: FunctionType,
-    module_path: Option<String>,
+    // Debugging / Context
+    _function_name: String,
 }
 
-pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> {
-    let mut parser = Parser::new(source);
-    // Use Module type when module_path is provided, otherwise use Script
-    let function_type = if module_path.is_some() { FunctionType::Module } else { FunctionType::Script };
-    let mut compiler = Compiler::new(&mut parser as *mut Parser, std::ptr::null_mut(), function_type, module_path);
-    compiler.compile_script()
-}
-
-impl<'a, 'b> Compiler<'a, 'b> {
-    pub fn new(parser: *mut Parser<'a>, enclosing: *mut Compiler<'a, 'b>, function_type: FunctionType, module_path: Option<String>) -> Self {
+impl CompilerState {
+    fn new(function_type: FunctionType, function_name: String) -> Self {
         let mut locals = Vec::new();
         // Reserve slot 0
         locals.push(Local {
@@ -105,24 +100,49 @@ impl<'a, 'b> Compiler<'a, 'b> {
         });
 
         Self {
-            parser,
-            enclosing,
             chunk: Chunk::new(),
             locals,
             upvalues: Vec::new(),
             scope_depth: 0,
             loops: Vec::new(),
             function_type,
+            _function_name: function_name,
+        }
+    }
+}
+
+pub struct Compiler<'a> {
+    parser: Rc<RefCell<Parser<'a>>>,
+    states: Vec<CompilerState>,
+    module_path: Option<String>,
+}
+
+pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> {
+    let parser = Rc::new(RefCell::new(Parser::new(source)));
+    let function_type = if module_path.is_some() { FunctionType::Module } else { FunctionType::Script };
+    let mut compiler = Compiler::new(parser.clone(), function_type, module_path);
+    compiler.compile_script()
+}
+
+impl<'a> Compiler<'a> {
+    pub fn new(parser: Rc<RefCell<Parser<'a>>>, function_type: FunctionType, module_path: Option<String>) -> Self {
+        let main_state = CompilerState::new(function_type, "script".to_string());
+        
+        Self {
+            parser,
+            states: vec![main_state],
             module_path,
         }
     }
 
-    fn parser(&mut self) -> &mut Parser<'a> {
-        unsafe { &mut *self.parser }
+    fn state(&mut self) -> &mut CompilerState {
+        self.states.last_mut().expect("Compiler stack underflow")
     }
+    
+    // Legacy accessors for read-only if needed, but we mostly need mut access.
 
     pub fn compile_script(&mut self) -> PulseResult<Chunk> {
-        self.parser().advance()?;
+        self.parser.borrow_mut().advance()?;
         
         while !self.matches(Token::Eof)? {
             self.declaration()?;
@@ -130,7 +150,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         
         self.emit_byte(Op::Unit as u8);
         self.emit_byte(Op::Return as u8); 
-        Ok(self.chunk.clone())
+        Ok(self.state().chunk.clone())
     }
 
     // --- Declarations ---
@@ -158,73 +178,76 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn fun_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect function name.")?;
-        let name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+        let name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
         self.function(FunctionType::Function, name)?;
         self.define_variable(global); 
         Ok(())
     }
 
     fn function(&mut self, function_type: FunctionType, name: String) -> PulseResult<()> {
-        // Create new compiler for body
-        let mut compiler = Compiler::new(self.parser, self as *mut Compiler, function_type, self.module_path.clone());
-        compiler.begin_scope(); 
+        // Push new state
+        self.states.push(CompilerState::new(function_type, name.clone()));
+        
+        self.begin_scope(); 
 
-        compiler.consume(Token::LeftParen, "Expect '(' after function name.")?;
+        self.consume(Token::LeftParen, "Expect '(' after function name.")?;
         
         let mut arity = 0;
-        if !compiler.check(Token::RightParen) {
+        if !self.check(Token::RightParen) {
             loop {
                 arity += 1;
-                if compiler.locals.len() > 255 {
+                if self.state().locals.len() > 255 {
                     return Err(PulseError::CompileError("Cannot have more than 255 parameters.".into(), 0));
                 }
                 
-                let param_constant = compiler.parse_variable("Expect parameter name.")?;
-                compiler.define_variable(param_constant);
+                let param_constant = self.parse_variable("Expect parameter name.")?;
+                self.define_variable(param_constant);
                 
                 // Optional type annotation: `: Type`
-                if compiler.matches(Token::Colon)? {
-                    // Parse and ignore type annotation for now (future: type checking pass)
-                    let _ = compiler.parse_type()?;
+                if self.matches(Token::Colon)? {
+                    let _ = self.parse_type()?;
                 }
 
-                if !compiler.matches(Token::Comma)? {
+                if !self.matches(Token::Comma)? {
                     break;
                 }
             }
         }
-        compiler.consume(Token::RightParen, "Expect ')' after parameters.")?;
+        self.consume(Token::RightParen, "Expect ')' after parameters.")?;
         
         // Optional return type annotation: `-> Type`
-        if compiler.matches(Token::Arrow)? {
-            let _ = compiler.parse_type()?;
+        if self.matches(Token::Arrow)? {
+            let _ = self.parse_type()?;
         }
         
-        compiler.consume(Token::LeftBrace, "Expect '{' before function body.")?;
-        compiler.block()?;
+        
+        self.consume(Token::LeftBrace, "Expect '{' before function body.")?;
+        self.block()?;
         
         // Emit return nil in case user didn't
-        compiler.emit_return();
+        self.emit_return();
         
-        let chunk = compiler.chunk.clone();
-        let upvalue_count = compiler.upvalues.len();
+        // Pop state
+        let state = self.states.pop().expect("Compiler stack underflow");
+        
         let function = Function {
             arity,
-            chunk: Arc::new(chunk),
+            chunk: Arc::new(state.chunk),
             name,
-            upvalue_count,
+            upvalue_count: state.upvalues.len(),
             module_path: self.module_path.clone(),
         };
         
-        // Add function to Parent (self) constants
-        let idx = self.chunk.add_constant(Constant::Function(Box::new(function)));
+        // Add function to Parent (now top of stack) constants
+        let idx = self.state().chunk.add_constant(Constant::Function(Box::new(function)));
         self.emit_byte(Op::Closure as u8);
         self.emit_u16(idx as u16);
         
         // Emit upvalue capturing info
-        for i in 0..upvalue_count {
-            self.emit_byte(if compiler.upvalues[i].is_local { 1 } else { 0 });
-            self.emit_byte(compiler.upvalues[i].index);
+        for i in 0..state.upvalues.len() {
+            let upvalue = &state.upvalues[i];
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index);
         }
         
         Ok(())
@@ -232,7 +255,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     
     // Helper to emit return
     fn emit_return(&mut self) {
-        if self.function_type == FunctionType::Initializer {
+        if self.state().function_type == FunctionType::Initializer {
             self.emit_byte(Op::GetLocal as u8);
             self.emit_byte(0); // Return 'this'
         } else {
@@ -257,7 +280,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn actor_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect actor name.")?;
-        let name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+        let previous = self.parser.borrow().previous.clone();
+        let name = if let Token::Identifier(s) = previous { s } else { "".into() };
 
         // Create a function that represents the actor behavior
         // This is a simplified approach - in a real implementation, actors would be more complex
@@ -268,8 +292,9 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn class_declaration(&mut self) -> PulseResult<()> {
         self.consume_identifier("Expected class name")?;
-        let class_name = if let Token::Identifier(s) = &self.parser().previous {
-            s.clone()
+        let previous = self.parser.borrow().previous.clone();
+        let class_name = if let Token::Identifier(s) = previous {
+            s
         } else {
             return Err(PulseError::CompileError("Expected class name".into(), 0));
         };
@@ -284,8 +309,9 @@ impl<'a, 'b> Compiler<'a, 'b> {
         // Parse superclass
         if self.matches(Token::Extends)? {
             self.consume_identifier("Expected superclass name")?;
-            let super_name = if let Token::Identifier(s) = &self.parser().previous {
-                s.clone()
+            let previous = self.parser.borrow().previous.clone();
+            let super_name = if let Token::Identifier(s) = previous {
+                s
             } else {
                 return Err(PulseError::CompileError("Expected superclass name".into(), 0));
             };
@@ -318,7 +344,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
             if self.matches(Token::Fn)? || self.matches(Token::Def)? {
                 self.consume_identifier("Expected method name")?;
-                let method_name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+                let method_name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
                 let method_name_idx = self.identifier_constant(&Token::Identifier(method_name.clone()))?;
 
                 if method_name == "init" {
@@ -343,35 +369,38 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn actor_function(&mut self, function_type: FunctionType, name: String) -> PulseResult<()> {
-        // Create new compiler for actor body
-        let mut compiler = Compiler::new(self.parser, self as *mut Compiler, function_type, self.module_path.clone());
-        compiler.begin_scope();
+        // Push new state
+        self.states.push(CompilerState::new(function_type, name.clone()));
+        
+        self.begin_scope();
 
-        compiler.consume(Token::LeftBrace, "Expect '{' before actor body.")?;
-        compiler.block()?;
+        self.consume(Token::LeftBrace, "Expect '{' before actor body.")?;
+        self.block()?;
 
         // Emit return in actor
-        compiler.emit_return();
-
-        let chunk = compiler.chunk.clone();
-        let upvalue_count = compiler.upvalues.len();
+        self.emit_return();
+        
+        // Pop state
+        let state = self.states.pop().expect("Compiler stack underflow");
+        
         let function = Function {
-            arity: 0, // Actors typically don't take parameters in this form
-            chunk: Arc::new(chunk),
+            arity: 0,
+            chunk: Arc::new(state.chunk),
             name,
-            upvalue_count,
+            upvalue_count: state.upvalues.len(),
             module_path: self.module_path.clone(),
         };
 
         // Add function to Parent (self) constants
-        let idx = self.chunk.add_constant(Constant::Function(Box::new(function)));
+        let idx = self.state().chunk.add_constant(Constant::Function(Box::new(function)));
         self.emit_byte(Op::Closure as u8);
         self.emit_u16(idx as u16);
 
         // Emit upvalue capturing info
-        for i in 0..upvalue_count {
-            self.emit_byte(if compiler.upvalues[i].is_local { 1 } else { 0 });
-            self.emit_byte(compiler.upvalues[i].index);
+        for i in 0..state.upvalues.len() {
+            let upvalue = &state.upvalues[i];
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index);
         }
 
         Ok(())
@@ -385,7 +414,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
         
         let global = self.parse_variable("Expect shared memory name.")?;
-        let _name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+        let _name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
 
         self.consume(Token::Equal, "Expect '=' after shared memory name.")?;
         
@@ -407,7 +436,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn atomic_declaration(&mut self) -> PulseResult<()> {
         // Parse: atomic IDENTIFIER = expression;
         let global = self.parse_variable("Expect atomic variable name.")?;
-        let _name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+        let _name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
 
         self.consume(Token::Equal, "Expect '=' after atomic variable name.")?;
         
@@ -433,7 +462,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.consume(Token::Semicolon, "Expect ';' after fence statement.")?;
         
         // Emit the appropriate fence instruction based on the previous token
-        match &self.parser().previous {
+        let previous = self.parser.borrow().previous.clone();
+        match &previous {
             Token::Fence => {
                 self.emit_byte(Op::MemoryFenceSeqCst as u8);
             }
@@ -563,7 +593,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         
         // Emit Op::Try with placeholder for handler offset
         self.emit_byte(Op::Try as u8);
-        let try_offset = self.chunk.code.len();
+        let try_offset = self.state().chunk.code.len();
         self.emit_byte(0xff); // Placeholder for handler offset (u16)
         self.emit_byte(0xff);
         
@@ -579,13 +609,13 @@ impl<'a, 'b> Compiler<'a, 'b> {
         let success_jump = self.emit_jump(Op::Jump as u8);
         
         // Patch try handler offset to point here (catch block)
-        let handler_ip = self.chunk.code.len();
+        let handler_ip = self.state().chunk.code.len();
         let offset = handler_ip - try_offset - 2; // Offset from after Op::Try u16
         if offset > u16::MAX as usize {
             return Err(PulseError::CompileError("Try block too large".into(), 0));
         }
-        self.chunk.code[try_offset] = ((offset >> 8) & 0xff) as u8;
-        self.chunk.code[try_offset + 1] = (offset & 0xff) as u8;
+        self.state().chunk.code[try_offset] = ((offset >> 8) & 0xff) as u8;
+        self.state().chunk.code[try_offset + 1] = (offset & 0xff) as u8;
         
         // Consume catch
         self.consume(Token::Catch, "Expect 'catch' after try block.")?;
@@ -639,10 +669,10 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn while_statement(&mut self) -> PulseResult<()> {
-        let loop_start = self.chunk.code.len();
+        let loop_start = self.state().chunk.code.len();
         
         // Push Loop context
-        self.loops.push(Loop {
+        self.state().loops.push(Loop {
             start_ip: loop_start,
             break_jumps: Vec::new(),
         });
@@ -662,7 +692,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.emit_byte(Op::Pop as u8);
         
         // Pop Loop context and patch breaks
-        if let Some(loop_ctx) = self.loops.pop() {
+        if let Some(loop_ctx) = self.state().loops.pop() {
             for break_jump in loop_ctx.break_jumps {
                 self.patch_jump(break_jump)?;
             }
@@ -677,7 +707,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.begin_scope();
         
         // Check if next is identifier followed by 'in' (Python style)
-        if let Token::Identifier(var_name) = &self.parser().current.clone() {
+        let current = self.parser.borrow().current.clone();
+        if let Token::Identifier(var_name) = &current {
             let name = var_name.clone();
             self.advance()?;
             
@@ -689,7 +720,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
                 // This is a syntax error for traditional for
                 return Err(PulseError::CompileError(
                     "Expect '(' after 'for' or 'in' after identifier.".into(), 
-                    self.parser().line()
+                    self.parser.borrow().line()
                 ));
             }
         }
@@ -706,7 +737,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
             self.expression_statement()?;
         }
         
-        let mut loop_start = self.chunk.code.len();
+        let mut loop_start = self.state().chunk.code.len();
         
         // Cond
         let mut exit_jump = None;
@@ -722,7 +753,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         if !self.matches(Token::RightParen)? {
             let body_jump = self.emit_jump(Op::Jump as u8);
             
-            let increment_start = self.chunk.code.len();
+            let increment_start = self.state().chunk.code.len();
             self.expression()?;
             self.emit_byte(Op::Pop as u8);
             self.consume(Token::RightParen, "Expect ')' after for clauses.")?;
@@ -733,7 +764,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
         
         // Push Loop context
-        self.loops.push(Loop {
+        self.state().loops.push(Loop {
             start_ip: loop_start,
             break_jumps: Vec::new(),
         });
@@ -748,7 +779,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
         
         // Pop Loop context and patch breaks
-        if let Some(loop_ctx) = self.loops.pop() {
+        if let Some(loop_ctx) = self.state().loops.pop() {
             for break_jump in loop_ctx.break_jumps {
                 self.patch_jump(break_jump)?;
             }
@@ -781,13 +812,13 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.add_local(Token::Identifier("__idx".to_string()))?;
         self.mark_initialized();
         
-        let loop_start = self.chunk.code.len();
+        let loop_start = self.state().chunk.code.len();
         
         // Condition: __idx < len(__iter)
         let idx_token = Token::Identifier("__idx".to_string());
-        let idx_slot = self.resolve_local(&idx_token)?;
+        let idx_slot = self.resolve_local(&idx_token)?.expect("Loop index not found");
         let iter_token = Token::Identifier("__iter".to_string());
-        let iter_slot = self.resolve_local(&iter_token)?;
+        let iter_slot = self.resolve_local(&iter_token)?.expect("Loop iterator not found");
         
         // Stack order for __idx < len:
         // 1. Push __idx
@@ -813,7 +844,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.emit_byte(Op::Pop as u8); // Pop condition result
         
         // Push Loop context
-        self.loops.push(Loop {
+        self.state().loops.push(Loop {
             start_ip: loop_start,
             break_jumps: Vec::new(),
         });
@@ -853,7 +884,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.emit_byte(Op::Pop as u8);
         
         // Patch breaks
-        if let Some(loop_ctx) = self.loops.pop() {
+        if let Some(loop_ctx) = self.state().loops.pop() {
             for break_jump in loop_ctx.break_jumps {
                 self.patch_jump(break_jump)?;
             }
@@ -867,24 +898,24 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn break_statement(&mut self) -> PulseResult<()> {
         self.consume(Token::Semicolon, "Expect ';' after 'break'.")?;
         
-        if self.loops.is_empty() {
+        if self.state().loops.is_empty() {
              return Err(PulseError::CompileError("Cannot use 'break' outside of a loop.".into(), 0));
         }
         let jump = self.emit_jump(Op::Jump as u8);
-        self.loops.last_mut().unwrap().break_jumps.push(jump);
+        self.state().loops.last_mut().unwrap().break_jumps.push(jump);
         Ok(())
     }
 
     fn return_statement(&mut self) -> PulseResult<()> {
         // Module and Function types can return, but Script cannot
-        if self.function_type == FunctionType::Script {
+        if self.state().function_type == FunctionType::Script {
             return Err(PulseError::CompileError("Cannot return from top-level script.".into(), 0));
         }
         
         if self.matches(Token::Semicolon)? {
             self.emit_return();
         } else {
-            if self.function_type == FunctionType::Initializer {
+            if self.state().function_type == FunctionType::Initializer {
                 return Err(PulseError::CompileError("Cannot return a value from an initializer.".into(), 0));
             }
             self.expression()?;
@@ -897,7 +928,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn continue_statement(&mut self) -> PulseResult<()> {
         self.consume(Token::Semicolon, "Expect ';' after 'continue'.")?;
         
-        let start_ip = self.loops.last().map(|loop_ctx| loop_ctx.start_ip);
+        let start_ip = self.state().loops.last().map(|loop_ctx| loop_ctx.start_ip);
 
         if let Some(ip) = start_ip {
              self.emit_loop(ip)?;
@@ -944,7 +975,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn number(&mut self, _can_assign: bool) -> PulseResult<()> {
-        let previous = self.parser().previous.clone();
+        let previous = self.parser.borrow().previous.clone();
         match &previous {
             Token::Int(n) => self.emit_constant(Constant::Int(*n)),
             Token::Float(n) => self.emit_constant(Constant::Float(*n)),
@@ -960,7 +991,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn unary(&mut self, _can_assign: bool) -> PulseResult<()> {
-        let operator_type = self.parser().previous.clone();
+        let operator_type = self.parser.borrow().previous.clone();
 
         // Compile operand
         self.parse_precedence(Precedence::Unary)?;
@@ -985,9 +1016,9 @@ impl<'a, 'b> Compiler<'a, 'b> {
             self.begin_scope(); // Scope for pattern variables
             self.emit_byte(Op::Dup as u8); // Dup Subject for this arm
             
-            let locals_before = self.locals.len();
+            let locals_before = self.state().locals.len();
             let mut failure_jumps = self.compile_pattern()?;
-            let locals_after = self.locals.len();
+            let locals_after = self.state().locals.len();
             
             // Guard Clause
             if self.matches(Token::If)? {
@@ -1029,15 +1060,15 @@ impl<'a, 'b> Compiler<'a, 'b> {
             }
             
             // End Scope manually to preserve Result
-            self.scope_depth -= 1;
-            let pop_count = self.locals.len() - locals_before;
+            self.state().scope_depth -= 1;
+            let pop_count = self.state().locals.len() - locals_before;
             // Pop locals UNDER the result
             self.emit_byte(Op::Slide as u8);
             self.emit_byte(pop_count as u8);
              
             // Remove locals from compiler state
-            while self.locals.len() > locals_before {
-                self.locals.pop();
+            while self.state().locals.len() > locals_before {
+                self.state().locals.pop();
             }
             
             // Jump to End
@@ -1189,7 +1220,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
                         continue;
                     }
                     
-                    return Err(PulseError::CompileError("Expect ',' or ']' in list pattern.".into(), self.parser().line()));
+                    return Err(PulseError::CompileError("Expect ',' or ']' in list pattern.".into(), self.parser.borrow().line()));
                 }
             }
             self.consume(Token::RightBracket, "Expect ']' after list pattern.")?;
@@ -1238,12 +1269,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
             
             while !self.check(Token::RightBrace) {
                 // Parse Key
-                let key_str = if let Token::Identifier(s) = &self.parser().current {
-                    s.clone()
-                } else if let Token::String(s) = &self.parser().current {
-                    s.clone()
-                } else {
-                     return Err(PulseError::CompileError("Expect identifier or string key in map pattern.".into(), 0));
+                let current = self.parser.borrow().current.clone();
+                let key_str = match current {
+                    Token::Identifier(s) => s,
+                    Token::String(s) => s,
+                    _ => return Err(PulseError::CompileError("Expect identifier or string key in map pattern.".into(), 0)),
                 };
                 self.advance()?; // Consume Key
                 
@@ -1298,9 +1328,9 @@ impl<'a, 'b> Compiler<'a, 'b> {
             failure_jumps.push(self.emit_jump(Op::Jump as u8));
             
             self.patch_jump(success_jump)?;
-        } else if let Token::Identifier(_) = self.parser().current {
+        } else if matches!(self.parser.borrow().current, Token::Identifier(_)) {
             // Variable Pattern
-            let name = self.parser().current.clone();
+            let name = self.parser.borrow().current.clone();
             self.advance()?;
             // Removed self.begin_scope(); to allow match arm to manage scope
             self.add_local(name)?;
@@ -1335,13 +1365,13 @@ impl<'a, 'b> Compiler<'a, 'b> {
         } else {
             // Literal
             self.emit_byte(Op::Dup as u8); // Dup Target
-            if matches!(self.parser().current, Token::Int(_) | Token::Float(_)) {
+            if matches!(self.parser.borrow().current, Token::Int(_) | Token::Float(_)) {
                 self.advance()?;
                 self.number(false)?;
-            } else if matches!(self.parser().current, Token::String(_)) {
+            } else if matches!(self.parser.borrow().current, Token::String(_)) {
                 self.advance()?;
                 self.string(false)?;
-            } else if matches!(self.parser().current, Token::True | Token::False | Token::Nil) {
+            } else if matches!(self.parser.borrow().current, Token::True | Token::False | Token::Nil) {
                 self.advance()?;
                 self.literal(false)?;
             } else {
@@ -1397,15 +1427,17 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
     
     fn mark_initialized(&mut self) {
-        if self.scope_depth == 0 { return; }
-        if let Some(local) = self.locals.last_mut() {
-            local.depth = self.scope_depth;
+        let depth = self.state().scope_depth;
+        if depth == 0 { return; }
+        if let Some(local) = self.state().locals.last_mut() {
+            local.depth = depth;
         }
     }
 
     fn string(&mut self, _can_assign: bool) -> PulseResult<()> {
-        let s = match &self.parser().previous {
-            Token::String(s) => s.clone(),
+        let previous = self.parser.borrow().previous.clone();
+        let s = match previous {
+            Token::String(s) => s,
             _ => return Err(PulseError::CompileError("Expected string".into(), 0)),
         };
         self.emit_constant(Constant::String(s));
@@ -1415,8 +1447,9 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn interpolated_string(&mut self, _can_assign: bool) -> PulseResult<()> {
         use crate::lexer::StringPart;
         
-        let parts = match &self.parser().previous {
-            Token::InterpolatedString(p) => p.clone(),
+        let previous = self.parser.borrow().previous.clone();
+        let parts = match previous {
+            Token::InterpolatedString(p) => p,
             _ => return Err(PulseError::CompileError("Expected interpolated string".into(), 0)),
         };
         
@@ -1434,12 +1467,16 @@ impl<'a, 'b> Compiler<'a, 'b> {
                 }
                 StringPart::Expr(expr_src) => {
                     // Parse and compile the expression
-                    let mut expr_parser = Parser::new(&expr_src);
-                    expr_parser.advance()?;
+                    // We leak the source string to satisfy the compiler's lifetime 'a requirements
+                    // This is acceptable for a CLI compiler as the leak is bounded by input size
+                    let static_src: &'a str = Box::leak(expr_src.into_boxed_str());
+                    let expr_parser = Parser::new(static_src);
+                    let new_parser_rc = Rc::new(RefCell::new(expr_parser));
+                    new_parser_rc.borrow_mut().advance()?; // Advance strictly on new parser
                     
                     // Save current parser
-                    let saved_parser = self.parser as *mut Parser<'a>;
-                    self.parser = &mut expr_parser as *mut Parser<'_> as *mut Parser<'a>;
+                    let saved_parser = self.parser.clone();
+                    self.parser = new_parser_rc;
                     
                     self.expression()?;
                     
@@ -1463,7 +1500,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn literal(&mut self, _can_assign: bool) -> PulseResult<()> {
-        match self.parser().previous {
+        let previous = self.parser.borrow().previous.clone();
+        match previous {
             Token::True => self.emit_constant(Constant::Bool(true)),
             Token::False => self.emit_constant(Constant::Bool(false)),
             Token::Nil => self.emit_byte(Op::Unit as u8),
@@ -1473,10 +1511,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn variable(&mut self, can_assign: bool) -> PulseResult<()> {
-        let previous = self.parser().previous.clone();
+        let previous = self.parser.borrow().previous.clone();
         if let Token::This = previous {
             // Handle 'this' keyword
-            let slot = self.resolve_local(&Token::Identifier("this".to_string()))?;
+            let slot = self.resolve_local(&Token::Identifier("this".to_string()))?
+                .expect("Expected 'this' to be defined in method.");
             self.emit_byte(Op::GetLocal as u8);
             self.emit_byte(slot);
             Ok(())
@@ -1486,7 +1525,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) -> PulseResult<()> {
-        if let Ok(local_idx) = self.resolve_local(&name) {
+        if let Ok(Some(local_idx)) = self.resolve_local(&name) {
             if can_assign && self.matches(Token::Equal)? {
                 self.expression()?;
                 self.emit_byte(Op::SetLocal as u8);
@@ -1495,7 +1534,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
                 self.emit_byte(Op::GetLocal as u8);
                 self.emit_byte(local_idx);
             }
-        } else if let Some(upvalue_idx) = self.resolve_upvalue(&name) {
+        } else if let Ok(Some(upvalue_idx)) = self.resolve_upvalue(&name) {
             if can_assign && self.matches(Token::Equal)? {
                 self.expression()?;
                 self.emit_byte(Op::SetUpvalue as u8);
@@ -1581,66 +1620,23 @@ impl<'a, 'b> Compiler<'a, 'b> {
         Ok(())
     }
 
-    fn resolve_local(&mut self, name: &Token) -> PulseResult<u8> {
-        for (i, local) in self.locals.iter().enumerate().rev() {
-            if let Token::Identifier(local_name) = &local.name {
-                if let Token::Identifier(target) = name {
-                    if local_name == target {
-                        return Ok(i as u8);
-                    }
-                }
-            }
-        }
-        Err(PulseError::CompileError("Undefined variable.".into(), 0))
-    }
 
-    fn resolve_upvalue(&mut self, name: &Token) -> Option<u8> {
-        if self.enclosing.is_null() {
-            return None;
-        }
 
-        let enclosing = unsafe { &mut *self.enclosing };
-
-        // 1. Try to resolve in parent's locals
-        if let Ok(local) = enclosing.resolve_local(name) {
-            enclosing.locals[local as usize].is_captured = true;
-            return Some(self.add_upvalue(local, true));
-        }
-
-        // 2. Try to resolve in parent's upvalues (recursive)
-        if let Some(upvalue) = enclosing.resolve_upvalue(name) {
-            return Some(self.add_upvalue(upvalue, false));
-        }
-
-        None
-    }
-
-    fn add_upvalue(&mut self, index: u8, is_local: bool) -> u8 {
-        // Check if already captured
-        for (i, upvalue) in self.upvalues.iter().enumerate() {
-            if upvalue.index == index && upvalue.is_local == is_local {
-                return i as u8;
-            }
-        }
-
-        self.upvalues.push(CompilerUpvalue { index, is_local });
-        (self.upvalues.len() - 1) as u8
-    }
 
     fn parse_variable(&mut self, msg: &str) -> PulseResult<u16> {
         self.consume_identifier(msg)?;
         self.declare_variable()?;
-        if self.scope_depth > 0 {
+        if self.state().scope_depth > 0 {
             return Ok(0);
         }
-        let name = self.parser().previous.clone();
+        let name = self.parser.borrow().previous.clone();
         self.identifier_constant(&name) // Return name index for globals
     }
 
     fn identifier_constant(&mut self, name: &Token) -> PulseResult<u16> {
         match name {
             Token::Identifier(s) => {
-                let idx = self.chunk.add_constant(Constant::String(s.clone()));
+                let idx = self.state().chunk.add_constant(Constant::String(s.clone()));
                 if idx > u16::MAX as usize {
                     return Err(PulseError::CompileError("Too many constants.".into(), 0));
                 }
@@ -1651,8 +1647,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn consume_identifier(&mut self, msg: &str) -> PulseResult<()> {
-        // Helper to check if current is Identifier and advance
-        match &self.parser().current {
+        let current = self.parser.borrow().current.clone();
+        match current {
             Token::Identifier(_) => {
                 self.advance()?;
                 Ok(())
@@ -1662,7 +1658,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn consume_string(&mut self, msg: &str) -> PulseResult<()> {
-        match &self.parser().current {
+        let current = self.parser.borrow().current.clone();
+        match current {
             Token::String(_) => {
                 self.advance()?;
                 Ok(())
@@ -1672,14 +1669,15 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn declare_variable(&mut self) -> PulseResult<()> {
-        if self.scope_depth == 0 {
+        let scope_depth = self.state().scope_depth;
+        if scope_depth == 0 {
             return Ok(()); // Globals not implemented yet
         }
-        let name = self.parser().previous.clone();
+        let name = self.parser.borrow().previous.clone();
         
         // Check for redefinition
-        for local in self.locals.iter().rev() {
-            if local.depth != -1 && local.depth < self.scope_depth {
+        for local in self.state().locals.iter().rev() {
+            if local.depth != -1 && local.depth < scope_depth {
                 break;
             }
             if local.name == name {
@@ -1692,10 +1690,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn define_variable(&mut self, global: u16) {
-        if self.scope_depth > 0 {
+        let depth = self.state().scope_depth;
+        if depth > 0 {
             // Local: mark initialized
-            if let Some(local) = self.locals.last_mut() {
-                local.depth = self.scope_depth;
+            if let Some(local) = self.state().locals.last_mut() {
+                local.depth = depth;
             }
         } else {
             // Global
@@ -1705,29 +1704,40 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn add_local(&mut self, name: Token) -> PulseResult<()> {
-        if self.locals.len() >= 256 {
+        if self.state().locals.len() >= 256 {
             return Err(PulseError::CompileError("Too many local variables in function.".into(), 0));
         }
-        self.locals.push(Local { name, depth: -1, is_captured: false }); // -1 = uninitialized
+        self.state().locals.push(Local { name, depth: -1, is_captured: false }); // -1 = uninitialized
         Ok(())
     }
 
     // Scoping
     fn begin_scope(&mut self) {
-        self.scope_depth += 1;
+        self.state().scope_depth += 1;
     }
 
     fn end_scope(&mut self) {
-        self.scope_depth -= 1;
+        self.state().scope_depth -= 1;
+        let depth = self.state().scope_depth;
         // Pop locals from stack
-        while let Some(local) = self.locals.last() {
-            if local.depth > self.scope_depth {
-                if local.is_captured {
+        loop {
+            let (should_pop, is_captured) = if let Some(local) = self.state().locals.last() {
+                if local.depth > depth {
+                    (true, local.is_captured)
+                } else {
+                    (false, false)
+                }
+            } else {
+                (false, false)
+            };
+            
+            if should_pop {
+                if is_captured {
                     self.emit_byte(Op::CloseUpvalue as u8);
                 } else {
                     self.emit_byte(Op::Pop as u8);
                 }
-                self.locals.pop();
+                self.state().locals.pop();
             } else {
                 break;
             }
@@ -1735,16 +1745,16 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn check(&self, token: Token) -> bool {
-        unsafe { (*self.parser).current == token }
+        self.parser.borrow().current == token
     }
     
     /// Parse a type annotation (e.g., Int, String, List<Int>, Fn<(Int) -> Bool>)
     fn parse_type(&mut self) -> PulseResult<crate::types::Type> {
         use crate::types::Type;
         
-        self.parser().advance()?;
-        
-        match &self.parser().previous.clone() {
+        self.parser.borrow_mut().advance()?;
+        let previous = self.parser.borrow().previous.clone();
+        match &previous {
             Token::TypeInt => Ok(Type::Int),
             Token::TypeFloat => Ok(Type::Float),
             Token::TypeBool => Ok(Type::Bool),
@@ -1800,13 +1810,13 @@ impl<'a, 'b> Compiler<'a, 'b> {
             Token::Identifier(name) => Ok(Type::Custom(name.clone())),
             other => Err(PulseError::CompileError(
                 format!("Unexpected token in type annotation: {:?}", other),
-                self.parser().line()
+                self.parser.borrow().line()
             )),
         }
     }
 
     fn binary(&mut self, _can_assign: bool) -> PulseResult<()> {
-        let operator_type = self.parser().previous.clone();
+        let operator_type = self.parser.borrow().previous.clone();
         let rule = self.get_rule(&operator_type);
         
         // Parse right operand with higher precedence
@@ -1857,7 +1867,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn dot(&mut self, can_assign: bool) -> PulseResult<()> {
         self.consume_identifier("Expect property name after '.'.")?;
-        let name = self.parser().previous.clone();
+        let name = self.parser.borrow().previous.clone();
         let idx = self.identifier_constant(&name)?;
         
         self.emit_byte(Op::Const as u8);
@@ -1896,7 +1906,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         // spawn EXPRESSION
         
         // 1. Emit Spawn(0) placeholder
-        let spawn_instr = self.chunk.code.len();
+        let spawn_instr = self.state().chunk.code.len();
         self.emit_byte(Op::Spawn as u8);
         self.emit_byte(0xff); // Placeholder low
         self.emit_byte(0xff); // Placeholder high
@@ -1905,7 +1915,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
         let jump_over = self.emit_jump(Op::Jump as u8);
         
         // 3. Mark start of child code
-        let child_start = self.chunk.code.len();
+        let child_start = self.state().chunk.code.len();
         
         // 4. Compile child expression/block
         if self.check(Token::LeftBrace) {
@@ -1937,8 +1947,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
              return Err(PulseError::CompileError("Chunk too large for spawn offset".into(), 0));
         }
         
-        self.chunk.code[spawn_instr + 1] = (child_start & 0xff) as u8;
-        self.chunk.code[spawn_instr + 2] = ((child_start >> 8) & 0xff) as u8;
+        self.state().chunk.code[spawn_instr + 1] = (child_start & 0xff) as u8;
+        self.state().chunk.code[spawn_instr + 2] = ((child_start >> 8) & 0xff) as u8;
         
         Ok(())
     }
@@ -1950,8 +1960,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn import_expression(&mut self, _can_assign: bool) -> PulseResult<()> {
         self.consume_string("Expect string after 'import'.")?;
-        let name = self.parser().previous.clone();
-        let idx = self.chunk.add_constant(Constant::String(match name {
+        let name = self.parser.borrow().previous.clone();
+        let idx = self.state().chunk.add_constant(Constant::String(match name {
             Token::String(s) => s,
             _ => unreachable!(),
         }));
@@ -1967,7 +1977,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     fn anonymous_function(&mut self, _can_assign: bool) -> PulseResult<()> {
         // Parse anonymous function: fn(parameters) { body }
-        let name = format!("lambda_{}", self.chunk.code.len()); // Generate unique name
+        let name = format!("lambda_{}", self.state().chunk.code.len()); // Generate unique name
         self.function(FunctionType::Function, name)?;
         Ok(())
     }
@@ -1975,7 +1985,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn super_(&mut self, _can_assign: bool) -> PulseResult<()> {
         if self.matches(Token::Dot)? {
             self.consume_identifier("Expect superclass method name.")?;
-            let name = if let Token::Identifier(s) = &self.parser().previous { s.clone() } else { "".into() };
+            let name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
             let name_idx = self.identifier_constant(&Token::Identifier(name))?;
 
             // Push 'this'
@@ -2064,7 +2074,7 @@ impl<'a, 'b> Compiler<'a, 'b> {
     fn parse_precedence(&mut self, precedence: Precedence) -> PulseResult<()> {
         self.advance()?;
         
-        let previous = self.parser().previous.clone();
+        let previous = self.parser.borrow().previous.clone();
         let prefix_rule = self.get_rule(&previous).prefix;
         if let Some(prefix_fn) = prefix_rule {
             let can_assign = precedence <= Precedence::Assignment;
@@ -2074,11 +2084,11 @@ impl<'a, 'b> Compiler<'a, 'b> {
         }
 
         while {
-            let current = self.parser().current.clone();
+            let current = self.parser.borrow().current.clone();
             precedence <= self.get_rule(&current).precedence
         } {
             self.advance()?;
-            let previous = self.parser().previous.clone();
+            let previous = self.parser.borrow().previous.clone();
             let infix_rule = self.get_rule(&previous).infix;
             if let Some(infix_fn) = infix_rule {
                 let can_assign = precedence <= Precedence::Assignment;
@@ -2088,7 +2098,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
         Ok(())
     }
 
-    fn get_rule(&self, token: &Token) -> ParseRule<'a, 'b> {
+    // Rules table
+    fn get_rule(&self, token: &Token) -> ParseRule<'a> {
         match token {
             Token::LeftParen => ParseRule { prefix: Some(Self::grouping), infix: Some(Self::call), precedence: Precedence::Call },
             Token::Dot => ParseRule { prefix: None, infix: Some(Self::dot), precedence: Precedence::Call },
@@ -2130,17 +2141,17 @@ impl<'a, 'b> Compiler<'a, 'b> {
 
     // --- Helpers ---
     fn advance(&mut self) -> PulseResult<()> {
-        self.parser().advance()
+        self.parser.borrow_mut().advance()
     }
 
     fn consume(&mut self, expected: Token, msg: &str) -> PulseResult<()> {
-        self.parser().consume(expected, msg)?;
+        self.parser.borrow_mut().consume(expected, msg)?;
         Ok(())
     }
 
     fn matches(&mut self, expected: Token) -> PulseResult<bool> {
-        if self.parser().current == expected {
-            self.parser().advance()?;
+        if self.parser.borrow().current == expected {
+            self.parser.borrow_mut().advance()?;
             Ok(true)
         } else {
             Ok(false)
@@ -2152,23 +2163,23 @@ impl<'a, 'b> Compiler<'a, 'b> {
         self.emit_byte(instruction);
         self.emit_byte(0xff); // Placeholder
         self.emit_byte(0xff);
-        self.chunk.code.len() - 2
+        self.state().chunk.code.len() - 2
     }
 
     fn patch_jump(&mut self, offset: usize) -> PulseResult<()> {
-        let jump = self.chunk.code.len() - offset - 2;
+        let jump = self.state().chunk.code.len() - offset - 2;
         if jump > u16::MAX as usize {
              return Err(PulseError::CompileError("Too much code to jump over.".into(), 0));
         }
-        self.chunk.code[offset] = (jump as u16 & 0xff) as u8;
-        self.chunk.code[offset + 1] = ((jump as u16 >> 8) & 0xff) as u8;
+        self.state().chunk.code[offset] = (jump as u16 & 0xff) as u8;
+        self.state().chunk.code[offset + 1] = ((jump as u16 >> 8) & 0xff) as u8;
         Ok(())
     }
 
     fn emit_loop(&mut self, loop_start: usize) -> PulseResult<()> {
         self.emit_byte(Op::Loop as u8);
 
-        let offset = self.chunk.code.len() - loop_start + 2;
+        let offset = self.state().chunk.code.len() - loop_start + 2;
         if offset > u16::MAX as usize {
             return Err(PulseError::CompileError("Loop body too large.".into(), 0));
         }
@@ -2179,8 +2190,8 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn emit_byte(&mut self, byte: u8) {
-        let line = self.parser().previous_line();
-        self.chunk.write(byte, line);
+        let line = self.parser.borrow().previous_line();
+        self.state().chunk.write(byte, line);
     }
 
     fn emit_u16(&mut self, value: u16) {
@@ -2190,9 +2201,111 @@ impl<'a, 'b> Compiler<'a, 'b> {
     }
 
     fn emit_constant(&mut self, value: Constant) {
-        let idx = self.chunk.add_constant(value);
+        let idx = self.state().chunk.add_constant(value);
         self.emit_byte(Op::Const as u8);
         self.emit_u16(idx as u16);
     }
-}
 
+    // Resolves a local variable in the stack of states.
+    // Iterates from the current state downwards.
+    fn resolve_local(&mut self, name: &Token) -> PulseResult<Option<u8>> {
+        let state = self.state();
+        for (i, local) in state.locals.iter().enumerate().rev() {
+            if let Token::Identifier(local_name) = &local.name {
+                if let Token::Identifier(target) = name {
+                    if local_name == target {
+                        return Ok(Some(i as u8));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+    
+    // Helper to resolve local in a specific state index
+    fn resolve_local_in_state(&self, state_idx: usize, name: &Token) -> PulseResult<Option<u8>> {
+        let state = &self.states[state_idx];
+        for (i, local) in state.locals.iter().enumerate().rev() {
+            if let Token::Identifier(local_name) = &local.name {
+                if let Token::Identifier(target) = name {
+                    if local_name == target {
+                        return Ok(Some(i as u8));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn resolve_upvalue(&mut self, name: &Token) -> PulseResult<Option<u8>> {
+        let len = self.states.len();
+        if len < 2 {
+            return Ok(None);
+        }
+
+        // Search from immediate parent downwards
+        for i in (0..len - 1).rev() {
+            // Check if it's a local in state[i]
+            if let Some(index) = self.resolve_local_in_state(i, name)? {
+                return Ok(Some(self.capture_upvalue_chain(i, index)?));
+            }
+            
+            // Check if it's already an captured upvalue in state[i]
+            if let Some(index) = self.resolve_upvalue_in_state(i, name) {
+                 return Ok(Some(self.capture_upvalue_chain_from_upvalue(i, index)?));
+            }
+        }
+        Ok(None)
+    }
+    
+    fn resolve_upvalue_in_state(&self, _state_idx: usize, _name: &Token) -> Option<u8> {
+        // Since we can't easily track upvalue names without complex lookups, 
+        // and because any upvalue MUST have originated as a local in a parent scope,
+        // relying on `resolve_local_in_state` loop is sufficient for correctness 
+        // provided we walk the whole stack.
+        // The only optimization potential is reusing an existing upvalue in an intermediate scope.
+        // But `capture_upvalue_chain` handles reuse via `add_upvalue_to_state`.
+        // So we can skip this check for simplicity and correctness.
+        None
+    }
+
+    fn capture_upvalue_chain(&mut self, origin_state_idx: usize, local_index: u8) -> PulseResult<u8> {
+        let mut index = local_index;
+        let mut is_local = true;
+        
+        // Iterate from origin+1 to current (inclusive)
+        for i in (origin_state_idx + 1)..self.states.len() {
+            // Add upvalue to state[i]
+            index = self.add_upvalue_to_state(i, index, is_local);
+            is_local = false; // Subsequent captures are upvalues, not locals
+        }
+        
+        Ok(index)
+    }
+    
+    fn capture_upvalue_chain_from_upvalue(&mut self, origin_state_idx: usize, upvalue_index: u8) -> PulseResult<u8> {
+        let mut index = upvalue_index;
+        let mut is_local = false;
+        
+        for i in (origin_state_idx + 1)..self.states.len() {
+            index = self.add_upvalue_to_state(i, index, is_local);
+            is_local = false;
+        }
+        Ok(index)
+    }
+    
+    fn add_upvalue_to_state(&mut self, state_idx: usize, index: u8, is_local: bool) -> u8 {
+        let state = &mut self.states[state_idx];
+        for (i, upvalue) in state.upvalues.iter().enumerate() {
+            if upvalue.index == index && upvalue.is_local == is_local {
+                return i as u8;
+            }
+        }
+
+        state.upvalues.push(CompilerUpvalue { index, is_local });
+        (state.upvalues.len() - 1) as u8
+    }
+    
+
+
+}

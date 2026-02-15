@@ -14,6 +14,7 @@ pub enum PulseError {
     UndefinedVariable(String),
     IoError(String),
     ActorNotFound(ActorId),
+    InternalError(String),
 }
 
 impl fmt::Display for PulseError {
@@ -30,6 +31,7 @@ impl fmt::Display for PulseError {
             PulseError::UndefinedVariable(name) => write!(f, "Undefined variable: {}", name),
             PulseError::IoError(msg) => write!(f, "IO Error: {}", msg),
             PulseError::ActorNotFound(id) => write!(f, "Actor not found: {:?}", id),
+            PulseError::InternalError(msg) => write!(f, "VM Internal Error: {}", msg),
         }
     }
 }

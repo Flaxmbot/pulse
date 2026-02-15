@@ -1,0 +1,15 @@
+fn spawn_many(count) {
+  let i = 0;
+  while (i < count) {
+    spawn(fn() {
+       let x = 1;
+       // perform some work to keep actor alive briefly? 
+       // No, just spawn.
+    });
+    i = i + 1;
+  }
+}
+
+print("Starting actor stress test...");
+spawn_many(10000);
+print("Spawned 10000 actors");

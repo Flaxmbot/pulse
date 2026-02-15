@@ -211,7 +211,20 @@ async fn execute_input(input: &str, runtime: &Runtime, vm: &mut VM) {
                 VMStatus::Spawn(ip) => {
                     // This is tricky: VM wants to spawn from its CURRENT chunk.
                     // For REPL, we just spawned a temporary chunk.
-                    let current_chunk = vm.get_current_chunk();
+                    let current_chunk = match vm.get_current_chunk() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("Error getting current chunk: {:?}", e);
+                            return;
+                        }
+                    };
+                    // Use runtime.spawn_from_actor if Runtime is from pulse_runtime.
+                    // If repl.rs Runtime has handle, use it.
+                    // Assuming runtime.spawn_from_actor is correct based on actor.rs
+                    // But if original code use runtime.handle, maybe keep it?
+                    // Original: runtime.handle.spawn_from_actor
+                    // Let's check imports first. If verified, update.
+                    // For now, I will use runtime.handle as it was in original.
                     let _ = runtime.handle.spawn_from_actor(current_chunk, ip).await;
                 },
                 _ => {} // Halted, etc.

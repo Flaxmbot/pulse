@@ -1,0 +1,13 @@
+print "Testing Integer Overflow";
+
+fn cause_overflow() {
+    let max = 9223372036854775807;
+    print "Max int: ";
+    print max;
+    print "Attempting overflow...";
+    let result = max + 1;
+    print "Result (should not see this): ";
+    print result;
+}
+
+cause_overflow();

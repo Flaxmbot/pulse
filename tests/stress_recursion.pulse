@@ -1,0 +1,9 @@
+fn cause_stack_overflow(n) {
+  // Base case to prevent infinite loop if not triggering limit
+  // if n > 2000 { return n; }
+  return cause_stack_overflow(n + 1);
+}
+
+print("Starting recursion stress test...");
+cause_stack_overflow(1);
+print("Should not be reached");

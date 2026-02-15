@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use crate::Heap;
 use crate::shared_heap::{SharedHeap, SharedHandle};
 use pulse_stdlib::utils::{clock_native, println_native, gc_native, len_native, push_native, pop_native};
+
+const MAX_FRAMES: usize = 1024;
+
+
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     pub closure: ObjHandle, 
@@ -612,20 +616,20 @@ impl VM {
 
 
 
-    pub fn get_current_chunk(&self) -> Arc<Chunk> {
-         let frame = self.frames.last().expect("No frame");
-         let closure = self.heap.get(frame.closure).expect("Closure not found");
+    pub fn get_current_chunk(&self) -> PulseResult<Arc<Chunk>> {
+         let frame = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?;
+         let closure = self.heap.get(frame.closure).ok_or(PulseError::InternalError("Closure not found".into()))?;
          match closure {
-             Object::Closure(c) => c.function.chunk.clone(),
-             _ => panic!("Frame closure invalid"),
+             Object::Closure(c) => Ok(c.function.chunk.clone()),
+             _ => Err(PulseError::InternalError("Frame closure invalid".into())),
          }
     }
-    pub fn get_current_chunk_const(&self, idx: usize) -> Constant {
-        let chunk = self.get_current_chunk();
+    pub fn get_current_chunk_const(&self, idx: usize) -> PulseResult<Constant> {
+        let chunk = self.get_current_chunk()?;
         if idx >= chunk.constants.len() {
-             panic!("Constant index out of bounds: {} >= {}. Last op might have had bad operand.", idx, chunk.constants.len());
+             return Err(PulseError::InternalError(format!("Constant index out of bounds: {} >= {}. Last op might have had bad operand.", idx, chunk.constants.len())));
         }
-        chunk.constants[idx].clone()
+        Ok(chunk.constants[idx].clone())
     }
 
 
@@ -653,11 +657,12 @@ impl VM {
             // Check bounds? read_byte will panic if out of bounds, or result in error?
             // Better to check.
             let (current_ip, current_line, frame_depth) = {
-                 let frame = self.frames.last().expect("No frame");
-                 let closure = self.heap.get(frame.closure).expect("Closure not found");
+
+                 let frame = if let Some(f) = self.frames.last() { f } else { return VMStatus::Error(PulseError::InternalError("No frame".into())); };
+                 let closure = if let Some(c) = self.heap.get(frame.closure) { c } else { return VMStatus::Error(PulseError::InternalError("Closure not found".into())); };
                  let chunk = match closure {
                      Object::Closure(c) => &c.function.chunk,
-                     _ => panic!("Frame closure invalid"),
+                     _ => return VMStatus::Error(PulseError::InternalError("Frame closure invalid".into())),
                  };
                  if frame.ip >= chunk.code.len() {
                      return VMStatus::Halted; // Or Return from script?
@@ -969,7 +974,7 @@ impl VM {
 
                     Op::Const => {
                         let const_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
-                        let constant = self.get_current_chunk_const(const_idx);
+                        let constant = self.get_current_chunk_const(const_idx)?;
                         let val = match constant {
                             Constant::Bool(b) => Value::Bool(b),
                             Constant::Int(i) => Value::Int(i),
@@ -1004,7 +1009,10 @@ impl VM {
                         let b = self.pop()?;
                         let a = self.pop()?;
                         match (a, b) {
-                            (Value::Int(v1), Value::Int(v2)) => self.push(Value::Int(v1 + v2)),
+                            (Value::Int(v1), Value::Int(v2)) => match v1.checked_add(v2) {
+                                Some(sum) => self.push(Value::Int(sum)),
+                                None => return Err(PulseError::RuntimeError("Integer overflow".into())),
+                            },
                             (Value::Float(v1), Value::Float(v2)) => self.push(Value::Float(v1 + v2)),
                             (Value::Int(v1), Value::Float(v2)) => self.push(Value::Float(v1 as f64 + v2)),
                             (Value::Float(v1), Value::Int(v2)) => self.push(Value::Float(v1 + v2 as f64)),
@@ -1027,7 +1035,10 @@ impl VM {
                         let b = self.pop()?;
                         let a = self.pop()?;
                         match (a, b) {
-                            (Value::Int(v1), Value::Int(v2)) => self.push(Value::Int(v1 - v2)),
+                            (Value::Int(v1), Value::Int(v2)) => match v1.checked_sub(v2) {
+                                Some(diff) => self.push(Value::Int(diff)),
+                                None => return Err(PulseError::RuntimeError("Integer overflow".into())),
+                            },
                             (Value::Float(v1), Value::Float(v2)) => self.push(Value::Float(v1 - v2)),
                             (Value::Int(v1), Value::Float(v2)) => self.push(Value::Float(v1 as f64 - v2)),
                             (Value::Float(v1), Value::Int(v2)) => self.push(Value::Float(v1 - v2 as f64)),
@@ -1040,7 +1051,10 @@ impl VM {
                         let b = self.pop()?;
                         let a = self.pop()?;
                         match (a, b) {
-                            (Value::Int(v1), Value::Int(v2)) => self.push(Value::Int(v1 * v2)),
+                            (Value::Int(v1), Value::Int(v2)) => match v1.checked_mul(v2) {
+                                Some(prod) => self.push(Value::Int(prod)),
+                                None => return Err(PulseError::RuntimeError("Integer overflow".into())),
+                            },
                             (Value::Float(v1), Value::Float(v2)) => self.push(Value::Float(v1 * v2)),
                             (Value::Int(v1), Value::Float(v2)) => self.push(Value::Float(v1 as f64 * v2)),
                             (Value::Float(v1), Value::Int(v2)) => self.push(Value::Float(v1 * v2 as f64)),
@@ -1055,7 +1069,10 @@ impl VM {
                         match (a, b) {
                             (Value::Int(v1), Value::Int(v2)) => {
                                 if v2 == 0 { return Err(PulseError::RuntimeError("Division by zero".into())); }
-                                self.push(Value::Int(v1 / v2))
+                                match v1.checked_div(v2) {
+                                  Some(quot) => self.push(Value::Int(quot)),
+                                  None => return Err(PulseError::RuntimeError("Integer overflow".into())),
+                                }
                             },
                             (Value::Float(v1), Value::Float(v2)) => self.push(Value::Float(v1 / v2)),
                             (Value::Int(v1), Value::Float(v2)) => self.push(Value::Float(v1 as f64 / v2)),
@@ -1092,14 +1109,35 @@ impl VM {
 
                     Op::Jump => {
                         let offset = self.read_u16();
-                        self.frames.last_mut().unwrap().ip += offset as usize;
+                        let frame = self.frames.last_mut().ok_or(PulseError::InternalError("No frame".into()))?;
+                        let new_ip = frame.ip + offset as usize;
+                        let chunk_len = {
+                          let closure_handle = frame.closure;
+                          let closure = if let Some(Object::Closure(c)) = self.heap.get(closure_handle) { c } else { return Err(PulseError::InternalError("Frame closure invalid".into())); };
+                          closure.function.chunk.code.len()
+                        };
+                        
+                        if new_ip > chunk_len {
+                            return Err(PulseError::RuntimeError("Jump out of bounds".into()));
+                        }
+                        frame.ip = new_ip;
                         return Ok(VMStatus::Running);
                     }
 
                     Op::JumpIfFalse => {
                         let offset = self.read_u16();
                         if !self.is_truthy(self.peek(0)) {
-                            self.frames.last_mut().unwrap().ip += offset as usize;
+                             let frame = self.frames.last_mut().ok_or(PulseError::InternalError("No frame".into()))?;
+                             let new_ip = frame.ip + offset as usize;
+                             let chunk_len = {
+                               let closure_handle = frame.closure;
+                               let closure = if let Some(Object::Closure(c)) = self.heap.get(closure_handle) { c } else { return Err(PulseError::InternalError("Frame closure invalid".into())); };
+                               closure.function.chunk.code.len()
+                             };
+                            if new_ip > chunk_len {
+                                return Err(PulseError::RuntimeError("Jump out of bounds".into()));
+                            }
+                            frame.ip = new_ip;
                         }
                         return Ok(VMStatus::Running);
                     }
@@ -1120,7 +1158,7 @@ impl VM {
                                  }).unwrap_or(0);
 
                                  if obj_type == 1 { // Native
-                                     let native = if let Some(Object::NativeFn(n)) = self.heap.get(handle) { n.clone() } else { unreachable!() };
+                                     let native = if let Some(Object::NativeFn(n)) = self.heap.get(handle) { n.clone() } else { return Err(PulseError::InternalError("Expected NativeFn".into())); };
                                      let args_start = self.stack.len() - arg_count;
                                      let args = self.stack[args_start..].to_vec();
 
@@ -1135,7 +1173,7 @@ impl VM {
                                      self.push(result);
                                      return Ok(VMStatus::Running);
                                  } else if obj_type == 2 { // Closure
-                                     let arity = if let Some(Object::Closure(c)) = self.heap.get(handle) { c.function.arity } else { unreachable!() };
+                                     let arity = if let Some(Object::Closure(c)) = self.heap.get(handle) { c.function.arity } else { return Err(PulseError::InternalError("Expected Closure".into())); };
                                      if arg_count != arity {
                                          return Err(PulseError::RuntimeError(format!("Expected {} args, got {}", arity, arg_count)));
                                      }
@@ -1147,10 +1185,13 @@ impl VM {
                                           module_path: None,
                                           prev_globals: None,
                                       };
+                                     if self.frames.len() >= MAX_FRAMES {
+                                         return Err(PulseError::StackOverflow);
+                                     }
                                      self.frames.push(frame);
                                      return Ok(VMStatus::Running);
                                  } else if obj_type == 3 { // Class
-                                     let class = if let Some(Object::Class(c)) = self.heap.get(handle) { c.clone() } else { unreachable!() };
+                                     let class = if let Some(Object::Class(c)) = self.heap.get(handle) { c.clone() } else { return Err(PulseError::InternalError("Expected Class".into())); };
                                      let instance = Instance {
                                          class: Arc::new(class.clone()),
                                          fields: HashMap::new(),
@@ -1179,6 +1220,9 @@ impl VM {
                                                           module_path: None,
                                                           prev_globals: None,
                                                       };
+                                                     if self.frames.len() >= MAX_FRAMES {
+                                                         return Err(PulseError::StackOverflow);
+                                                     }
                                                      self.frames.push(frame);
                                                      return Ok(VMStatus::Running);
                                                  }
@@ -1191,7 +1235,7 @@ impl VM {
                                      return Ok(VMStatus::Running);
                                  } else if obj_type == 4 { // BoundMethod
                                      eprintln!("Calling BoundMethod");
-                                     let bound = if let Some(Object::BoundMethod(b)) = self.heap.get(handle) { b.clone() } else { unreachable!() };
+                                     let bound = if let Some(Object::BoundMethod(b)) = self.heap.get(handle) { b.clone() } else { return Err(PulseError::InternalError("Expected BoundMethod".into())); };
                                      let stack_idx = self.stack.len() - arg_count - 1;
                                      self.stack[stack_idx] = bound.receiver; // Set 'this'
                                      eprintln!("BoundMethod set 'this', arg_count: {}", arg_count);
@@ -1239,6 +1283,9 @@ impl VM {
                                           module_path: None,
                                           prev_globals: None,
                                       };
+                                     if self.frames.len() >= MAX_FRAMES {
+                                         return Err(PulseError::StackOverflow);
+                                     }
                                      self.frames.push(frame);
                                      return Ok(VMStatus::Running);
                                      
@@ -1287,7 +1334,7 @@ impl VM {
                     Op::Closure => {
                         let const_idx = self.read_u16() as usize;
                         // println!("Closure const_idx: {}", const_idx);
-                        let constant = self.get_current_chunk_const(const_idx);
+                        let constant = self.get_current_chunk_const(const_idx)?;
                         // println!("Closure constant type: {:?}", constant); // Just print, assume Debug
                         let function = match constant {
                             Constant::Function(f) => f,
@@ -1299,11 +1346,11 @@ impl VM {
                             let is_local = self.read_byte() == 1;
                             let index = self.read_byte();
                             if is_local {
-                                let frame_start = self.frames.last().unwrap().stack_start;
+                                let frame_start = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.stack_start;
                                 upvalues.push(self.capture_upvalue(frame_start + index as usize));
                             } else {
                                 // Capture from current closure's upvalues
-                                let current_closure_handle = self.frames.last().unwrap().closure;
+                                let current_closure_handle = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.closure;
                                 if let Some(Object::Closure(c)) = self.heap.get(current_closure_handle) {
                                      upvalues.push(c.upvalues[index as usize]);
                                 }
@@ -1321,7 +1368,7 @@ impl VM {
 
                     Op::GetUpvalue => {
                         let slot = self.read_byte();
-                        let closure_handle = self.frames.last().unwrap().closure;
+                        let closure_handle = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.closure;
                         let val = if let Some(Object::Closure(c)) = self.heap.get(closure_handle) {
                             let uv_handle = c.upvalues[slot as usize];
                             if let Some(Object::Upvalue(uv)) = self.heap.get(uv_handle) {
@@ -1340,7 +1387,7 @@ impl VM {
                     Op::SetUpvalue => {
                         let slot = self.read_byte();
                         let val = self.peek(0).clone();
-                        let closure_handle = self.frames.last().unwrap().closure;
+                        let closure_handle = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.closure;
                         if let Some(Object::Closure(c)) = self.heap.get(closure_handle) {
                             let uv_handle = c.upvalues[slot as usize];
                             if let Some(Object::Upvalue(uv)) = self.heap.get_mut(uv_handle) {
@@ -1386,7 +1433,7 @@ impl VM {
 
                     Op::GetGlobal => {
                         let name_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
-                        let constant = self.get_current_chunk_const(name_idx);
+                        let constant = self.get_current_chunk_const(name_idx)?;
                         let name = match constant {
                             Constant::String(s) => s.clone(),
                             _ => return Err(PulseError::RuntimeError("Global name must be string".into())),
@@ -1412,7 +1459,7 @@ impl VM {
 
                     Op::SetGlobal => {
                         let name_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
-                        let constant = self.get_current_chunk_const(name_idx);
+                        let constant = self.get_current_chunk_const(name_idx)?;
                         let name = match constant {
                              Constant::String(s) => s.clone(),
                              _ => return Err(PulseError::RuntimeError("Global name must be string".into())),
@@ -1432,7 +1479,7 @@ impl VM {
 
                     Op::DefineGlobal => {
                         let name_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
-                        let constant = self.get_current_chunk_const(name_idx);
+                        let constant = self.get_current_chunk_const(name_idx)?;
                         let name = match constant {
                              Constant::String(s) => s.clone(),
                              _ => return Err(PulseError::RuntimeError("Global name must be string".into())),
@@ -1491,7 +1538,11 @@ impl VM {
 
                     Op::Loop => {
                         let offset = self.read_u16();
-                        self.frames.last_mut().unwrap().ip -= offset as usize;
+                        let frame = self.frames.last_mut().unwrap();
+                         match frame.ip.checked_sub(offset as usize) {
+                            Some(new_ip) => frame.ip = new_ip,
+                            None => return Err(PulseError::RuntimeError("Loop jump underflow".into())),
+                        }
                         return Ok(VMStatus::Running);
                     }
 
@@ -1612,7 +1663,7 @@ impl VM {
 
                     Op::Import => {
                         let path_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
-                        let constant = self.get_current_chunk_const(path_idx);
+                        let constant = self.get_current_chunk_const(path_idx)?;
                         let path = match constant {
                             Constant::String(s) => s.clone(),
                             _ => return Err(PulseError::TypeMismatch { expected: "string".into(), got: "other constant".into() }),
@@ -1816,14 +1867,14 @@ impl VM {
                         let name_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
                         let has_super = self.read_byte();
 
-                        let name = match self.get_current_chunk_const(name_idx) {
+                        let name = match self.get_current_chunk_const(name_idx)? {
                             Constant::String(s) => s,
                             _ => return Err(PulseError::RuntimeError("Class name must be string".into())),
                         };
 
                         let superclass = if has_super == 1 {
                             let super_idx = self.read_u16() as usize; // Changed from read_byte() to read_u16() to support larger indices
-                            let super_val = self.get_current_chunk_const(super_idx);
+                            let super_val = self.get_current_chunk_const(super_idx)?;
                             // For now, we'll represent the superclass as a placeholder
                             // In a full implementation, we'd look up the actual class
                             Some(Box::new(Object::String(format!("superclass_placeholder_{}",
@@ -1853,7 +1904,7 @@ impl VM {
 
                     Op::GetSuper => {
                         let name_idx = self.read_u16() as usize;
-                        let constant = self.get_current_chunk_const(name_idx);
+                        let constant = self.get_current_chunk_const(name_idx)?;
                         let name = match constant {
                             Constant::String(s) => s.clone(),
                             _ => return Err(PulseError::RuntimeError("Method name must be string".into())),
@@ -1892,7 +1943,7 @@ impl VM {
 
                     Op::Method => {
                         let name_idx = self.read_u16() as usize;
-                        let constant = self.get_current_chunk_const(name_idx);
+                        let constant = self.get_current_chunk_const(name_idx)?;
                         let name = match constant {
                             Constant::String(s) => s.clone(),
                             _ => return Err(PulseError::RuntimeError("Method name must be string".into())),
