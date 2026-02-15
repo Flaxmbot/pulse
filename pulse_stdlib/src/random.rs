@@ -240,11 +240,11 @@ pub fn poisson_sample_native(_heap: &mut dyn HeapInterface, args: &[Value]) -> P
 
     // Knuth's algorithm for Poisson sampling
     let mut rng = GLOBAL_RNG.lock().map_err(|e| PulseError::RuntimeError(e.to_string()))?;
-    let L = (-lambda).exp();
+    let l = (-lambda).exp();
     let mut k = 0;
     let mut p = 1.0;
     
-    while p > L {
+    while p > l {
         k += 1;
         p *= rng.gen::<f64>();
     }

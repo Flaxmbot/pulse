@@ -295,7 +295,7 @@ pub fn array_get_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
     }
 
     // Validate indices
-    for (i, (idx, dim)) in indices.iter().zip(shape.iter()).enumerate() {
+    for (_i, (idx, dim)) in indices.iter().zip(shape.iter()).enumerate() {
         if *idx >= *dim {
             return Err(PulseError::RuntimeError(format!(
                 "Index {} out of bounds for dimension with size {}", idx, dim
@@ -332,7 +332,7 @@ pub fn array_set_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
     }
 
     // Validate indices
-    for (i, (idx, dim)) in indices.iter().zip(shape.iter()).enumerate() {
+    for (_i, (idx, dim)) in indices.iter().zip(shape.iter()).enumerate() {
         if *idx >= *dim {
             return Err(PulseError::RuntimeError(format!(
                 "Index {} out of bounds for dimension with size {}", idx, dim

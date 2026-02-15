@@ -161,7 +161,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                         self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).as_basic_value_enum()
                     }
                     Constant::String(_) => {
-                        self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).const_null().as_basic_value_enum()
+                        self.context.ptr_type(inkwell::AddressSpace::default()).const_null().as_basic_value_enum()
                     }
                     Constant::Unit => {
                         self.context.i64_type().const_zero().as_basic_value_enum()
@@ -348,7 +348,7 @@ impl<'ctx> LLVMBackend<'ctx> {
             Op::SetIndex => { let _ = self.pop_value(); let _ = self.pop_value(); let _ = self.pop_value(); }
             Op::Len | Op::IsList | Op::IsMap | Op::Slice | Op::MapContainsKey => { if self.pop_value().is_some() { self.push_value(self.context.i64_type().const_zero().as_basic_value_enum()); } }
             Op::Slide => { *ip += 1; let _ = chunk.code[*ip]; let _ = self.pop_value(); }
-            Op::ToString => { if self.pop_value().is_some() { self.push_value(self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).const_null().as_basic_value_enum()); } }
+            Op::ToString => { if self.pop_value().is_some() { self.push_value(self.context.ptr_type(inkwell::AddressSpace::default()).const_null().as_basic_value_enum()); } }
             Op::Unit => { self.push_value(self.context.i64_type().const_zero().as_basic_value_enum()); }
             Op::Dup => { if let Some(val) = self.peek_value() { self.push_value(val); } }
             Op::Pop => { let _ = self.pop_value(); }

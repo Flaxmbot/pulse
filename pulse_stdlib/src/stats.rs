@@ -26,7 +26,7 @@ fn extract_float(heap: &dyn HeapInterface, value: &Value) -> PulseResult<f64> {
     }
 }
 
-fn extract_int(heap: &dyn HeapInterface, value: &Value) -> PulseResult<i64> {
+fn extract_int(_heap: &dyn HeapInterface, value: &Value) -> PulseResult<i64> {
     match value {
         Value::Int(i) => Ok(*i),
         Value::Float(f) => Ok(*f as i64),
@@ -38,6 +38,7 @@ fn list_to_f64_vec(heap: &dyn HeapInterface, list: &[Value]) -> PulseResult<Vec<
     list.iter().map(|v| extract_float(heap, v)).collect()
 }
 
+#[allow(dead_code)]
 fn f64_vec_to_list(heap: &mut dyn HeapInterface, vec: Vec<f64>) -> Value {
     let list: Vec<Value> = vec.into_iter().map(|f| Value::Float(f)).collect();
     Value::Obj(heap.alloc_object(Object::List(list)))
@@ -374,7 +375,7 @@ pub fn normal_sample_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
     }
 
     let mut rng = rand::thread_rng();
-    let sample: f64 = rng.gen_range(-1.0..1.0);
+    let _sample: f64 = rng.gen_range(-1.0..1.0);
     // Box-Muller transform
     let u1: f64 = rng.gen();
     let u2: f64 = rng.gen();

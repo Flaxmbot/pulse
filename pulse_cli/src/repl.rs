@@ -3,14 +3,16 @@
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use pulse_runtime::Runtime;
+use pulse_vm::{VM, VMStatus};
+use pulse_core::Chunk;
 use std::path::PathBuf;
 
 const PROMPT: &str = "pulse> ";
 const CONTINUATION_PROMPT: &str = "...> ";
 const HISTORY_FILE: &str = ".pulse_history";
 
-pub fn start() {
-    println!("Pulse REPL v0.1");
+pub async fn start() {
+    println!("Pulse REPL v0.1.0");
     println!("Type :help for available commands, :quit to exit.\n");
 
     let mut rl = match DefaultEditor::new() {
@@ -25,8 +27,16 @@ pub fn start() {
     let history_path = get_history_path();
     let _ = rl.load_history(&history_path);
 
-    // Persistent runtime across REPL session
-    let mut runtime = Runtime::new(1);
+    // Persistent runtime and VM across REPL session
+    let runtime = Runtime::new(0);
+    
+    // Create a persistent VM for the REPL environment
+    let mut vm = VM::new(
+        Chunk::new(), 
+        pulse_core::ActorId::new(0, 0), // PID 0,0 for REPL
+        Some(runtime.handle.shared_heap())
+    );
+    
     let mut input_buffer = String::new();
 
     loop {
@@ -36,7 +46,7 @@ pub fn start() {
             Ok(line) => {
                 // Handle special commands
                 if input_buffer.is_empty() && line.starts_with(':') {
-                    if handle_command(&line, &mut runtime) {
+                    if handle_command(&line, &runtime, &mut vm).await {
                         continue;
                     } else {
                         break; // :quit was called
@@ -55,7 +65,7 @@ pub fn start() {
                 let _ = rl.add_history_entry(input_buffer.trim());
 
                 // Compile and execute
-                execute_input(&input_buffer, &mut runtime);
+                execute_input(&input_buffer, &runtime, &mut vm).await;
                 input_buffer.clear();
             }
             Err(ReadlineError::Interrupted) => {
@@ -79,7 +89,7 @@ pub fn start() {
     let _ = rl.save_history(&history_path);
 }
 
-fn handle_command(cmd: &str, runtime: &mut Runtime) -> bool {
+async fn handle_command(cmd: &str, runtime: &Runtime, vm: &mut VM) -> bool {
     let parts: Vec<&str> = cmd.trim().split_whitespace().collect();
     let base_cmd = parts.get(0).map(|s| *s).unwrap_or("");
     
@@ -91,12 +101,8 @@ fn handle_command(cmd: &str, runtime: &mut Runtime) -> bool {
             println!("  :clear, :c        Clear the screen");
             println!("  :gc               Force garbage collection");
             println!("  :actors           List active actors");
+            println!("  :globals          List all global variables");
             println!("\nDebug commands:");
-            println!("  :break <line>     Set breakpoint at line");
-            println!("  :breakpoints      List all breakpoints");
-            println!("  :delete <line>    Delete breakpoint");
-            println!("  :step, :s         Step one instruction");
-            println!("  :continue         Continue execution");
             println!("  :stack            Show current stack");
             println!();
             true
@@ -111,6 +117,7 @@ fn handle_command(cmd: &str, runtime: &mut Runtime) -> bool {
         }
         ":gc" => {
             println!("Forcing garbage collection...");
+            vm.collect_garbage();
             println!("GC completed.");
             true
         }
@@ -119,47 +126,22 @@ fn handle_command(cmd: &str, runtime: &mut Runtime) -> bool {
             println!("Active actors: {}", count);
             true
         }
-        ":break" => {
-            if let Some(line_str) = parts.get(1) {
-                if let Ok(line) = line_str.parse::<usize>() {
-                    println!("Breakpoint set at line {}", line);
-                    // Note: Breakpoints are stored per-session, applied when compiling
-                    println!("(Breakpoints will take effect on next execution)");
-                } else {
-                    println!("Usage: :break <line_number>");
-                }
-            } else {
-                println!("Usage: :break <line_number>");
+        ":globals" => {
+            println!("Global Variables:");
+            for (name, value) in &vm.globals {
+                print!("  {} = ", name);
+                vm.print_value(value);
+                println!();
             }
-            true
-        }
-        ":breakpoints" => {
-            println!("Breakpoints: (feature coming soon)");
-            true
-        }
-        ":delete" => {
-            if let Some(line_str) = parts.get(1) {
-                if let Ok(line) = line_str.parse::<usize>() {
-                    println!("Deleted breakpoint at line {}", line);
-                } else {
-                    println!("Usage: :delete <line_number>");
-                }
-            } else {
-                println!("Usage: :delete <line_number>");
-            }
-            true
-        }
-        ":step" | ":s" => {
-            println!("Step mode enabled for next execution.");
-            true
-        }
-        ":continue" => {
-            println!("Continuing execution...");
             true
         }
         ":stack" => {
-            println!("Stack: (no active debug session)");
-            println!("Hint: Set a breakpoint first, then run code.");
+            println!("Stack:");
+            for (i, val) in vm.stack.iter().enumerate() {
+                print!("  [{}] ", i);
+                vm.print_value(val);
+                println!();
+            }
             true
         }
         _ => {
@@ -170,7 +152,7 @@ fn handle_command(cmd: &str, runtime: &mut Runtime) -> bool {
 }
 
 fn is_complete(input: &str) -> bool {
-    let mut brace_depth = 0i32;
+    let mut brace_depth = 0;
     let mut paren_depth = 0i32;
     let mut bracket_depth = 0i32;
     let mut in_string = false;
@@ -195,10 +177,10 @@ fn is_complete(input: &str) -> bool {
         }
     }
 
-    brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 && !in_string
+    brace_depth <= 0 && paren_depth <= 0 && bracket_depth <= 0 && !in_string
 }
 
-fn execute_input(input: &str, runtime: &mut Runtime) {
+async fn execute_input(input: &str, runtime: &Runtime, vm: &mut VM) {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return;
@@ -214,19 +196,32 @@ fn execute_input(input: &str, runtime: &mut Runtime) {
 
     match pulse_compiler::compile(&source, None) {
         Ok(chunk) => {
-            runtime.spawn(chunk, None);
-            // Run until idle
-            let mut idle = 0;
-            while idle < 3 {
-                if !runtime.step() {
-                    idle += 1;
-                } else {
-                    idle = 0;
-                }
+            let status = vm.execute_chunk(chunk).await;
+            
+            // Handle effects (Spawn, Send, etc.) for the REPL actor
+            while let VMStatus::Running = status {
+                 // In execute_chunk, we call vm.run(usize::MAX), so it should
+                 // only return if it halts, errors, or needs an effect.
+                 // Actually, VMStatus::Running shouldn't be returned by vm.run(MAX).
+                 break;
             }
+            
+            match status {
+                VMStatus::Error(e) => eprintln!("Runtime Error: {}", e),
+                VMStatus::Spawn(ip) => {
+                    // This is tricky: VM wants to spawn from its CURRENT chunk.
+                    // For REPL, we just spawned a temporary chunk.
+                    let current_chunk = vm.get_current_chunk();
+                    let _ = runtime.handle.spawn_from_actor(current_chunk, ip).await;
+                },
+                _ => {} // Halted, etc.
+            }
+            
+            // Allow background actors to run a bit
+            tokio::task::yield_now().await;
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            eprintln!("Compilation Error: {}", e);
         }
     }
 }

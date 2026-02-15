@@ -13,7 +13,7 @@ use pulse_vm::shared_heap::create_shared_heap;
 use crate::actor::Actor;
 use crate::mailbox::{Message, SystemMessage};
 use crate::network::MessageEnvelope;
-use crate::cluster::{Cluster, NodeId, Node, create_cluster};
+use crate::cluster::{Cluster, Node, create_cluster};
 
 pub struct Runtime {
     pub handle: RuntimeHandle,
@@ -41,6 +41,9 @@ struct RuntimeState {
     active_count: AtomicUsize,
     shutdown_notify: Notify,
     
+    // Errors collected during runtime
+    errors: RwLock<Vec<String>>,
+    
     // Cluster management
     cluster: RwLock<Option<Cluster>>,
 }
@@ -56,6 +59,7 @@ impl Runtime {
             peers: RwLock::new(HashMap::new()),
             active_count: AtomicUsize::new(0),
             shutdown_notify: Notify::new(),
+            errors: RwLock::new(Vec::new()),
             cluster: RwLock::new(None),
         };
         
@@ -66,16 +70,20 @@ impl Runtime {
         }
     }
     
-    pub async fn run(&self) {
+    pub async fn run(&self) -> Result<(), String> {
         // Wait until active count is 0
-        // If it starts at 0, we should probably check immediately?
-        // But usually we spawn at least one before running.
         let count = self.handle.state.active_count.load(Ordering::SeqCst);
-        if count == 0 {
-             return;
+        if count > 0 {
+            self.handle.state.shutdown_notify.notified().await;
         }
         
-        self.handle.state.shutdown_notify.notified().await;
+        // Check for errors
+        let errors = self.handle.state.errors.read().await;
+        if !errors.is_empty() {
+            return Err(errors.join("\n"));
+        }
+        
+        Ok(())
     }
 }
 
@@ -91,6 +99,7 @@ impl RuntimeHandle {
             peers: RwLock::new(HashMap::new()),
             active_count: AtomicUsize::new(0),
             shutdown_notify: Notify::new(),
+            errors: RwLock::new(Vec::new()),
             cluster: RwLock::new(None),
         };
         Self { state: Arc::new(state) }
@@ -100,6 +109,11 @@ impl RuntimeHandle {
     pub fn shared_heap(&self) -> Arc<pulse_vm::shared_heap::SharedHeap> {
         self.state.shared_heap.clone()
     }
+
+    pub fn get_actor_count(&self) -> usize {
+        self.state.active_count.load(Ordering::SeqCst)
+    }
+
 
     pub async fn spawn(&self, chunk: Chunk, module_path: Option<String>) -> ActorId {
         let pid_num = self.state.next_pid.fetch_add(1, Ordering::Relaxed);
@@ -219,7 +233,9 @@ impl RuntimeHandle {
     
     pub async fn exit(&self, pid: ActorId, reason: String) {
         if reason != "normal" {
-            eprintln!("Actor {:?} exited with error: {}", pid, reason);
+            tracing::error!("Actor {:?} exited with error: {}", pid, reason);
+            let mut errors = self.state.errors.write().await;
+            errors.push(format!("Actor {:?} failed: {}", pid, reason));
         }
         // Remove from registry
         {

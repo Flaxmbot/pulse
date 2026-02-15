@@ -24,7 +24,7 @@ fn extract_float(heap: &dyn HeapInterface, value: &Value) -> PulseResult<f64> {
     }
 }
 
-fn extract_int(heap: &dyn HeapInterface, value: &Value) -> PulseResult<i64> {
+fn extract_int(_heap: &dyn HeapInterface, value: &Value) -> PulseResult<i64> {
     match value {
         Value::Int(i) => Ok(*i),
         Value::Float(f) => Ok(*f as i64),

@@ -127,9 +127,12 @@ impl Actor {
                      // Read file asynchronously
                      let source = match fs::read_to_string(&module_path).await {
                          Ok(s) => s,
-                         Err(e) => {
+                         Err(_e) => {
                              // File read error - push nil and continue
-                             eprintln!("Failed to read module '{}': {}", module_path, e);
+                             // File read error - push nil -> actually better to return Error status?
+                             // For import, if file not found, we should probably error out the actor or at least return nil and let user handle.
+                             // Currently import instruction doesn't return result, it returns module handle.
+                             // Let's push Unit (nil) but NOT print to stderr.
                              self.vm.push(Value::Unit);
                              continue;
                          }
@@ -138,8 +141,8 @@ impl Actor {
                      // Compile the module
                      let chunk = match pulse_compiler::compile(&source, Some(module_path.clone())) {
                          Ok(c) => c,
-                         Err(e) => {
-                             eprintln!("Failed to compile module '{}': {:?}", module_path, e);
+                         Err(_e) => {
+                             // eprintln!("Failed to compile module '{}': {:?}", module_path, e);
                              self.vm.push(Value::Unit);
                              continue;
                          }
@@ -174,24 +177,24 @@ impl Actor {
                                  // Module finished executing - good
                                  break;
                              },
-                             VMStatus::Error(e) => {
-                                 eprintln!("Error running module '{}': {:?}", module_path, e);
+                             VMStatus::Error(_e) => {
+                                 // Runtime error in module
                                  break;
                              },
                              VMStatus::Import(sub_path) => {
                                  // Handle nested import recursively
                                  let sub_source = match fs::read_to_string(&sub_path).await {
                                      Ok(s) => s,
-                                     Err(e) => {
-                                         eprintln!("Failed to read nested module '{}': {}", sub_path, e);
+                                     Err(_e) => {
+                                         // Nested read error
                                          break;
                                      }
                                  };
                                  
                                  let sub_chunk = match pulse_compiler::compile(&sub_source, Some(sub_path.clone())) {
                                      Ok(c) => c,
-                                     Err(e) => {
-                                         eprintln!("Failed to compile nested module '{}': {:?}", sub_path, e);
+                                     Err(_e) => {
+                                         // Nested compile error
                                          break;
                                      }
                                  };

@@ -4,7 +4,7 @@
 
 use pulse_core::{Value, PulseResult, PulseError};
 use pulse_core::object::{HeapInterface, Object};
-use std::collections::HashMap;
+// use std::collections::HashMap;
 
 // Helper functions
 fn extract_float(heap: &dyn HeapInterface, value: &Value) -> PulseResult<f64> {
@@ -23,7 +23,7 @@ fn extract_float(heap: &dyn HeapInterface, value: &Value) -> PulseResult<f64> {
     }
 }
 
-fn extract_int(heap: &dyn HeapInterface, value: &Value) -> PulseResult<i64> {
+fn extract_int(_heap: &dyn HeapInterface, value: &Value) -> PulseResult<i64> {
     match value {
         Value::Int(i) => Ok(*i),
         Value::Float(f) => Ok(*f as i64),
@@ -94,7 +94,7 @@ pub fn bar_chart_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
     let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
     let range = if max_val - min_val == 0.0 { 1.0 } else { max_val - min_val };
     
-    let chart_width = 40;
+    let _chart_width = 40;
     let bar_max_width = 20;
     
     let mut output = String::new();
@@ -334,8 +334,8 @@ pub fn box_plot_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
     let q3 = sorted[q3_idx];
     let iqr = q3 - q1;
     
-    let lower_whisker = (q1 - 1.5 * iqr).max(min);
-    let upper_whisker = (q3 + 1.5 * iqr).min(max);
+    let _lower_whisker = (q1 - 1.5 * iqr).max(min);
+    let _upper_whisker = (q3 + 1.5 * iqr).min(max);
     
     let width = 40;
     let range = max - min;

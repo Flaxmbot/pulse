@@ -158,8 +158,8 @@ pub fn format_time_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
     };
     
     let secs = timestamp as i64;
-    let naive = match NaiveDateTime::from_timestamp_opt(secs, 0) {
-        Some(n) => n,
+    let naive = match DateTime::from_timestamp(secs, 0) {
+        Some(dt) => dt.naive_utc(),
         None => return Err(PulseError::RuntimeError("Invalid timestamp".into())),
     };
     let datetime: DateTime<Local> = DateTime::from_naive_utc_and_offset(naive, *Local::now().offset());
@@ -378,8 +378,8 @@ pub fn unix_to_datetime_native(heap: &mut dyn HeapInterface, args: &[Value]) -> 
     };
     
     let secs = timestamp as i64;
-    let naive = match NaiveDateTime::from_timestamp_opt(secs, 0) {
-        Some(n) => n,
+    let naive = match DateTime::from_timestamp(secs, 0) {
+        Some(dt) => dt.naive_utc(),
         None => return Err(PulseError::RuntimeError("Invalid timestamp".into())),
     };
     let datetime: DateTime<Local> = DateTime::from_naive_utc_and_offset(naive, *Local::now().offset());
@@ -426,8 +426,8 @@ pub fn datetime_to_unix_native(heap: &mut dyn HeapInterface, args: &[Value]) -> 
                 let minute = get_field(m, "minute")? as u32;
                 let second = get_field(m, "second")? as u32;
                 
-                let naive = match NaiveDateTime::from_timestamp_opt(second as i64, 0) {
-                    Some(n) => n,
+                let naive = match DateTime::from_timestamp(second as i64, 0) {
+                    Some(dt) => dt.naive_utc(),
                     None => return Err(PulseError::RuntimeError("Invalid datetime".into())),
                 };
                 let naive = naive

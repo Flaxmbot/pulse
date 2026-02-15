@@ -579,6 +579,39 @@ impl VM {
         vm
     }
 
+    /// Execute a new chunk in the context of this VM (useful for REPL)
+    pub async fn execute_chunk(&mut self, chunk: Chunk) -> VMStatus {
+        let function = Function {
+            arity: 0,
+            chunk: Arc::new(chunk),
+            name: "repl_snippet".to_string(),
+            upvalue_count: 0,
+            module_path: None,
+        };
+        // let func_handle = self.heap.alloc(Object::Function(function.clone()));
+        let closure = Closure {
+            function,
+            upvalues: Vec::new(),
+        };
+        let closure_handle = self.heap.alloc(Object::Closure(closure));
+        
+        let frame = CallFrame {
+            closure: closure_handle,
+            ip: 0,
+            stack_start: self.stack.len(),
+            is_module: false,
+            module_path: None,
+            prev_globals: None,
+        };
+        
+        self.push(Value::Obj(closure_handle));
+        self.frames.push(frame);
+        
+        self.run(usize::MAX).await
+    }
+
+
+
     pub fn get_current_chunk(&self) -> Arc<Chunk> {
          let frame = self.frames.last().expect("No frame");
          let closure = self.heap.get(frame.closure).expect("Closure not found");
@@ -1497,7 +1530,7 @@ impl VM {
                                         Object::Socket(s) => Constant::Socket(s.clone()),
                                         Object::Listener(l) => Constant::Listener(l.clone()),
                                         Object::SharedBuffer(sm) => Constant::SharedMemory(sm.clone()),
-                                        Object::AtomicInt(ai) => return Err(PulseError::RuntimeError("Cannot serialize AtomicInt".into())),
+                                        Object::AtomicInt(_ai) => return Err(PulseError::RuntimeError("Cannot serialize AtomicInt".into())),
                                         Object::Regex(_) => return Err(PulseError::RuntimeError("Cannot serialize Regex".into())),
                                     }
                                 } else {
@@ -1667,7 +1700,6 @@ impl VM {
                                             Value::Obj(h) => self.get_string(h)?,
                                             _ => return Err(PulseError::TypeMismatch{expected: "string key".into(), got: index_val.type_name()}),
                                         };
-                                        eprintln!("GetIndex Instance: key='{}', fields={:?}", key, inst.fields.keys());
                                         if let Some(val) = inst.fields.get(&key) {
                                             self.push(val.clone());
                                         } else {
@@ -1686,15 +1718,14 @@ impl VM {
                                                 }
                                             } 
                                             // Method/Field not found
-                                            eprintln!("Method/Field '{}' NOT found in instance or class", key);
-                                            self.push(Value::Unit);
+                                            // Method/Field not found
+                                            return Err(PulseError::RuntimeError(format!("Method/Field '{}' not found in instance", key)));
                                         }
                                     },
                                     _ => return Err(PulseError::TypeMismatch{expected: "List, Map, Module, or Instance".into(), got: "other object".into()}),
                                 }
                             },
                             _ => {
-                                eprintln!("GetIndex Target NOT Object: {:?}", target_val);
                                 return Err(PulseError::TypeMismatch{expected: "List, Map, or Instance".into(), got: target_val.type_name()});
                             }
                         }
@@ -2341,7 +2372,7 @@ impl VM {
         }
     }
     
-    fn print_value(&self, val: &Value) {
+    pub fn print_value(&self, val: &Value) {
         match val {
             Value::Obj(handle) => {
                 if let Some(obj) = self.heap.get(*handle) {

@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use std::time::Instant;
 use std::fs;
 use pulse_runtime::Runtime;
-use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+// mod repl; moved to submodule
 
 mod docs;
 mod package;
+mod repl;
 
 #[derive(Parser)]
 #[command(name = "pulse")]
@@ -92,10 +92,7 @@ async fn main() {
             }
         }
         Some(Commands::Repl) => {
-            if let Err(e) = run_repl().await {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
+            repl::start().await;
         }
         Some(Commands::Demo) => {
             run_demo();
@@ -138,10 +135,7 @@ async fn main() {
         }
         None => {
             // Default to REPL if no command provided
-            if let Err(e) = run_repl().await {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
+            repl::start().await;
         }
     }
 }
@@ -156,87 +150,11 @@ async fn run_file(path: PathBuf) -> Result<(), String> {
     let runtime = Runtime::new(0); // Node ID 0 for CLI
     runtime.handle.spawn(chunk, Some(path.to_string_lossy().to_string())).await; // Assuming spawn returns just pid, ignored for now
     
-    runtime.run().await; // Waits for all actors to finish
-    
-    // Check for runtime errors
-    // Since runtime is shared, we might need a way to check if it exited cleanly?
-    // The current Runtime::run doesn't return status.
-    // Ideally we catch errors via monitoring.
-    Ok(())
+    runtime.run().await
+        .map_err(|e| format!("Runtime error:\n{}", e))
 }
 
-async fn run_repl() -> Result<(), String> {
-    println!("Pulse Programming Language v0.1.0");
-    println!("Type 'exit' or press Ctrl-D to quit");
-
-    let mut rl = DefaultEditor::new().map_err(|e| e.to_string())?;
-    
-    // We re-create runtime for each REPL session?
-    // Or keep one runtime alive?
-    // For REPL, we want one runtime state (globals preserved).
-    // EXCEPT: VM globals are per-actor ideally, but REPL usually acts as one "Main" actor.
-    
-    let runtime = Runtime::new(0);
-    // We need an actor to execute REPL commands.
-    // Or we spawn a new actor for each command?
-    // If we want state persistence, we need a persistent actor.
-    // But our Actors run a Chunk.
-    // We can't injected code into a running chunk easily.
-    
-    // Alternative: REPL compiles code into a Chunk, spawns an actor, runs it.
-    // State sharing is hard this way.
-    
-    // For now: Naive REPL - separate actor per command.
-    // Improve later.
-    
-    loop {
-        let readline = rl.readline("pulse> ");
-        match readline {
-            Ok(line) => {
-                let line = line.trim();
-                if line == "exit" {
-                    break;
-                }
-                if line.is_empty() {
-                    continue;
-                }
-                
-                rl.add_history_entry(line).map_err(|e| e.to_string())?;
-
-                match pulse_compiler::compile(line, None) {
-                    Ok(chunk) => {
-                        runtime.handle.spawn(chunk, None).await;
-                        // wait for it?
-                        // In naive mode, we don't wait. Output happens async.
-                        // Ideally we wait for this specific execution.
-                        // But `runtime.run()` waits for ALL.
-                        // We can't call it here inside the loop easily.
-                        
-                        // Let's just spawn and continue.
-                        tokio::task::yield_now().await; 
-                    },
-                    Err(e) => {
-                        println!("Error: {}", e);
-                    }
-                }
-            },
-            Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
-                break;
-            },
-            Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
-                break;
-            },
-            Err(err) => {
-                println!("Error: {:?}", err);
-                break;
-            }
-        }
-    }
-    
-    Ok(())
-}
+// run_repl moved to repl::start()
 
 fn run_demo() {
     println!("===========================================");
@@ -494,7 +412,10 @@ fn build_file(path: PathBuf, output: Option<PathBuf>, release: bool) -> Result<(
         .map_err(|e| format!("Failed to write bytecode: {}", e))?;
     
     println!("      Bytecode compiled successfully!");
-    println!("      Output: {}", bc_file.display());
+    println!("      Instructions: {}", chunk.code.len());
+    println!("      Constants:    {}", chunk.constants.len());
+    println!("      Source lines: {}", chunk.lines.len());
+    println!("      Output:       {}", bc_file.display());
     println!();
     println!("===========================================");
     println!("Build completed successfully!");

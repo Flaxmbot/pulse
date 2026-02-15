@@ -27,7 +27,7 @@ pub use json::*;
 pub use utils::*;
 pub use testing::*;
 pub use networking::*;
-pub use http::*;
+// pub use http::*;
 pub use regex::*;
 pub use string_utils::*;
 
@@ -290,7 +290,7 @@ pub use plotting::hbar_chart_native;
 // ============================================================================
 
 // Pandas module
-pub use pandas::*;
+// pub use pandas::*;
 
 // DataFrame creation
 pub use pandas::df_create_native;

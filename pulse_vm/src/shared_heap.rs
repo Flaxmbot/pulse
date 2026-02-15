@@ -5,8 +5,9 @@ use parking_lot::RwLock;
 /// A heap entry that can be traced for GC
 #[derive(Debug)]
 enum HeapEntry {
+    #[allow(dead_code)]
     Free { next_free: Option<usize> },
-    Allocated { object: Object, marked: bool },
+    Allocated { object: Object, _marked: bool },
 }
 
 /// Thread-safe shared heap for cross-actor communication
@@ -15,7 +16,7 @@ enum HeapEntry {
 pub struct SharedHeap {
     entries: RwLock<Vec<HeapEntry>>,
     free_head: RwLock<Option<usize>>,
-    gray_stack: RwLock<Vec<usize>>,
+    _gray_stack: RwLock<Vec<usize>>,
     bytes_allocated: AtomicUsize,
     next_gc: AtomicUsize,
 }
@@ -25,7 +26,7 @@ impl SharedHeap {
         Self {
             entries: RwLock::new(Vec::with_capacity(1024)),
             free_head: RwLock::new(None),
-            gray_stack: RwLock::new(Vec::new()),
+            _gray_stack: RwLock::new(Vec::new()),
             bytes_allocated: AtomicUsize::new(0),
             next_gc: AtomicUsize::new(1024 * 1024), // 1MB default
         }
@@ -42,7 +43,7 @@ impl SharedHeap {
             let mut entries = self.entries.write();
             if let HeapEntry::Free { next_free } = entries[idx] {
                 *free_head = next_free;
-                entries[idx] = HeapEntry::Allocated { object, marked: false };
+                entries[idx] = HeapEntry::Allocated { object, _marked: false };
                 self.bytes_allocated.fetch_add(size_estimate, Ordering::Relaxed);
                 return SharedHandle(idx);
             }
@@ -52,7 +53,7 @@ impl SharedHeap {
         // Allocate new slot
         let mut entries = self.entries.write();
         let idx = entries.len();
-        entries.push(HeapEntry::Allocated { object, marked: false });
+        entries.push(HeapEntry::Allocated { object, _marked: false });
         self.bytes_allocated.fetch_add(size_estimate, Ordering::Relaxed);
         SharedHandle(idx)
     }

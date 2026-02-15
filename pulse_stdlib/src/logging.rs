@@ -5,7 +5,7 @@ use pulse_core::object::{HeapInterface, Object};
 use std::cell::Cell;
 use chrono::Local;
 
-/// Thread-local log level
+// Thread-local log level
 thread_local! {
     static LOG_LEVEL: Cell<i32> = Cell::new(2); // 0=Debug, 1=Info, 2=Warn, 3=Error
     static LOG_ENABLED: Cell<bool> = Cell::new(true);

@@ -341,7 +341,7 @@ impl<'ctx> JITCompiler<'ctx> {
     }
 
     /// Execute a compiled function with arguments
-    pub fn execute_function_with_args(&self, func: FunctionValue<'ctx>, args: &[i64]) -> JITResult<i64> {
+    pub fn execute_function_with_args(&self, func: FunctionValue<'ctx>, _args: &[i64]) -> JITResult<i64> {
         // Use execution engine to run the function - arguments need to be passed through
         // a different mechanism in inkwell
         // For now, just run with no args and the caller should use compile_function with args baked in
@@ -461,7 +461,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 // Convert pointer back from i64
                 let list_ptr = self.builder.build_int_to_ptr(
                     list_ptr_val.into_int_value(),
-                    self.context.i64_type().ptr_type(AddressSpace::default()),
+                    self.context.ptr_type(AddressSpace::default()),
                     "int_to_list_ptr",
                 ).unwrap();
                 
@@ -496,7 +496,7 @@ impl<'ctx> JITCompiler<'ctx> {
                     // Convert pointer back from i64
                     let list_ptr = self.builder.build_int_to_ptr(
                         list_ptr_val.into_int_value(),
-                        self.context.i64_type().ptr_type(AddressSpace::default()),
+                        self.context.ptr_type(AddressSpace::default()),
                         "int_to_list_ptr",
                     ).unwrap();
                     
@@ -767,7 +767,7 @@ impl<'ctx> JITCompiler<'ctx> {
             Op::IsMap => { if self.pop_value().is_some() { self.push_value(self.context.i64_type().const_zero().as_basic_value_enum()); } }
             Op::Slice => { let _ = self.pop_value(); let _ = self.pop_value(); let _ = self.pop_value(); self.push_value(self.context.i64_type().const_zero().as_basic_value_enum()); }
             Op::MapContainsKey => { let _ = self.pop_value(); let _ = self.pop_value(); self.push_value(self.context.i64_type().const_zero().as_basic_value_enum()); }
-            Op::ToString => { if self.pop_value().is_some() { self.push_value(self.context.i8_type().ptr_type(AddressSpace::default()).const_null().as_basic_value_enum()); } }
+            Op::ToString => { if self.pop_value().is_some() { self.push_value(self.context.ptr_type(AddressSpace::default()).const_null().as_basic_value_enum()); } }
             
             Op::Print => { if let Some(val) = self.pop_value() { let v = val.into_int_value(); if let Some(n) = v.get_sign_extended_constant() { println!("{}", n); } } }
             Op::PrintMulti => { *ip += 1; let _ = chunk.code[*ip]; while let Some(val) = self.peek_value() { if let Some(n) = val.into_int_value().get_sign_extended_constant() { print!("{} ", n); } let _ = self.pop_value(); if self.stack_top == 0 { break; } } println!(); }

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
@@ -123,6 +123,7 @@ pub struct ClusterState {
     /// All known nodes (including ourselves)
     pub nodes: HashMap<String, Node>,
     /// Channel to notify of membership changes
+    #[allow(dead_code)]
     membership_tx: mpsc::UnboundedSender<MembershipEvent>,
 }
 
@@ -275,7 +276,7 @@ impl Cluster {
         shutdown_rx: &mut mpsc::Receiver<()>,
     ) {
         let mut buf = [0u8; 4096];
-        let mut shutdown = shutdown_rx;
+        let shutdown = shutdown_rx;
         
         loop {
             tokio::select! {
@@ -329,7 +330,7 @@ impl Cluster {
             ClusterMessage::GossipRequest { node_id } => {
                 if node_id.0 != state.read().await.node_id.0 {
                     let members = state.read().await.alive_nodes();
-                    let response = ClusterMessage::GossipResponse {
+                    let _response = ClusterMessage::GossipResponse {
                         node_id: state.read().await.node_id.clone(),
                         members,
                     };
@@ -432,7 +433,7 @@ impl Cluster {
 
     /// Leave the cluster
     pub async fn leave(&self) -> std::io::Result<()> {
-        let (node_id, addr) = {
+        let (node_id, _addr) = {
             let s = self.state.read().await;
             (s.node_id.clone(), s.address)
         };

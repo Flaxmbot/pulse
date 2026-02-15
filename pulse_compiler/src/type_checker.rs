@@ -219,12 +219,14 @@ impl TypeContext {
     }
 
     /// Advance line counter
+    #[allow(dead_code)]
     fn advance_line(&mut self) {
         self.current_line += 1;
         self.current_column = 1;
     }
 
     /// Advance column counter
+    #[allow(dead_code)]
     fn advance_column(&mut self) {
         self.current_column += 1;
     }
@@ -282,6 +284,7 @@ impl TypeContext {
     }
 
     /// Get the current return type
+    #[allow(dead_code)]
     fn get_return_type(&self) -> Option<Type> {
         self.return_type.clone()
     }

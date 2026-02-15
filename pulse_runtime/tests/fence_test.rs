@@ -107,11 +107,18 @@ fn test_fence_with_shared_memory() {
     let heap_clone = heap.clone();
     let handle_val = handle.0;
     
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_writer = ready.clone();
+    let ready_reader = ready.clone();
+
     // Writer thread
     let writer = thread::spawn(move || {
-        // Write value with release fence
+        // Write value
         heap_clone.set(SharedHandle(handle_val), Value::Int(123));
+        // Fence to ensure the write is visible before the flag set
         heap_clone.release_fence();
+        // Signal ready with Relaxed to rely on the manual fence for ordering
+        ready_writer.store(true, Ordering::Relaxed);
     });
     
     let heap_clone2 = heap.clone();
@@ -119,7 +126,13 @@ fn test_fence_with_shared_memory() {
     
     // Reader thread
     let reader = thread::spawn(move || {
+        // Wait for ready signal
+        while !ready_reader.load(Ordering::Relaxed) {
+             thread::yield_now();
+        }
+        // Fence to ensure we see the write after observing the flag
         heap_clone2.acquire_fence();
+        
         if let Some(sm) = heap_clone2.get(SharedHandle(handle_val2)) {
             assert_eq!(sm.value, Value::Int(123));
         } else {
