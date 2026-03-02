@@ -1,24 +1,52 @@
 use crate::lexer::Token;
-use pulse_core::{Chunk, Op, PulseError, PulseResult, Constant}; 
-use pulse_core::object::Function;
 use crate::parser_v2::ParserV2 as Parser;
+use pulse_core::object::Function;
+use pulse_core::{Chunk, Constant, Op, PulseError, PulseResult};
 
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
+
+/// Allowed import directories (whitelist)
+const ALLOWED_IMPORT_PREFIXES: &[&str] = &["./lib", "./vendor", "std/", "./"];
+
+/// Sanitizes an import path to prevent path traversal attacks
+/// Returns Ok(sanitized_path) or Err if path traversal is detected
+fn sanitize_import_path(path: &str) -> PulseResult<String> {
+    // Check for path traversal sequences
+    if path.contains("..") || path.contains("~") {
+        return Err(PulseError::PathTraversalAttempted(path.to_string()));
+    }
+
+    // Normalize the path - remove . components and duplicate slashes
+    let normalized = path.replace("././", "./").replace("//", "/");
+
+    // Check against whitelist for non-std imports
+    if !normalized.starts_with("std/") {
+        let allowed = ALLOWED_IMPORT_PREFIXES
+            .iter()
+            .any(|prefix| normalized.starts_with(*prefix));
+
+        if !allowed {
+            return Err(PulseError::ImportPathNotAllowed(normalized));
+        }
+    }
+
+    Ok(normalized)
+}
 
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
 enum Precedence {
     None,
-    Assignment,  // =
-    Or,          // or
-    And,         // and
-    Equality,    // == !=
-    Comparison,  // < > <= >=
-    Term,        // + -
-    Factor,      // * /
-    Unary,       // ! -
-    Call,        // . ()
+    Assignment, // =
+    Or,         // or
+    And,        // and
+    Equality,   // == !=
+    Comparison, // < > <= >=
+    Term,       // + -
+    Factor,     // * /
+    Unary,      // ! -
+    Call,       // . ()
     Primary,
 }
 
@@ -67,12 +95,11 @@ struct CompilerUpvalue {
 #[derive(PartialEq, Clone, Copy)]
 pub enum FunctionType {
     Script,
-    Module,  // Module can return from top-level
+    Module, // Module can return from top-level
     Function,
     Method,
     Initializer,
 }
-
 
 struct CompilerState {
     chunk: Chunk,
@@ -90,7 +117,9 @@ impl CompilerState {
         let mut locals = Vec::new();
         // Reserve slot 0
         locals.push(Local {
-            name: if function_type == FunctionType::Method || function_type == FunctionType::Initializer {
+            name: if function_type == FunctionType::Method
+                || function_type == FunctionType::Initializer
+            {
                 Token::Identifier("this".to_string())
             } else {
                 Token::Identifier("".to_string())
@@ -119,15 +148,23 @@ pub struct Compiler<'a> {
 
 pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> {
     let parser = Rc::new(RefCell::new(Parser::new(source)));
-    let function_type = if module_path.is_some() { FunctionType::Module } else { FunctionType::Script };
+    let function_type = if module_path.is_some() {
+        FunctionType::Module
+    } else {
+        FunctionType::Script
+    };
     let mut compiler = Compiler::new(parser.clone(), function_type, module_path);
     compiler.compile_script()
 }
 
 impl<'a> Compiler<'a> {
-    pub fn new(parser: Rc<RefCell<Parser<'a>>>, function_type: FunctionType, module_path: Option<String>) -> Self {
+    pub fn new(
+        parser: Rc<RefCell<Parser<'a>>>,
+        function_type: FunctionType,
+        module_path: Option<String>,
+    ) -> Self {
         let main_state = CompilerState::new(function_type, "script".to_string());
-        
+
         Self {
             parser,
             states: vec![main_state],
@@ -138,26 +175,27 @@ impl<'a> Compiler<'a> {
     fn state(&mut self) -> &mut CompilerState {
         self.states.last_mut().expect("Compiler stack underflow")
     }
-    
+
     // Legacy accessors for read-only if needed, but we mostly need mut access.
 
     pub fn compile_script(&mut self) -> PulseResult<Chunk> {
         self.parser.borrow_mut().advance()?;
-        
+
         while !self.matches(Token::Eof)? {
             self.declaration()?;
         }
-        
+
         self.emit_byte(Op::Unit as u8);
-        self.emit_byte(Op::Return as u8); 
+        self.emit_byte(Op::Return as u8);
         Ok(self.state().chunk.clone())
     }
 
     // --- Declarations ---
     fn declaration(&mut self) -> PulseResult<()> {
+        println!("DEBUG declaration: current token {:?}", self.parser.borrow().current);
         if self.matches(Token::Fn)? || self.matches(Token::Def)? {
             self.fun_declaration()
-        } else if self.matches(Token::Let)? {
+        } else if self.matches(Token::Let)? || self.matches(Token::Const)? {
             self.var_declaration()
         } else if self.matches(Token::Actor)? {
             self.actor_declaration()
@@ -167,42 +205,51 @@ impl<'a> Compiler<'a> {
             self.shared_memory_declaration()
         } else if self.matches(Token::Atomic)? {
             self.atomic_declaration()
-        } else if self.matches(Token::Fence)? || self.matches(Token::Acquire)? || self.matches(Token::Release)? {
+        } else if self.matches(Token::Fence)?
+            || self.matches(Token::Acquire)?
+            || self.matches(Token::Release)?
+        {
             self.fence_statement()
         } else {
             self.statement()
         }
     }
 
-        
-
     fn fun_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect function name.")?;
-        let name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
+        let name = if let Token::Identifier(s) = &self.parser.borrow().previous {
+            s.clone()
+        } else {
+            "".into()
+        };
         self.function(FunctionType::Function, name)?;
-        self.define_variable(global); 
+        self.define_variable(global);
         Ok(())
     }
 
     fn function(&mut self, function_type: FunctionType, name: String) -> PulseResult<()> {
         // Push new state
-        self.states.push(CompilerState::new(function_type, name.clone()));
-        
-        self.begin_scope(); 
+        self.states
+            .push(CompilerState::new(function_type, name.clone()));
+
+        self.begin_scope();
 
         self.consume(Token::LeftParen, "Expect '(' after function name.")?;
-        
+
         let mut arity = 0;
         if !self.check(Token::RightParen) {
             loop {
                 arity += 1;
                 if self.state().locals.len() > 255 {
-                    return Err(PulseError::CompileError("Cannot have more than 255 parameters.".into(), 0));
+                    return Err(PulseError::CompileError(
+                        "Cannot have more than 255 parameters.".into(),
+                        0,
+                    ));
                 }
-                
+
                 let param_constant = self.parse_variable("Expect parameter name.")?;
                 self.define_variable(param_constant);
-                
+
                 // Optional type annotation: `: Type`
                 if self.matches(Token::Colon)? {
                     let _ = self.parse_type()?;
@@ -214,22 +261,21 @@ impl<'a> Compiler<'a> {
             }
         }
         self.consume(Token::RightParen, "Expect ')' after parameters.")?;
-        
+
         // Optional return type annotation: `-> Type`
         if self.matches(Token::Arrow)? {
             let _ = self.parse_type()?;
         }
-        
-        
+
         self.consume(Token::LeftBrace, "Expect '{' before function body.")?;
         self.block()?;
-        
+
         // Emit return nil in case user didn't
         self.emit_return();
-        
+
         // Pop state
         let state = self.states.pop().expect("Compiler stack underflow");
-        
+
         let function = Function {
             arity,
             chunk: Arc::new(state.chunk),
@@ -237,22 +283,25 @@ impl<'a> Compiler<'a> {
             upvalue_count: state.upvalues.len(),
             module_path: self.module_path.clone(),
         };
-        
+
         // Add function to Parent (now top of stack) constants
-        let idx = self.state().chunk.add_constant(Constant::Function(Box::new(function)));
+        let idx = self
+            .state()
+            .chunk
+            .add_constant(Constant::Function(Box::new(function)));
         self.emit_byte(Op::Closure as u8);
         self.emit_u16(idx as u16);
-        
+
         // Emit upvalue capturing info
         for i in 0..state.upvalues.len() {
             let upvalue = &state.upvalues[i];
             self.emit_byte(if upvalue.is_local { 1 } else { 0 });
             self.emit_byte(upvalue.index);
         }
-        
+
         Ok(())
     }
-    
+
     // Helper to emit return
     fn emit_return(&mut self) {
         if self.state().function_type == FunctionType::Initializer {
@@ -266,13 +315,13 @@ impl<'a> Compiler<'a> {
 
     fn var_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect variable name.")?;
-        
+
         if self.matches(Token::Equal)? {
             self.expression()?;
         } else {
             self.emit_constant(Constant::Unit); // Default to nil/unit?
         }
-        
+
         self.consume(Token::Semicolon, "Expect ';' after variable declaration.")?;
         self.define_variable(global);
         Ok(())
@@ -281,7 +330,11 @@ impl<'a> Compiler<'a> {
     fn actor_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect actor name.")?;
         let previous = self.parser.borrow().previous.clone();
-        let name = if let Token::Identifier(s) = previous { s } else { "".into() };
+        let name = if let Token::Identifier(s) = previous {
+            s
+        } else {
+            "".into()
+        };
 
         // Create a function that represents the actor behavior
         // This is a simplified approach - in a real implementation, actors would be more complex
@@ -300,12 +353,12 @@ impl<'a> Compiler<'a> {
         };
 
         let name_idx = self.identifier_constant(&Token::Identifier(class_name.clone()))?;
-        
+
         self.declare_variable()?;
 
         self.emit_byte(Op::BuildClass as u8);
         self.emit_u16(name_idx);
-        
+
         // Parse superclass
         if self.matches(Token::Extends)? {
             self.consume_identifier("Expected superclass name")?;
@@ -313,16 +366,19 @@ impl<'a> Compiler<'a> {
             let super_name = if let Token::Identifier(s) = previous {
                 s
             } else {
-                return Err(PulseError::CompileError("Expected superclass name".into(), 0));
+                return Err(PulseError::CompileError(
+                    "Expected superclass name".into(),
+                    0,
+                ));
             };
-            
+
             // Push superclass onto stack?
             // Op::BuildClass expects [Superclass] if has_super?
             // Current VM Op::BuildClass doesn't pop superclass. It takes index?
             // Let's check VM implementation...
             // It reads has_super, super_idx.
             // So we just emit index.
-            
+
             self.emit_byte(1); // has_super
             let super_idx = self.identifier_constant(&Token::Identifier(super_name))?;
             self.emit_u16(super_idx);
@@ -344,25 +400,39 @@ impl<'a> Compiler<'a> {
         while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
             if self.matches(Token::Fn)? || self.matches(Token::Def)? {
                 self.consume_identifier("Expected method name")?;
-                let method_name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
-                let method_name_idx = self.identifier_constant(&Token::Identifier(method_name.clone()))?;
+                let method_name = if let Token::Identifier(s) = &self.parser.borrow().previous {
+                    s.clone()
+                } else {
+                    "".into()
+                };
+                let method_name_idx =
+                    self.identifier_constant(&Token::Identifier(method_name.clone()))?;
 
                 if method_name == "init" {
-                   self.function(FunctionType::Initializer, format!("{}.{}", class_name, method_name))?;
+                    self.function(
+                        FunctionType::Initializer,
+                        format!("{}.{}", class_name, method_name),
+                    )?;
                 } else {
-                   self.function(FunctionType::Method, format!("{}.{}", class_name, method_name))?;
+                    self.function(
+                        FunctionType::Method,
+                        format!("{}.{}", class_name, method_name),
+                    )?;
                 }
-                
+
                 self.emit_byte(Op::Method as u8);
                 self.emit_u16(method_name_idx);
             } else {
-                return Err(PulseError::CompileError("Expected method definition in class.".into(), 0));
+                return Err(PulseError::CompileError(
+                    "Expected method definition in class.".into(),
+                    0,
+                ));
             }
         }
 
         self.consume(Token::RightBrace, "Expect '}' after class body.")?;
         self.end_scope();
-        
+
         self.emit_byte(Op::Pop as u8); // Pop class from stack
 
         Ok(())
@@ -370,8 +440,9 @@ impl<'a> Compiler<'a> {
 
     fn actor_function(&mut self, function_type: FunctionType, name: String) -> PulseResult<()> {
         // Push new state
-        self.states.push(CompilerState::new(function_type, name.clone()));
-        
+        self.states
+            .push(CompilerState::new(function_type, name.clone()));
+
         self.begin_scope();
 
         self.consume(Token::LeftBrace, "Expect '{' before actor body.")?;
@@ -379,10 +450,10 @@ impl<'a> Compiler<'a> {
 
         // Emit return in actor
         self.emit_return();
-        
+
         // Pop state
         let state = self.states.pop().expect("Compiler stack underflow");
-        
+
         let function = Function {
             arity: 0,
             chunk: Arc::new(state.chunk),
@@ -392,7 +463,10 @@ impl<'a> Compiler<'a> {
         };
 
         // Add function to Parent (self) constants
-        let idx = self.state().chunk.add_constant(Constant::Function(Box::new(function)));
+        let idx = self
+            .state()
+            .chunk
+            .add_constant(Constant::Function(Box::new(function)));
         self.emit_byte(Op::Closure as u8);
         self.emit_u16(idx as u16);
 
@@ -412,55 +486,66 @@ impl<'a> Compiler<'a> {
         if self.check(Token::Memory) {
             self.advance()?;
         }
-        
+
         let global = self.parse_variable("Expect shared memory name.")?;
-        let _name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
+        let _name = if let Token::Identifier(s) = &self.parser.borrow().previous {
+            s.clone()
+        } else {
+            "".into()
+        };
 
         self.consume(Token::Equal, "Expect '=' after shared memory name.")?;
-        
+
         // Parse the initial value for the shared memory
         self.expression()?;
-        
-        self.consume(Token::Semicolon, "Expect ';' after shared memory declaration.")?;
-        
+
+        self.consume(
+            Token::Semicolon,
+            "Expect ';' after shared memory declaration.",
+        )?;
+
         // Emit instruction to create shared memory
         self.emit_byte(Op::CreateSharedMemory as u8);
-        
+
         // Define the shared memory in global scope
         self.emit_byte(Op::DefineGlobal as u8);
         self.emit_u16(global);
-        
+
         Ok(())
     }
 
     fn atomic_declaration(&mut self) -> PulseResult<()> {
         // Parse: atomic IDENTIFIER = expression;
         let global = self.parse_variable("Expect atomic variable name.")?;
-        let _name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
+        let _name = if let Token::Identifier(s) = &self.parser.borrow().previous {
+            s.clone()
+        } else {
+            "".into()
+        };
 
         self.consume(Token::Equal, "Expect '=' after atomic variable name.")?;
-        
+
         // Parse the initial value for the atomic int
         self.expression()?;
-        
+
         self.consume(Token::Semicolon, "Expect ';' after atomic declaration.")?;
-        
+
         // Emit instruction to create atomic int
         self.emit_byte(Op::AtomicCreate as u8);
-        
+
         // Define the atomic in global scope
         self.emit_byte(Op::DefineGlobal as u8);
         self.emit_u16(global);
-        
+
         Ok(())
     }
 
     fn fence_statement(&mut self) -> PulseResult<()> {
         // Parse: fence; | acquire; | release;
         // Consume the fence/acquire/release keyword (already consumed by matches_any)
-        
+
         self.consume(Token::Semicolon, "Expect ';' after fence statement.")?;
-        
+
         // Emit the appropriate fence instruction based on the previous token
         let previous = self.parser.borrow().previous.clone();
         match &previous {
@@ -475,12 +560,13 @@ impl<'a> Compiler<'a> {
             }
             _ => return Err(PulseError::CompileError("Expected fence keyword".into(), 0)),
         }
-        
+
         Ok(())
     }
 
     // --- Statements ---
     fn statement(&mut self) -> PulseResult<()> {
+        println!("DEBUG statement: current token {:?}", self.parser.borrow().current);
         if self.matches(Token::Print)? {
             self.print_statement()?;
         } else if self.matches(Token::If)? {
@@ -515,18 +601,24 @@ impl<'a> Compiler<'a> {
             self.begin_scope();
             self.block()?;
             self.end_scope();
+        } else if self.matches(Token::Match)? {
+            println!("DEBUG statement: handling Match token!");
+            self.match_expression(false)?;
+            self.emit_byte(Op::Pop as u8);
         } else {
+            println!("DEBUG statement: handling expression statement!");
             self.expression_statement()?;
         }
         Ok(())
     }
 
     fn send_statement(&mut self) -> PulseResult<()> {
-        // send target, msg
+        // send target, msg;
         self.expression()?; // target
         self.consume(Token::Comma, "Expect ',' after 'send' target.")?;
         self.expression()?; // msg
-        
+        self.consume(Token::Semicolon, "Expect ';' after send statement.")?;
+
         self.emit_byte(Op::Send as u8);
         Ok(())
     }
@@ -548,10 +640,46 @@ impl<'a> Compiler<'a> {
     }
 
     fn spawn_link_statement(&mut self) -> PulseResult<()> {
-        // spawn_link expression
-        self.expression()?; // expression to spawn
-        self.consume(Token::Semicolon, "Expect ';' after spawn_link statement.")?;
+        let name = format!("spawn_link_thunk_{}", self.state().chunk.code.len());
+        self.states
+            .push(CompilerState::new(FunctionType::Function, name.clone()));
+        self.begin_scope();
+
+        if self.check(Token::LeftBrace) {
+            self.consume(Token::LeftBrace, "Expect '{' after spawn_link.")?;
+            self.block()?;
+        } else {
+            self.expression()?;
+            self.emit_byte(Op::Pop as u8);
+        }
+
+        self.emit_return();
+
+        let state = self.states.pop().expect("Compiler stack underflow");
+
+        let function = Function {
+            arity: 0,
+            chunk: Arc::new(state.chunk),
+            name,
+            upvalue_count: state.upvalues.len(),
+            module_path: self.module_path.clone(),
+        };
+
+        let idx = self
+            .state()
+            .chunk
+            .add_constant(Constant::Function(Box::new(function)));
+        self.emit_byte(Op::Closure as u8);
+        self.emit_u16(idx as u16);
+
+        for i in 0..state.upvalues.len() {
+            let upvalue = &state.upvalues[i];
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index);
+        }
+
         self.emit_byte(Op::SpawnLink as u8);
+        self.consume(Token::Semicolon, "Expect ';' after spawn_link statement.")?;
         Ok(())
     }
 
@@ -560,28 +688,30 @@ impl<'a> Compiler<'a> {
         if self.matches(Token::LeftParen)? {
             // Multi-argument print: print(arg1, arg2, ...)
             let mut arg_count = 0;
-            
+
             if !self.check(Token::RightParen) {
                 loop {
                     self.expression()?;
                     arg_count += 1;
-                    
+
                     if !self.matches(Token::Comma)? {
                         break;
                     }
                 }
             }
-            
+
             self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
-            self.consume(Token::Semicolon, "Expect ';' after print statement.")?;
-            
+            // Make semicolon optional
+            if self.matches(Token::Semicolon)? {}
+
             // Emit multi-argument print
             self.emit_byte(Op::PrintMulti as u8);
             self.emit_byte(arg_count as u8);
         } else {
             // Single-argument print: print value;
             self.expression()?;
-            self.consume(Token::Semicolon, "Expect ';' after value.")?;
+            // Make semicolon optional
+            if self.matches(Token::Semicolon)? {}
             self.emit_byte(Op::Print as u8);
         }
         Ok(())
@@ -590,24 +720,24 @@ impl<'a> Compiler<'a> {
     fn try_statement(&mut self) -> PulseResult<()> {
         // try { ... } catch e { ... }
         self.consume(Token::LeftBrace, "Expect '{' after 'try'.")?;
-        
+
         // Emit Op::Try with placeholder for handler offset
         self.emit_byte(Op::Try as u8);
         let try_offset = self.state().chunk.code.len();
         self.emit_byte(0xff); // Placeholder for handler offset (u16)
         self.emit_byte(0xff);
-        
+
         // Compile try block
         self.begin_scope();
         self.block()?;
         self.end_scope();
-        
+
         // Emit Op::EndTry after try block
         self.emit_byte(Op::EndTry as u8);
-        
+
         // Jump over catch block on success
         let success_jump = self.emit_jump(Op::Jump as u8);
-        
+
         // Patch try handler offset to point here (catch block)
         let handler_ip = self.state().chunk.code.len();
         let offset = handler_ip - try_offset - 2; // Offset from after Op::Try u16
@@ -616,25 +746,25 @@ impl<'a> Compiler<'a> {
         }
         self.state().chunk.code[try_offset] = ((offset >> 8) & 0xff) as u8;
         self.state().chunk.code[try_offset + 1] = (offset & 0xff) as u8;
-        
+
         // Consume catch
         self.consume(Token::Catch, "Expect 'catch' after try block.")?;
-        
+
         // Parse exception variable
         self.consume_identifier("Expect exception variable name.")?;
-        
+
         // Begin catch scope and define exception variable
         self.begin_scope();
         self.declare_variable()?;
         self.mark_initialized();
-        
+
         self.consume(Token::LeftBrace, "Expect '{' after catch variable.")?;
         self.block()?;
         self.end_scope();
-        
+
         // Patch success jump
         self.patch_jump(success_jump)?;
-        
+
         Ok(())
     }
 
@@ -663,14 +793,14 @@ impl<'a> Compiler<'a> {
         if self.matches(Token::Else)? {
             self.statement()?;
         }
-        
+
         self.patch_jump(else_jump)?;
         Ok(())
     }
 
     fn while_statement(&mut self) -> PulseResult<()> {
         let loop_start = self.state().chunk.code.len();
-        
+
         // Push Loop context
         self.state().loops.push(Loop {
             start_ip: loop_start,
@@ -683,14 +813,14 @@ impl<'a> Compiler<'a> {
 
         let exit_jump = self.emit_jump(Op::JumpIfFalse as u8);
         self.emit_byte(Op::Pop as u8);
-        
+
         self.statement()?;
-        
+
         self.emit_loop(loop_start)?;
-        
+
         self.patch_jump(exit_jump)?;
         self.emit_byte(Op::Pop as u8);
-        
+
         // Pop Loop context and patch breaks
         if let Some(loop_ctx) = self.state().loops.pop() {
             for break_jump in loop_ctx.break_jumps {
@@ -703,15 +833,15 @@ impl<'a> Compiler<'a> {
     fn for_statement(&mut self) -> PulseResult<()> {
         // Check for Python-style: for x in iterable { }
         // vs C-style: for (init; cond; incr) body
-        
+
         self.begin_scope();
-        
+
         // Check if next is identifier followed by 'in' (Python style)
         let current = self.parser.borrow().current.clone();
         if let Token::Identifier(var_name) = &current {
             let name = var_name.clone();
             self.advance()?;
-            
+
             if self.matches(Token::In)? {
                 // Python-style: for x in iterable { }
                 return self.for_in_statement(name);
@@ -719,15 +849,15 @@ impl<'a> Compiler<'a> {
                 // Not Python-style, but we consumed identifier
                 // This is a syntax error for traditional for
                 return Err(PulseError::CompileError(
-                    "Expect '(' after 'for' or 'in' after identifier.".into(), 
-                    self.parser.borrow().line()
+                    "Expect '(' after 'for' or 'in' after identifier.".into(),
+                    self.parser.borrow().line(),
                 ));
             }
         }
-        
+
         // C-style: for (init; cond; incr) body
         self.consume(Token::LeftParen, "Expect '(' after 'for'.")?;
-        
+
         // Init
         if self.matches(Token::Semicolon)? {
             // No init
@@ -736,33 +866,33 @@ impl<'a> Compiler<'a> {
         } else {
             self.expression_statement()?;
         }
-        
+
         let mut loop_start = self.state().chunk.code.len();
-        
+
         // Cond
         let mut exit_jump = None;
         if !self.matches(Token::Semicolon)? {
             self.expression()?;
             self.consume(Token::Semicolon, "Expect ';' after loop condition.")?;
-            
+
             exit_jump = Some(self.emit_jump(Op::JumpIfFalse as u8));
             self.emit_byte(Op::Pop as u8);
         }
-        
+
         // Incr
         if !self.matches(Token::RightParen)? {
             let body_jump = self.emit_jump(Op::Jump as u8);
-            
+
             let increment_start = self.state().chunk.code.len();
             self.expression()?;
             self.emit_byte(Op::Pop as u8);
             self.consume(Token::RightParen, "Expect ')' after for clauses.")?;
-            
+
             self.emit_loop(loop_start)?;
             loop_start = increment_start;
             self.patch_jump(body_jump)?;
         }
-        
+
         // Push Loop context
         self.state().loops.push(Loop {
             start_ip: loop_start,
@@ -770,25 +900,25 @@ impl<'a> Compiler<'a> {
         });
 
         self.statement()?;
-        
+
         self.emit_loop(loop_start)?;
-        
+
         if let Some(jump) = exit_jump {
             self.patch_jump(jump)?;
             self.emit_byte(Op::Pop as u8);
         }
-        
+
         // Pop Loop context and patch breaks
         if let Some(loop_ctx) = self.state().loops.pop() {
             for break_jump in loop_ctx.break_jumps {
                 self.patch_jump(break_jump)?;
             }
         }
-        
+
         self.end_scope();
         Ok(())
     }
-    
+
     fn for_in_statement(&mut self, var_name: String) -> PulseResult<()> {
         // for x in iterable { body }
         // Compiles to:
@@ -799,74 +929,78 @@ impl<'a> Compiler<'a> {
         //     body
         //     __idx = __idx + 1;
         // }
-        
+
         // Evaluate iterable
         self.expression()?;
-        
+
         // Store iterable in a hidden local
         self.add_local(Token::Identifier("__iter".to_string()))?;
         self.mark_initialized();
-        
+
         // Store index (0) in a hidden local
         self.emit_constant(Constant::Int(0));
         self.add_local(Token::Identifier("__idx".to_string()))?;
         self.mark_initialized();
-        
+
         let loop_start = self.state().chunk.code.len();
-        
+
         // Condition: __idx < len(__iter)
         let idx_token = Token::Identifier("__idx".to_string());
-        let idx_slot = self.resolve_local(&idx_token)?.expect("Loop index not found");
+        let idx_slot = self
+            .resolve_local(&idx_token)?
+            .expect("Loop index not found");
         let iter_token = Token::Identifier("__iter".to_string());
-        let iter_slot = self.resolve_local(&iter_token)?.expect("Loop iterator not found");
-        
+        let iter_slot = self
+            .resolve_local(&iter_token)?
+            .expect("Loop iterator not found");
+
         // Stack order for __idx < len:
         // 1. Push __idx
         // 2. Push __iter
         // 3. Len (peeks __iter, pushes len) -> stack: [__idx, __iter, len]
         // 4. Slide(1) to remove __iter -> stack: [__idx, len]
         // 5. Lt compares second-from-top < top -> __idx < len ✓
-        
+
         self.emit_byte(Op::GetLocal as u8);
-        self.emit_byte(idx_slot);     // Stack: [..., __idx]
-        
+        self.emit_byte(idx_slot); // Stack: [..., __idx]
+
         self.emit_byte(Op::GetLocal as u8);
-        self.emit_byte(iter_slot);    // Stack: [..., __idx, __iter]
-        
+        self.emit_byte(iter_slot); // Stack: [..., __idx, __iter]
+
         self.emit_byte(Op::Len as u8); // Stack: [..., __idx, __iter, len]
-        
+
         self.emit_byte(Op::Slide as u8);
-        self.emit_byte(1);             // Stack: [..., __idx, len]
-        
-        self.emit_byte(Op::Lt as u8);  // Stack: [..., __idx < len]
-        
+        self.emit_byte(1); // Stack: [..., __idx, len]
+
+        self.emit_byte(Op::Lt as u8); // Stack: [..., __idx < len]
+
         let exit_jump = self.emit_jump(Op::JumpIfFalse as u8);
         self.emit_byte(Op::Pop as u8); // Pop condition result
-        
+
         // Push Loop context
         self.state().loops.push(Loop {
             start_ip: loop_start,
             break_jumps: Vec::new(),
         });
-        
+
         // Get current element: __iter[__idx]
         self.emit_byte(Op::GetLocal as u8);
         self.emit_byte(iter_slot);
         self.emit_byte(Op::GetLocal as u8);
         self.emit_byte(idx_slot);
         self.emit_byte(Op::GetIndex as u8);
-        
+
         // Store in loop variable
         self.add_local(Token::Identifier(var_name))?;
         self.mark_initialized();
-        
+
         // Body
         self.consume(Token::LeftBrace, "Expect '{' after 'for ... in ...'.")?;
         self.block()?;
-        
+
         // Pop loop variable
         self.emit_byte(Op::Pop as u8);
-        
+
         // Increment: __idx = __idx + 1
         self.emit_byte(Op::GetLocal as u8);
         self.emit_byte(idx_slot);
@@ -875,21 +1009,21 @@ impl<'a> Compiler<'a> {
         self.emit_byte(Op::SetLocal as u8);
         self.emit_byte(idx_slot);
         self.emit_byte(Op::Pop as u8);
-        
+
         // Loop back
         self.emit_loop(loop_start)?;
-        
+
         // Exit
         self.patch_jump(exit_jump)?;
         self.emit_byte(Op::Pop as u8);
-        
+
         // Patch breaks
         if let Some(loop_ctx) = self.state().loops.pop() {
             for break_jump in loop_ctx.break_jumps {
                 self.patch_jump(break_jump)?;
             }
         }
-        
+
         // end_scope() handles popping all locals including __iter, __idx, and loop var
         self.end_scope();
         Ok(())
@@ -897,26 +1031,40 @@ impl<'a> Compiler<'a> {
 
     fn break_statement(&mut self) -> PulseResult<()> {
         self.consume(Token::Semicolon, "Expect ';' after 'break'.")?;
-        
+
         if self.state().loops.is_empty() {
-             return Err(PulseError::CompileError("Cannot use 'break' outside of a loop.".into(), 0));
+            return Err(PulseError::CompileError(
+                "Cannot use 'break' outside of a loop.".into(),
+                0,
+            ));
         }
         let jump = self.emit_jump(Op::Jump as u8);
-        self.state().loops.last_mut().unwrap().break_jumps.push(jump);
+        self.state()
+            .loops
+            .last_mut()
+            .unwrap()
+            .break_jumps
+            .push(jump);
         Ok(())
     }
 
     fn return_statement(&mut self) -> PulseResult<()> {
         // Module and Function types can return, but Script cannot
         if self.state().function_type == FunctionType::Script {
-            return Err(PulseError::CompileError("Cannot return from top-level script.".into(), 0));
+            return Err(PulseError::CompileError(
+                "Cannot return from top-level script.".into(),
+                0,
+            ));
         }
-        
+
         if self.matches(Token::Semicolon)? {
             self.emit_return();
         } else {
             if self.state().function_type == FunctionType::Initializer {
-                return Err(PulseError::CompileError("Cannot return a value from an initializer.".into(), 0));
+                return Err(PulseError::CompileError(
+                    "Cannot return a value from an initializer.".into(),
+                    0,
+                ));
             }
             self.expression()?;
             self.consume(Token::Semicolon, "Expect ';' after return value.")?;
@@ -927,13 +1075,16 @@ impl<'a> Compiler<'a> {
 
     fn continue_statement(&mut self) -> PulseResult<()> {
         self.consume(Token::Semicolon, "Expect ';' after 'continue'.")?;
-        
+
         let start_ip = self.state().loops.last().map(|loop_ctx| loop_ctx.start_ip);
 
         if let Some(ip) = start_ip {
-             self.emit_loop(ip)?;
+            self.emit_loop(ip)?;
         } else {
-            return Err(PulseError::CompileError("Cannot use 'continue' outside of a loop.".into(), 0));
+            return Err(PulseError::CompileError(
+                "Cannot use 'continue' outside of a loop.".into(),
+                0,
+            ));
         }
         Ok(())
     }
@@ -1000,80 +1151,87 @@ impl<'a> Compiler<'a> {
         match operator_type {
             Token::Minus => self.emit_byte(Op::Negate as u8),
             Token::Bang => self.emit_byte(Op::Not as u8),
+            Token::Tilde => self.emit_byte(Op::BitNot as u8),
             _ => return Err(PulseError::CompileError("Invalid unary operator".into(), 0)),
         }
         Ok(())
     }
 
     fn match_expression(&mut self, _can_assign: bool) -> PulseResult<()> {
+        println!("DEBUG match_expression: current token before expression() {:?}", self.parser.borrow().current);
         self.expression()?; // Compile subject
         self.consume(Token::LeftBrace, "Expect '{' after match subject.")?;
-        
+
         let mut end_jumps = Vec::new();
-        
+
         while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
             // Match Arm
             self.begin_scope(); // Scope for pattern variables
             self.emit_byte(Op::Dup as u8); // Dup Subject for this arm
-            
+
             let locals_before = self.state().locals.len();
             let mut failure_jumps = self.compile_pattern()?;
             let locals_after = self.state().locals.len();
-            
+
             // Guard Clause
             if self.matches(Token::If)? {
                 self.expression()?; // Compile Guard Condition
                 let fail_guard = self.emit_jump(Op::JumpIfFalse as u8);
                 self.emit_byte(Op::Pop as u8); // Pop True
-                
+
                 let success_jump = self.emit_jump(Op::Jump as u8); // Jump to Body
-                
+
                 // Handle Guard Failure
                 self.patch_jump(fail_guard)?;
                 self.emit_byte(Op::Pop as u8); // Pop False
-                
+
                 // Cleanup locals created by pattern (without result on stack yet)
                 let pop_count = locals_after - locals_before;
                 for _ in 0..pop_count {
                     self.emit_byte(Op::Pop as u8);
                 }
-                
+
                 // Restore Subject for next arm (Original subject is below locals)
                 // But we just popped locals. So Original Subject is on top.
                 // We need to Dup it because next arm expects [Subject] and will Pop it on failure.
-                self.emit_byte(Op::Dup as u8); 
-                
+                self.emit_byte(Op::Dup as u8);
+
                 failure_jumps.push(self.emit_jump(Op::Jump as u8));
-                
+
                 self.patch_jump(success_jump)?;
             }
-            
+
             self.consume(Token::FatArrow, "Expect '=>' after pattern.")?;
-            
+            println!("DEBUG match_expression: current token before body {:?}, check Print {:?}", self.parser.borrow().current, self.check(Token::Print));
             // Body
             if self.check(Token::LeftBrace) {
                 self.consume(Token::LeftBrace, "Expect '{' start of arm body.")?;
-                self.block()?; 
+                self.block()?;
+            } else if self.check(Token::Print) {
+                println!("DEBUG match_expression: handling print body");
+                // Print statement body
+                self.print_statement()?;
             } else {
+                // Expression body
                 self.expression()?;
-                if self.matches(Token::Comma)? {} 
+                if self.matches(Token::Comma)? {}
             }
-            
+
             // End Scope manually to preserve Result
             self.state().scope_depth -= 1;
             let pop_count = self.state().locals.len() - locals_before;
             // Pop locals UNDER the result
             self.emit_byte(Op::Slide as u8);
             self.emit_byte(pop_count as u8);
-             
+
             // Remove locals from compiler state
             while self.state().locals.len() > locals_before {
                 self.state().locals.pop();
             }
-            
+
             // Jump to End
             end_jumps.push(self.emit_jump(Op::Jump as u8));
-            
+
             // Handle Failures
             // All failure jumps land here.
             // Stack state: [Subject] (Because compile_pattern contract guarantees Subject restoration on failure)
@@ -1082,59 +1240,59 @@ impl<'a> Compiler<'a> {
             }
             // Pop Subject (failed match for this arm)
             self.emit_byte(Op::Pop as u8);
-            
+
             // Loop continues to next arm
         }
-        
+
         self.consume(Token::RightBrace, "Expect '}' after match arms.")?;
-        
+
         // Final fallback: Pop Subject (original) and return Unit
         self.emit_byte(Op::Pop as u8);
         self.emit_byte(Op::Unit as u8);
-        
+
         // Patch End Jumps
         for jump in end_jumps {
             self.patch_jump(jump)?;
         }
-        
+
         Ok(())
     }
 
-    // Contract: 
+    // Contract:
     // Start: [Target]
     // Success: [] (Target consumed)
     // Failure (returns jumps): [Target] (Target preserved)
     fn compile_pattern(&mut self) -> PulseResult<Vec<usize>> {
         let mut failure_jumps = Vec::new();
-        
+
         if self.matches(Token::LeftBracket)? {
             // List Pattern: [a, b] or [h | t]
-            
+
             // 1. IsList
             self.emit_byte(Op::Dup as u8); // Dup Target for IsList check
             self.emit_byte(Op::IsList as u8);
             let fail_is_list = self.emit_jump(Op::JumpIfFalse as u8);
             self.emit_byte(Op::Pop as u8); // Pop True
-            
+
             // On Fail IsList: Stack [Target, False].
             // We patch later to Pop False.
-            
+
             let mut index = 0;
             let mut has_tail = false;
-            
+
             if !self.check(Token::RightBracket) {
                 loop {
                     // Check for Tail
                     if self.matches(Token::Pipe)? {
                         has_tail = true;
-                        
+
                         // Tail Pattern: [ ... | tail ]
                         // Extract Tail from `index`
                         self.emit_byte(Op::Dup as u8); // Dup List
                         self.emit_byte(Op::Len as u8); // Push Len
                         self.emit_constant(Constant::Int(index as i64));
                         // Gte (>=) is Not Lt (<)
-                        self.emit_byte(Op::Lt as u8); 
+                        self.emit_byte(Op::Lt as u8);
                         self.emit_byte(Op::Not as u8);
                         let fail_len = self.emit_jump(Op::JumpIfFalse as u8);
                         self.emit_byte(Op::Pop as u8); // Pop True
@@ -1143,16 +1301,16 @@ impl<'a> Compiler<'a> {
                         self.emit_byte(Op::Dup as u8); // Dup List
                         self.emit_constant(Constant::Int(index as i64));
                         self.emit_byte(Op::Slice as u8); // Pops List, Index. Pushes Tail.
-                        
+
                         // Match Tail
                         let sub_failures = self.compile_pattern()?;
-                        
+
                         // Handle Sub-Failures (Stack: [List, Tail])
                         // Tail match failure leaves Tail on stack.
                         // We need to Pop Tail, then we have [List].
-                        
+
                         let success_jump = self.emit_jump(Op::Jump as u8); // Jump over cleanup
-                        
+
                         for jump in sub_failures {
                             self.patch_jump(jump)?;
                             self.emit_byte(Op::Pop as u8); // Pop Tail
@@ -1163,14 +1321,14 @@ impl<'a> Compiler<'a> {
                         self.patch_jump(fail_len)?;
                         self.emit_byte(Op::Pop as u8); // Pop False
                         failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
-                        
+
                         self.patch_jump(success_jump)?;
-                        
-                        break; 
+
+                        break;
                     }
-                    
+
                     // Element Match at `index`
-                    
+
                     // 1. Check Len > index (i.e. >= index + 1)
                     self.emit_byte(Op::Dup as u8);
                     self.emit_byte(Op::Len as u8);
@@ -1180,51 +1338,54 @@ impl<'a> Compiler<'a> {
                     self.emit_byte(Op::Not as u8);
                     let fail_len = self.emit_jump(Op::JumpIfFalse as u8);
                     self.emit_byte(Op::Pop as u8); // Pop True
-                    
+
                     // 2. Extract Item
                     self.emit_byte(Op::Dup as u8); // Dup List
                     self.emit_constant(Constant::Int(index as i64));
                     self.emit_byte(Op::GetIndex as u8); // Pushes Item
-                    
+
                     // 3. Match Item
                     let sub_failures = self.compile_pattern()?;
-                    
+
                     // 4. Handle Sub-Failures
                     // Stack: [List, Item]
-                    
+
                     let success_jump = self.emit_jump(Op::Jump as u8);
-                    
+
                     for jump in sub_failures {
                         self.patch_jump(jump)?;
                         self.emit_byte(Op::Pop as u8); // Pop Item
                         failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure (stack [List])
                     }
-                    
+
                     self.patch_jump(fail_len)?; // Stack [List, False]
                     self.emit_byte(Op::Pop as u8); // Pop False
                     failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure (stack [List])
-                    
+
                     self.patch_jump(success_jump)?;
-                    
+
                     index += 1;
-                    
+
                     if self.check(Token::RightBracket) {
                         break;
                     }
-                    
+
                     if self.matches(Token::Comma)? {
                         continue;
                     }
-                    
+
                     if self.check(Token::Pipe) {
                         continue;
                     }
-                    
-                    return Err(PulseError::CompileError("Expect ',' or ']' in list pattern.".into(), self.parser.borrow().line()));
+
+                    return Err(PulseError::CompileError(
+                        "Expect ',' or ']' in list pattern.".into(),
+                        self.parser.borrow().line(),
+                    ));
                 }
             }
             self.consume(Token::RightBracket, "Expect ']' after list pattern.")?;
-            
+
             // Exact Match Check (if no tail)
             if !has_tail {
                 // Check Len == index
@@ -1234,100 +1395,108 @@ impl<'a> Compiler<'a> {
                 self.emit_byte(Op::Eq as u8);
                 let fail_exact = self.emit_jump(Op::JumpIfFalse as u8);
                 self.emit_byte(Op::Pop as u8); // Pop True
-                
+
                 // Success path falls through
                 let success_jump = self.emit_jump(Op::Jump as u8);
-                
+
                 self.patch_jump(fail_exact)?;
                 self.emit_byte(Op::Pop as u8); // Pop False
                 failure_jumps.push(self.emit_jump(Op::Jump as u8));
-                
+
                 self.patch_jump(success_jump)?;
             }
-            
+
             // Finally: Success. Pop List.
             // Stack: [List].
             self.emit_byte(Op::Pop as u8);
-            
+
             // Handle IsList Failure (Stack: [Target, False])
             let success_jump = self.emit_jump(Op::Jump as u8);
-            
+
             self.patch_jump(fail_is_list)?;
             self.emit_byte(Op::Pop as u8); // Pop False
             failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Stack [Target]
-            
+
             self.patch_jump(success_jump)?;
-            
         } else if self.matches(Token::LeftBrace)? {
             // Map Pattern: {key: pat, key2: pat}
-            
+
             // 1. IsMap
             self.emit_byte(Op::Dup as u8);
             self.emit_byte(Op::IsMap as u8);
             let fail_is_map = self.emit_jump(Op::JumpIfFalse as u8);
             self.emit_byte(Op::Pop as u8); // Pop True
-            
+
             while !self.check(Token::RightBrace) {
                 // Parse Key
                 let current = self.parser.borrow().current.clone();
                 let key_str = match current {
                     Token::Identifier(s) => s,
                     Token::String(s) => s,
-                    _ => return Err(PulseError::CompileError("Expect identifier or string key in map pattern.".into(), 0)),
+                    _ => {
+                        return Err(PulseError::CompileError(
+                            "Expect identifier or string key in map pattern.".into(),
+                            0,
+                        ))
+                    }
                 };
                 self.advance()?; // Consume Key
-                
+
                 self.consume(Token::Colon, "Expect ':' after map key.")?;
-                
+
                 // 1. Check Key Exists
                 self.emit_byte(Op::Dup as u8); // Dup Map
                 self.emit_constant(Constant::String(key_str.clone()));
                 self.emit_byte(Op::MapContainsKey as u8); // Pops Key, Peeks Map -> Pushes Bool
                 let fail_key = self.emit_jump(Op::JumpIfFalse as u8);
                 self.emit_byte(Op::Pop as u8); // Pop True
-                
+
                 // 2. Extract Value
                 self.emit_byte(Op::Dup as u8); // Dup Map
                 self.emit_constant(Constant::String(key_str));
                 self.emit_byte(Op::GetIndex as u8); // Pushes Value
-                
+
                 // 3. Match Value
                 let sub_failures = self.compile_pattern()?;
-                
+
                 // 4. Handle Sub-Failures
                 let success_jump = self.emit_jump(Op::Jump as u8);
-                
+
                 for jump in sub_failures {
                     self.patch_jump(jump)?;
                     self.emit_byte(Op::Pop as u8); // Pop Value
                     failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
                 }
-                
+
                 // Key Failure:
                 self.patch_jump(fail_key)?; // Stack [Map, False]
                 self.emit_byte(Op::Pop as u8); // Pop False
                 failure_jumps.push(self.emit_jump(Op::Jump as u8)); // Jump to outer failure
-                
+
                 self.patch_jump(success_jump)?;
-                
+
                 if self.check(Token::RightBrace) {
                     break;
                 }
                 self.consume(Token::Comma, "Expect ',' or '}' in map pattern.")?;
             }
             self.consume(Token::RightBrace, "Expect '}' after map pattern.")?;
-            
+
             // Success. Pop Map.
             self.emit_byte(Op::Pop as u8);
-            
+
             // Handle IsMap Failure
             let success_jump = self.emit_jump(Op::Jump as u8);
-            
+
             self.patch_jump(fail_is_map)?;
             self.emit_byte(Op::Pop as u8); // Pop False
             failure_jumps.push(self.emit_jump(Op::Jump as u8));
-            
+
             self.patch_jump(success_jump)?;
+        } else if self.matches(Token::Underscore)? {
+            // Wildcard Pattern
+            // Always succeeds, consumes the subject
+            self.emit_byte(Op::Pop as u8);
         } else if matches!(self.parser.borrow().current, Token::Identifier(_)) {
             // Variable Pattern
             let name = self.parser.borrow().current.clone();
@@ -1335,15 +1504,15 @@ impl<'a> Compiler<'a> {
             // Removed self.begin_scope(); to allow match arm to manage scope
             self.add_local(name)?;
             self.mark_initialized();
-            
+
             // Variable consumes the value logically (binds it).
             // But checking `match_expression`, it expects [Subject] to remain on FAILURE?
             // On SUCCESS, `compile_pattern` consumes it?
-            
+
             // Wait. `compile_pattern` contract:
             // Success: [] (Target consumed)
             // Failure (returns jumps): [Target] (Target preserved)
-            
+
             // Variable match NEVER fails.
             // So we just need to consume the stack value?
             // `SetLocal` peaks.
@@ -1352,10 +1521,10 @@ impl<'a> Compiler<'a> {
             // We just mark it as the local.
             // So we do NOTHING at runtime!
             // Just compiler bookkeeping.
-            
+
             // Stack: [Target]. Target is now Local 'x'.
             // Success!
-            
+
             // Wait, we need to CONSUME the target from the "Expression Stack" view?
             // The contract says Success = [].
             // If we leave it on stack as local, it's "Consumed" from temp stack point of view
@@ -1365,70 +1534,78 @@ impl<'a> Compiler<'a> {
         } else {
             // Literal
             self.emit_byte(Op::Dup as u8); // Dup Target
-            if matches!(self.parser.borrow().current, Token::Int(_) | Token::Float(_)) {
+            if matches!(
+                self.parser.borrow().current,
+                Token::Int(_) | Token::Float(_)
+            ) {
                 self.advance()?;
                 self.number(false)?;
             } else if matches!(self.parser.borrow().current, Token::String(_)) {
                 self.advance()?;
                 self.string(false)?;
-            } else if matches!(self.parser.borrow().current, Token::True | Token::False | Token::Nil) {
+            } else if matches!(
+                self.parser.borrow().current,
+                Token::True | Token::False | Token::Nil
+            ) {
                 self.advance()?;
                 self.literal(false)?;
             } else {
-                 return Err(PulseError::CompileError("Expect pattern.".into(), 0));
+                return Err(PulseError::CompileError("Expect pattern.".into(), 0));
             }
-             
+
             self.emit_byte(Op::Eq as u8);
             let fail = self.emit_jump(Op::JumpIfFalse as u8);
             self.emit_byte(Op::Pop as u8); // Pop True
             self.emit_byte(Op::Pop as u8); // Pop Target
-            // Success: []
-            
+                                           // Success: []
+
             // Fail Check:
             // [Target, False] -> Pop False -> [Target]. Correct.
             // But `fail_jumps` expect to land where we need to POP target?
             // No, `compile_pattern` returns jumps where Stack is [Target].
-            
+
             // So for `fail`:
-            // 1. Pop False. 
+            // 1. Pop False.
             // 2. Jump to exit.
-            
+
             // We can't insert code at `fail` target easily without block structure.
             // Hand-code:
             // JumpIfFalse -> FailBlock
             // SuccessBlock: ...
             // FailBlock: Pop, Return Fail.
-            
+
             // Since we return `fail` offset, the caller will patch it.
             // Caller patches `fail` -> `Next Arm`.
             // `Next Arm` expects `[Subject]`.
-            
-             // At `fail` (JumpIfFalse target): Stack is `[Target, False]`.
-             // Caller expects `[Target]`.
-             // We MUST Pop False.
-             
-             // So we patch `fail` to `pop_false_block`.
-             // `pop_false_block`: Pop. Return.
-             
-             // We can emit this block at the end of `literal`?
-             // Yes.
-             let success_jump = self.emit_jump(Op::Jump as u8);
-             
-             // Fail Block
-             self.patch_jump(fail)?;
-             self.emit_byte(Op::Pop as u8); // Pop False
-             failure_jumps.push(self.emit_jump(Op::Jump as u8));
-             
-             // Success Block
-             self.patch_jump(success_jump)?;
+
+            // At `fail` (JumpIfFalse target): Stack is `[Target, False]`.
+            // Caller expects `[Target]`.
+            // We MUST Pop False.
+
+            // So we patch `fail` to `pop_false_block`.
+            // `pop_false_block`: Pop. Return.
+
+            // We can emit this block at the end of `literal`?
+            // Yes.
+            let success_jump = self.emit_jump(Op::Jump as u8);
+
+            // Fail Block
+            self.patch_jump(fail)?;
+            self.emit_byte(Op::Pop as u8); // Pop False
+            failure_jumps.push(self.emit_jump(Op::Jump as u8));
+
+            // Success Block
+            self.patch_jump(success_jump)?;
         }
-        
+
         Ok(failure_jumps)
     }
-    
+
     fn mark_initialized(&mut self) {
         let depth = self.state().scope_depth;
-        if depth == 0 { return; }
+        if depth == 0 {
+            return;
+        }
         if let Some(local) = self.state().locals.last_mut() {
             local.depth = depth;
         }
@@ -1446,18 +1623,23 @@ impl<'a> Compiler<'a> {
 
     fn interpolated_string(&mut self, _can_assign: bool) -> PulseResult<()> {
         use crate::lexer::StringPart;
-        
+
         let previous = self.parser.borrow().previous.clone();
         let parts = match previous {
             Token::InterpolatedString(p) => p,
-            _ => return Err(PulseError::CompileError("Expected interpolated string".into(), 0)),
+            _ => {
+                return Err(PulseError::CompileError(
+                    "Expected interpolated string".into(),
+                    0,
+                ))
+            }
         };
-        
+
         if parts.is_empty() {
             self.emit_constant(Constant::String(String::new()));
             return Ok(());
         }
-        
+
         // Compile first part
         let mut first = true;
         for part in parts {
@@ -1473,21 +1655,21 @@ impl<'a> Compiler<'a> {
                     let expr_parser = Parser::new(static_src);
                     let new_parser_rc = Rc::new(RefCell::new(expr_parser));
                     new_parser_rc.borrow_mut().advance()?; // Advance strictly on new parser
-                    
+
                     // Save current parser
                     let saved_parser = self.parser.clone();
                     self.parser = new_parser_rc;
-                    
+
                     self.expression()?;
-                    
+
                     // Restore parser
                     self.parser = saved_parser;
-                    
+
                     // Convert to string with Op::ToString (we'll add this)
                     self.emit_byte(Op::ToString as u8);
                 }
             }
-            
+
             if first {
                 first = false;
             } else {
@@ -1495,7 +1677,7 @@ impl<'a> Compiler<'a> {
                 self.emit_byte(Op::Add as u8);
             }
         }
-        
+
         Ok(())
     }
 
@@ -1511,10 +1693,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn variable(&mut self, can_assign: bool) -> PulseResult<()> {
+        println!("DEBUG variable() previous {:?}", self.parser.borrow().previous);
         let previous = self.parser.borrow().previous.clone();
         if let Token::This = previous {
             // Handle 'this' keyword
-            let slot = self.resolve_local(&Token::Identifier("this".to_string()))?
+            let slot = self
+                .resolve_local(&Token::Identifier("this".to_string()))?
                 .expect("Expected 'this' to be defined in method.");
             self.emit_byte(Op::GetLocal as u8);
             self.emit_byte(slot);
@@ -1525,7 +1709,58 @@ impl<'a> Compiler<'a> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) -> PulseResult<()> {
-        if let Ok(Some(local_idx)) = self.resolve_local(&name) {
+        println!("DEBUG named_variable: name {:?} can_assign {:?}", name, can_assign);
+        // Detect compound assignment operators: += -= *= /= %=
+        let compound_op = if can_assign {
+            if self.check(Token::PlusEqual) {
+                Some(Op::Add)
+            } else if self.check(Token::MinusEqual) {
+                Some(Op::Sub)
+            } else if self.check(Token::StarEqual) {
+                Some(Op::Mul)
+            } else if self.check(Token::SlashEqual) {
+                Some(Op::Div)
+            } else if self.check(Token::PercentEqual) {
+                Some(Op::Mod)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(op) = compound_op {
+            // Consume the compound assignment token
+            self.advance()?;
+
+            // GET current value
+            if let Ok(Some(local_idx)) = self.resolve_local(&name) {
+                self.emit_byte(Op::GetLocal as u8);
+                self.emit_byte(local_idx);
+                // Evaluate RHS and apply op
+                self.expression()?;
+                self.emit_byte(op as u8);
+                // SET back
+                self.emit_byte(Op::SetLocal as u8);
+                self.emit_byte(local_idx);
+            } else if let Ok(Some(upvalue_idx)) = self.resolve_upvalue(&name) {
+                self.emit_byte(Op::GetUpvalue as u8);
+                self.emit_byte(upvalue_idx);
+                self.expression()?;
+                self.emit_byte(op as u8);
+                self.emit_byte(Op::SetUpvalue as u8);
+                self.emit_byte(upvalue_idx);
+            } else {
+                let global_idx = self.identifier_constant(&name)?;
+                self.emit_byte(Op::GetGlobal as u8);
+                self.emit_u16(global_idx);
+                self.expression()?;
+                self.emit_byte(op as u8);
+                let global_idx2 = self.identifier_constant(&name)?;
+                self.emit_byte(Op::SetGlobal as u8);
+                self.emit_u16(global_idx2);
+            }
+        } else if let Ok(Some(local_idx)) = self.resolve_local(&name) {
             if can_assign && self.matches(Token::Equal)? {
                 self.expression()?;
                 self.emit_byte(Op::SetLocal as u8);
@@ -1546,13 +1781,14 @@ impl<'a> Compiler<'a> {
         } else {
             // Global
             let global_idx = self.identifier_constant(&name)?;
+            println!("DEBUG named_variable: global case, name {:?} can_assign {:?} check equal {:?}", name, can_assign, self.check(Token::Equal));
             if can_assign && self.matches(Token::Equal)? {
                 self.expression()?;
                 self.emit_byte(Op::SetGlobal as u8);
-                self.emit_u16(global_idx as u16);
+                self.emit_u16(global_idx);
             } else {
                 self.emit_byte(Op::GetGlobal as u8);
-                self.emit_u16(global_idx as u16);
+                self.emit_u16(global_idx);
             }
         }
         Ok(())
@@ -1562,10 +1798,15 @@ impl<'a> Compiler<'a> {
         let mut item_count = 0;
         if !self.check(Token::RightBracket) {
             loop {
-                if self.check(Token::RightBracket) { break; }
+                if self.check(Token::RightBracket) {
+                    break;
+                }
                 self.expression()?;
-                 if item_count == 255 {
-                    return Err(PulseError::CompileError("Cannot have more than 255 items in a list literal.".into(), 0));
+                if item_count == 255 {
+                    return Err(PulseError::CompileError(
+                        "Cannot have more than 255 items in a list literal.".into(),
+                        0,
+                    ));
                 }
                 item_count += 1;
                 if !self.matches(Token::Comma)? {
@@ -1583,18 +1824,23 @@ impl<'a> Compiler<'a> {
         let mut item_count = 0;
         if !self.check(Token::RightBrace) {
             loop {
-                 if self.check(Token::RightBrace) { break; }
+                if self.check(Token::RightBrace) {
+                    break;
+                }
                 // Parse key
                 self.expression()?;
                 self.consume(Token::Colon, "Expect ':' after map key.")?;
                 // Parse value
                 self.expression()?;
-                
+
                 if item_count == 255 {
-                    return Err(PulseError::CompileError("Cannot have more than 255 entries in a map literal.".into(), 0));
+                    return Err(PulseError::CompileError(
+                        "Cannot have more than 255 entries in a map literal.".into(),
+                        0,
+                    ));
                 }
                 item_count += 1;
-                
+
                 if !self.matches(Token::Comma)? {
                     break;
                 }
@@ -1610,7 +1856,7 @@ impl<'a> Compiler<'a> {
         // Called after consuming `[` (infix). Left operand is already compiled.
         self.expression()?; // Index
         self.consume(Token::RightBracket, "Expect ']' after index.")?;
-        
+
         if can_assign && self.matches(Token::Equal)? {
             self.expression()?; // Value to set
             self.emit_byte(Op::SetIndex as u8);
@@ -1619,9 +1865,6 @@ impl<'a> Compiler<'a> {
         }
         Ok(())
     }
-
-
-
 
     fn parse_variable(&mut self, msg: &str) -> PulseResult<u16> {
         self.consume_identifier(msg)?;
@@ -1641,7 +1884,7 @@ impl<'a> Compiler<'a> {
                     return Err(PulseError::CompileError("Too many constants.".into(), 0));
                 }
                 Ok(idx as u16)
-            },
+            }
             _ => Err(PulseError::CompileError("Expected identifier.".into(), 0)),
         }
     }
@@ -1652,7 +1895,7 @@ impl<'a> Compiler<'a> {
             Token::Identifier(_) => {
                 self.advance()?;
                 Ok(())
-            },
+            }
             _ => Err(PulseError::CompileError(msg.into(), 0)),
         }
     }
@@ -1663,7 +1906,7 @@ impl<'a> Compiler<'a> {
             Token::String(_) => {
                 self.advance()?;
                 Ok(())
-            },
+            }
             _ => Err(PulseError::CompileError(msg.into(), 0)),
         }
     }
@@ -1674,14 +1917,17 @@ impl<'a> Compiler<'a> {
             return Ok(()); // Globals not implemented yet
         }
         let name = self.parser.borrow().previous.clone();
-        
+
         // Check for redefinition
         for local in self.state().locals.iter().rev() {
             if local.depth != -1 && local.depth < scope_depth {
                 break;
             }
             if local.name == name {
-                 return Err(PulseError::CompileError("Variable with this name already declared in this scope.".into(), 0));
+                return Err(PulseError::CompileError(
+                    "Variable with this name already declared in this scope.".into(),
+                    0,
+                ));
             }
         }
 
@@ -1705,9 +1951,16 @@ impl<'a> Compiler<'a> {
 
     fn add_local(&mut self, name: Token) -> PulseResult<()> {
         if self.state().locals.len() >= 256 {
-            return Err(PulseError::CompileError("Too many local variables in function.".into(), 0));
+            return Err(PulseError::CompileError(
+                "Too many local variables in function.".into(),
+                0,
+            ));
         }
-        self.state().locals.push(Local { name, depth: -1, is_captured: false }); // -1 = uninitialized
+        self.state().locals.push(Local {
+            name,
+            depth: -1,
+            is_captured: false,
+        }); // -1 = uninitialized
         Ok(())
     }
 
@@ -1730,7 +1983,7 @@ impl<'a> Compiler<'a> {
             } else {
                 (false, false)
             };
-            
+
             if should_pop {
                 if is_captured {
                     self.emit_byte(Op::CloseUpvalue as u8);
@@ -1747,11 +2000,11 @@ impl<'a> Compiler<'a> {
     fn check(&self, token: Token) -> bool {
         self.parser.borrow().current == token
     }
-    
+
     /// Parse a type annotation (e.g., Int, String, List<Int>, Fn<(Int) -> Bool>)
     fn parse_type(&mut self) -> PulseResult<crate::types::Type> {
         use crate::types::Type;
-        
+
         self.parser.borrow_mut().advance()?;
         let previous = self.parser.borrow().previous.clone();
         match &previous {
@@ -1765,9 +2018,16 @@ impl<'a> Compiler<'a> {
             Token::TypeAtomic => Ok(Type::Atomic),
             Token::TypeList => {
                 // List<ElementType>
-                if self.matches(Token::Less)? {
+                if self.matches(Token::LeftAngle)? || self.matches(Token::Less)? {
                     let elem_type = self.parse_type()?;
-                    self.consume(Token::Greater, "Expect '>' after List element type.")?;
+                    if self.check(Token::RightAngle) || self.check(Token::Greater) {
+                        self.advance()?;
+                    } else {
+                        return Err(PulseError::CompileError(
+                            "Expect '>' after List element type.".into(),
+                            self.parser.borrow().line(),
+                        ));
+                    }
                     Ok(Type::List(Box::new(elem_type)))
                 } else {
                     Ok(Type::List(Box::new(Type::Any)))
@@ -1775,11 +2035,18 @@ impl<'a> Compiler<'a> {
             }
             Token::TypeMap => {
                 // Map<KeyType, ValueType>
-                if self.matches(Token::Less)? {
+                if self.matches(Token::LeftAngle)? || self.matches(Token::Less)? {
                     let key_type = self.parse_type()?;
                     self.consume(Token::Comma, "Expect ',' between Map key and value types.")?;
                     let val_type = self.parse_type()?;
-                    self.consume(Token::Greater, "Expect '>' after Map value type.")?;
+                    if self.check(Token::RightAngle) || self.check(Token::Greater) {
+                        self.advance()?;
+                    } else {
+                        return Err(PulseError::CompileError(
+                            "Expect '>' after Map value type.".into(),
+                            self.parser.borrow().line(),
+                        ));
+                    }
                     Ok(Type::Map(Box::new(key_type), Box::new(val_type)))
                 } else {
                     Ok(Type::Map(Box::new(Type::Any), Box::new(Type::Any)))
@@ -1787,7 +2054,7 @@ impl<'a> Compiler<'a> {
             }
             Token::TypeFn => {
                 // Fn<(Param1, Param2) -> ReturnType>
-                if self.matches(Token::Less)? {
+                if self.matches(Token::LeftAngle)? || self.matches(Token::Less)? {
                     self.consume(Token::LeftParen, "Expect '(' for Fn parameter types.")?;
                     let mut params = Vec::new();
                     if !self.check(Token::RightParen) {
@@ -1801,7 +2068,14 @@ impl<'a> Compiler<'a> {
                     self.consume(Token::RightParen, "Expect ')' after Fn parameters.")?;
                     self.consume(Token::Arrow, "Expect '->' for Fn return type.")?;
                     let ret_type = self.parse_type()?;
-                    self.consume(Token::Greater, "Expect '>' after Fn type.")?;
+                    if self.check(Token::RightAngle) || self.check(Token::Greater) {
+                        self.advance()?;
+                    } else {
+                        return Err(PulseError::CompileError(
+                            "Expect '>' after Fn type.".into(),
+                            self.parser.borrow().line(),
+                        ));
+                    }
                     Ok(Type::Fn(params, Box::new(ret_type)))
                 } else {
                     Ok(Type::Fn(vec![], Box::new(Type::Any)))
@@ -1810,7 +2084,7 @@ impl<'a> Compiler<'a> {
             Token::Identifier(name) => Ok(Type::Custom(name.clone())),
             other => Err(PulseError::CompileError(
                 format!("Unexpected token in type annotation: {:?}", other),
-                self.parser.borrow().line()
+                self.parser.borrow().line(),
             )),
         }
     }
@@ -1818,12 +2092,12 @@ impl<'a> Compiler<'a> {
     fn binary(&mut self, _can_assign: bool) -> PulseResult<()> {
         let operator_type = self.parser.borrow().previous.clone();
         let rule = self.get_rule(&operator_type);
-        
+
         // Parse right operand with higher precedence
         // e.g. 1 + 2 * 3 -> parse 2 * 3 first
         // Parse right operand with higher precedence
         let next_prec = rule.precedence.next();
-        self.parse_precedence(next_prec)?; 
+        self.parse_precedence(next_prec)?;
         // Pratt parsing:
         // Left associative: precedence + 1
         // Right associative: precedence
@@ -1835,32 +2109,43 @@ impl<'a> Compiler<'a> {
             Token::Slash => self.emit_byte(Op::Div as u8),
             Token::BangEqual => self.emit_byte(Op::Neq as u8),
             Token::EqualEqual => self.emit_byte(Op::Eq as u8),
-            Token::Greater => self.emit_byte(Op::Gt as u8),
+            Token::Greater | Token::RightAngle => self.emit_byte(Op::Gt as u8),
             Token::GreaterEqual => {
                 // a >= b  =>  not (a < b)
                 self.emit_byte(Op::Lt as u8);
                 self.emit_byte(Op::Not as u8);
-            },
-            Token::Less => self.emit_byte(Op::Lt as u8),
+            }
+            Token::Less | Token::LeftAngle => self.emit_byte(Op::Lt as u8),
             Token::LessEqual => {
                 // a <= b  =>  not (a > b)
                 self.emit_byte(Op::Gt as u8);
                 self.emit_byte(Op::Not as u8);
-            },
+            }
             Token::Percent => self.emit_byte(Op::Mod as u8),
+            Token::Ampersand => self.emit_byte(Op::BitAnd as u8),
+            Token::Pipe => self.emit_byte(Op::BitOr as u8),
+            Token::Caret => self.emit_byte(Op::BitXor as u8),
+            Token::ShiftLeft => self.emit_byte(Op::Shl as u8),
+            Token::ShiftRight => self.emit_byte(Op::Shr as u8),
+            Token::StarStar => self.emit_byte(Op::Pow as u8),
             Token::LogicalAnd => {
                 // Note: This branch is unreachable in practice.
                 // LogicalAnd is routed to Self::and_() via the parse rule table,
                 // which implements proper short-circuit evaluation.
                 self.emit_byte(Op::And as u8);
-            },
+            }
             Token::LogicalOr => {
                 // Note: This branch is unreachable in practice.
                 // LogicalOr is routed to Self::or_() via the parse rule table,
                 // which implements proper short-circuit evaluation.
                 self.emit_byte(Op::Or as u8);
-            },
-            _ => return Err(PulseError::CompileError("Invalid binary operator".into(), 0)),
+            }
+            _ => {
+                return Err(PulseError::CompileError(
+                    "Invalid binary operator".into(),
+                    0,
+                ))
+            }
         }
         Ok(())
     }
@@ -1869,9 +2154,9 @@ impl<'a> Compiler<'a> {
         self.consume_identifier("Expect property name after '.'.")?;
         let name = self.parser.borrow().previous.clone();
         let idx = self.identifier_constant(&name)?;
-        
+
         self.emit_byte(Op::Const as u8);
-        self.emit_u16(idx as u16);
+        self.emit_u16(idx);
 
         if can_assign && self.matches(Token::Equal)? {
             self.expression()?;
@@ -1903,53 +2188,48 @@ impl<'a> Compiler<'a> {
     }
 
     fn spawn(&mut self, _can_assign: bool) -> PulseResult<()> {
-        // spawn EXPRESSION
-        
-        // 1. Emit Spawn(0) placeholder
-        let spawn_instr = self.state().chunk.code.len();
-        self.emit_byte(Op::Spawn as u8);
-        self.emit_byte(0xff); // Placeholder low
-        self.emit_byte(0xff); // Placeholder high
-        
-        // 2. Emit Jump(0) placeholder (to jump over child code)
-        let jump_over = self.emit_jump(Op::Jump as u8);
-        
-        // 3. Mark start of child code
-        let child_start = self.state().chunk.code.len();
-        
+        // Create a thunk closure for the spawned code
+        let name = format!("spawn_thunk_{}", self.state().chunk.code.len());
+        self.states
+            .push(CompilerState::new(FunctionType::Function, name.clone()));
+        self.begin_scope();
+
         // 4. Compile child expression/block
         if self.check(Token::LeftBrace) {
             self.consume(Token::LeftBrace, "Expect '{' after spawn.")?;
             self.block()?;
         } else {
             self.parse_precedence(Precedence::Assignment)?;
+            self.emit_byte(Op::Pop as u8); // Pop expression result in child
         }
-        
-        // 5. Child must HALT
-        self.emit_byte(Op::Halt as u8);
-        
-        // 6. Patch Jump over
-        self.patch_jump(jump_over)?;
-        
-        // 7. Patch Spawn argument (offset to child_start)
-        // Note: Op::Spawn takes u16 offset from CURRENT IP? 
-        // No, typically absolute or relative.
-        // VM Implementation: Op::Spawn => { let offset = read_u16(); Ok(VMStatus::Spawn(offset)) }
-        // Child IP set to `offset`.
-        // So `offset` should be ABSOLUTE index in chunk.code?
-        // Wait, `Op::Jump` usually uses relative offset.
-        // Let's check `runtime.rs`:
-        // child.vm.ip = offset;
-        // So it sets absolute IP.
-        
-        // We write `child_start` (absolute index) into the Spawn instruction.
-        if child_start > 0xffff {
-             return Err(PulseError::CompileError("Chunk too large for spawn offset".into(), 0));
+
+        self.emit_return();
+
+        let state = self.states.pop().expect("Compiler stack underflow");
+
+        let function = Function {
+            arity: 0,
+            chunk: Arc::new(state.chunk),
+            name,
+            upvalue_count: state.upvalues.len(),
+            module_path: self.module_path.clone(),
+        };
+
+        let idx = self
+            .state()
+            .chunk
+            .add_constant(Constant::Function(Box::new(function)));
+        self.emit_byte(Op::Closure as u8);
+        self.emit_u16(idx as u16);
+
+        for i in 0..state.upvalues.len() {
+            let upvalue = &state.upvalues[i];
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index);
         }
-        
-        self.state().chunk.code[spawn_instr + 1] = (child_start & 0xff) as u8;
-        self.state().chunk.code[spawn_instr + 2] = ((child_start >> 8) & 0xff) as u8;
-        
+
+        self.emit_byte(Op::Spawn as u8);
+
         Ok(())
     }
 
@@ -1961,11 +2241,16 @@ impl<'a> Compiler<'a> {
     fn import_expression(&mut self, _can_assign: bool) -> PulseResult<()> {
         self.consume_string("Expect string after 'import'.")?;
         let name = self.parser.borrow().previous.clone();
-        let idx = self.state().chunk.add_constant(Constant::String(match name {
+        let path = match name {
             Token::String(s) => s,
             _ => unreachable!(),
-        }));
-        
+        };
+
+        // Sanitize the import path for security
+        let sanitized = sanitize_import_path(&path)?;
+
+        let idx = self.state().chunk.add_constant(Constant::String(sanitized));
+
         if idx > u16::MAX as usize {
             return Err(PulseError::CompileError("Too many constants.".into(), 0));
         }
@@ -1985,7 +2270,11 @@ impl<'a> Compiler<'a> {
     fn super_(&mut self, _can_assign: bool) -> PulseResult<()> {
         if self.matches(Token::Dot)? {
             self.consume_identifier("Expect superclass method name.")?;
-            let name = if let Token::Identifier(s) = &self.parser.borrow().previous { s.clone() } else { "".into() };
+            let name = if let Token::Identifier(s) = &self.parser.borrow().previous {
+                s.clone()
+            } else {
+                "".into()
+            };
             let name_idx = self.identifier_constant(&Token::Identifier(name))?;
 
             // Push 'this'
@@ -1995,10 +2284,10 @@ impl<'a> Compiler<'a> {
             self.named_variable(Token::Identifier("super".to_string()), false)?;
 
             self.emit_byte(Op::GetSuper as u8);
-            self.emit_u16(name_idx as u16);
+            self.emit_u16(name_idx);
         } else {
             // Just 'super' access
-             self.named_variable(Token::Identifier("super".to_string()), false)?;
+            self.named_variable(Token::Identifier("super".to_string()), false)?;
         }
         Ok(())
     }
@@ -2056,7 +2345,10 @@ impl<'a> Compiler<'a> {
             loop {
                 self.expression()?;
                 if arg_count == 255 {
-                    return Err(PulseError::CompileError("Cannot have more than 255 arguments.".into(), 0));
+                    return Err(PulseError::CompileError(
+                        "Cannot have more than 255 arguments.".into(),
+                        0,
+                    ));
                 }
                 arg_count += 1;
                 if !self.matches(Token::Comma)? {
@@ -2065,15 +2357,18 @@ impl<'a> Compiler<'a> {
             }
         }
         self.consume(Token::RightParen, "Expect ')' after arguments.")?;
-        
+
         self.emit_byte(Op::Call as u8);
         self.emit_byte(arg_count);
         Ok(())
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> PulseResult<()> {
+        println!("DEBUG parse_precedence: before advance(), current {:?}", self.parser.borrow().current);
         self.advance()?;
-        
+        println!("DEBUG parse_precedence: after advance(), previous {:?}", self.parser.borrow().previous);
+        println!("DEBUG parse_precedence: after advance(), current {:?}", self.parser.borrow().current);
+
         let previous = self.parser.borrow().previous.clone();
         let prefix_rule = self.get_rule(&previous).prefix;
         if let Some(prefix_fn) = prefix_rule {
@@ -2101,41 +2396,207 @@ impl<'a> Compiler<'a> {
     // Rules table
     fn get_rule(&self, token: &Token) -> ParseRule<'a> {
         match token {
-            Token::LeftParen => ParseRule { prefix: Some(Self::grouping), infix: Some(Self::call), precedence: Precedence::Call },
-            Token::Dot => ParseRule { prefix: None, infix: Some(Self::dot), precedence: Precedence::Call },
-            Token::Minus => ParseRule { prefix: Some(Self::unary), infix: Some(Self::binary), precedence: Precedence::Term },
-            Token::Plus => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Term },
-            Token::Slash => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Factor },
-            Token::Star => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Factor },
-            Token::BangEqual | Token::EqualEqual => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Equality },
-            Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Comparison },
-            Token::Int(_) | Token::Float(_) => ParseRule { prefix: Some(Self::number), infix: None, precedence: Precedence::None },
-            Token::String(_) => ParseRule { prefix: Some(Self::string), infix: None, precedence: Precedence::None },
-            Token::InterpolatedString(_) => ParseRule { prefix: Some(Self::interpolated_string), infix: None, precedence: Precedence::None },
-            Token::True | Token::False | Token::Nil => ParseRule { prefix: Some(Self::literal), infix: None, precedence: Precedence::None },
+            Token::LeftParen => ParseRule {
+                prefix: Some(Self::grouping),
+                infix: Some(Self::call),
+                precedence: Precedence::Call,
+            },
+            Token::Dot => ParseRule {
+                prefix: None,
+                infix: Some(Self::dot),
+                precedence: Precedence::Call,
+            },
+            Token::Minus => ParseRule {
+                prefix: Some(Self::unary),
+                infix: Some(Self::binary),
+                precedence: Precedence::Term,
+            },
+            Token::Plus => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Term,
+            },
+            Token::Slash => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Factor,
+            },
+            Token::Star => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Factor,
+            },
+            Token::BangEqual | Token::EqualEqual => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Equality,
+            },
+            Token::Greater
+            | Token::GreaterEqual
+            | Token::Less
+            | Token::LessEqual
+            | Token::LeftAngle
+            | Token::RightAngle => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Comparison,
+            },
+            Token::Int(_) | Token::Float(_) => ParseRule {
+                prefix: Some(Self::number),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::String(_) => ParseRule {
+                prefix: Some(Self::string),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::InterpolatedString(_) => ParseRule {
+                prefix: Some(Self::interpolated_string),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::True | Token::False | Token::Nil => ParseRule {
+                prefix: Some(Self::literal),
+                infix: None,
+                precedence: Precedence::None,
+            },
 
-            Token::LeftBrace => ParseRule { prefix: Some(Self::map_literal), infix: None, precedence: Precedence::None },
-            Token::LeftBracket => ParseRule { prefix: Some(Self::list_literal), infix: Some(Self::subscript), precedence: Precedence::Call },
-            Token::Identifier(_) => ParseRule { prefix: Some(Self::variable), infix: None, precedence: Precedence::None },
-            Token::Spawn => ParseRule { prefix: Some(Self::spawn), infix: None, precedence: Precedence::None },
-            Token::Link => ParseRule { prefix: Some(Self::link_expr), infix: None, precedence: Precedence::None },
-            Token::Monitor => ParseRule { prefix: Some(Self::monitor_expr), infix: None, precedence: Precedence::None },
-            Token::Receive => ParseRule { prefix: Some(Self::receive), infix: None, precedence: Precedence::None },
-            Token::Register => ParseRule { prefix: Some(Self::register_expr), infix: None, precedence: Precedence::None },
-            Token::Unregister => ParseRule { prefix: Some(Self::unregister_expr), infix: None, precedence: Precedence::None },
-            Token::WhereIs => ParseRule { prefix: Some(Self::whereis_expr), infix: None, precedence: Precedence::None },
-            Token::Match => ParseRule { prefix: Some(Self::match_expression), infix: None, precedence: Precedence::None },
-            Token::Import => ParseRule { prefix: Some(Self::import_expression), infix: None, precedence: Precedence::None },
-            Token::Bang => ParseRule { prefix: Some(Self::unary), infix: None, precedence: Precedence::Unary },
-            Token::And => ParseRule { prefix: None, infix: Some(Self::and_), precedence: Precedence::And },
-            Token::Or => ParseRule { prefix: None, infix: Some(Self::or_), precedence: Precedence::Or },
-            Token::Percent => ParseRule { prefix: None, infix: Some(Self::binary), precedence: Precedence::Factor },
-            Token::LogicalAnd => ParseRule { prefix: None, infix: Some(Self::and_), precedence: Precedence::And },
-            Token::LogicalOr => ParseRule { prefix: None, infix: Some(Self::or_), precedence: Precedence::Or },
-            Token::This => ParseRule { prefix: Some(Self::variable), infix: None, precedence: Precedence::None },
-            Token::Super => ParseRule { prefix: Some(Self::super_), infix: None, precedence: Precedence::None },
-            Token::Fn => ParseRule { prefix: Some(Self::anonymous_function), infix: None, precedence: Precedence::None },
-            _ => ParseRule { prefix: None, infix: None, precedence: Precedence::None },
+            Token::LeftBrace => ParseRule {
+                prefix: Some(Self::map_literal),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::LeftBracket => ParseRule {
+                prefix: Some(Self::list_literal),
+                infix: Some(Self::subscript),
+                precedence: Precedence::Call,
+            },
+            Token::Identifier(_) => ParseRule {
+                prefix: Some(Self::variable),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Spawn => ParseRule {
+                prefix: Some(Self::spawn),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Link => ParseRule {
+                prefix: Some(Self::link_expr),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Monitor => ParseRule {
+                prefix: Some(Self::monitor_expr),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Receive => ParseRule {
+                prefix: Some(Self::receive),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Register => ParseRule {
+                prefix: Some(Self::register_expr),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Unregister => ParseRule {
+                prefix: Some(Self::unregister_expr),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::WhereIs => ParseRule {
+                prefix: Some(Self::whereis_expr),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Match => ParseRule {
+                prefix: Some(Self::match_expression),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Import => ParseRule {
+                prefix: Some(Self::import_expression),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Bang => ParseRule {
+                prefix: Some(Self::unary),
+                infix: None,
+                precedence: Precedence::Unary,
+            },
+            Token::And => ParseRule {
+                prefix: None,
+                infix: Some(Self::and_),
+                precedence: Precedence::And,
+            },
+            Token::Or => ParseRule {
+                prefix: None,
+                infix: Some(Self::or_),
+                precedence: Precedence::Or,
+            },
+            Token::Percent => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Factor,
+            },
+            Token::Ampersand => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::And,
+            },
+            Token::Pipe | Token::Caret => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Or,
+            },
+            Token::ShiftLeft | Token::ShiftRight => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Term,
+            },
+            Token::StarStar => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Factor,
+            },
+            Token::LogicalAnd => ParseRule {
+                prefix: None,
+                infix: Some(Self::and_),
+                precedence: Precedence::And,
+            },
+            Token::LogicalOr => ParseRule {
+                prefix: None,
+                infix: Some(Self::or_),
+                precedence: Precedence::Or,
+            },
+            Token::Tilde => ParseRule {
+                prefix: Some(Self::unary),
+                infix: None,
+                precedence: Precedence::Unary,
+            },
+            Token::This => ParseRule {
+                prefix: Some(Self::variable),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Super => ParseRule {
+                prefix: Some(Self::super_),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            Token::Fn => ParseRule {
+                prefix: Some(Self::anonymous_function),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            _ => ParseRule {
+                prefix: None,
+                infix: None,
+                precedence: Precedence::None,
+            },
         }
     }
 
@@ -2169,7 +2630,10 @@ impl<'a> Compiler<'a> {
     fn patch_jump(&mut self, offset: usize) -> PulseResult<()> {
         let jump = self.state().chunk.code.len() - offset - 2;
         if jump > u16::MAX as usize {
-             return Err(PulseError::CompileError("Too much code to jump over.".into(), 0));
+            return Err(PulseError::CompileError(
+                "Too much code to jump over.".into(),
+                0,
+            ));
         }
         self.state().chunk.code[offset] = (jump as u16 & 0xff) as u8;
         self.state().chunk.code[offset + 1] = ((jump as u16 >> 8) & 0xff) as u8;
@@ -2210,7 +2674,9 @@ impl<'a> Compiler<'a> {
     // Iterates from the current state downwards.
     fn resolve_local(&mut self, name: &Token) -> PulseResult<Option<u8>> {
         let state = self.state();
+        println!("DEBUG resolve_local: searching for {:?}", name);
         for (i, local) in state.locals.iter().enumerate().rev() {
+            println!("DEBUG resolve_local: local i={} {:?}", i, local.name);
             if let Token::Identifier(local_name) = &local.name {
                 if let Token::Identifier(target) = name {
                     if local_name == target {
@@ -2219,9 +2685,10 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        println!("DEBUG resolve_local: not found locally");
         Ok(None)
     }
-    
+
     // Helper to resolve local in a specific state index
     fn resolve_local_in_state(&self, state_idx: usize, name: &Token) -> PulseResult<Option<u8>> {
         let state = &self.states[state_idx];
@@ -2249,19 +2716,19 @@ impl<'a> Compiler<'a> {
             if let Some(index) = self.resolve_local_in_state(i, name)? {
                 return Ok(Some(self.capture_upvalue_chain(i, index)?));
             }
-            
+
             // Check if it's already an captured upvalue in state[i]
             if let Some(index) = self.resolve_upvalue_in_state(i, name) {
-                 return Ok(Some(self.capture_upvalue_chain_from_upvalue(i, index)?));
+                return Ok(Some(self.capture_upvalue_chain_from_upvalue(i, index)?));
             }
         }
         Ok(None)
     }
-    
+
     fn resolve_upvalue_in_state(&self, _state_idx: usize, _name: &Token) -> Option<u8> {
-        // Since we can't easily track upvalue names without complex lookups, 
+        // Since we can't easily track upvalue names without complex lookups,
         // and because any upvalue MUST have originated as a local in a parent scope,
-        // relying on `resolve_local_in_state` loop is sufficient for correctness 
+        // relying on `resolve_local_in_state` loop is sufficient for correctness
         // provided we walk the whole stack.
         // The only optimization potential is reusing an existing upvalue in an intermediate scope.
         // But `capture_upvalue_chain` handles reuse via `add_upvalue_to_state`.
@@ -2269,31 +2736,39 @@ impl<'a> Compiler<'a> {
         None
     }
 
-    fn capture_upvalue_chain(&mut self, origin_state_idx: usize, local_index: u8) -> PulseResult<u8> {
+    fn capture_upvalue_chain(
+        &mut self,
+        origin_state_idx: usize,
+        local_index: u8,
+    ) -> PulseResult<u8> {
         let mut index = local_index;
         let mut is_local = true;
-        
+
         // Iterate from origin+1 to current (inclusive)
         for i in (origin_state_idx + 1)..self.states.len() {
             // Add upvalue to state[i]
             index = self.add_upvalue_to_state(i, index, is_local);
             is_local = false; // Subsequent captures are upvalues, not locals
         }
-        
+
         Ok(index)
     }
-    
-    fn capture_upvalue_chain_from_upvalue(&mut self, origin_state_idx: usize, upvalue_index: u8) -> PulseResult<u8> {
+
+    fn capture_upvalue_chain_from_upvalue(
+        &mut self,
+        origin_state_idx: usize,
+        upvalue_index: u8,
+    ) -> PulseResult<u8> {
         let mut index = upvalue_index;
         let mut is_local = false;
-        
+
         for i in (origin_state_idx + 1)..self.states.len() {
             index = self.add_upvalue_to_state(i, index, is_local);
             is_local = false;
         }
         Ok(index)
     }
-    
+
     fn add_upvalue_to_state(&mut self, state_idx: usize, index: u8, is_local: bool) -> u8 {
         let state = &mut self.states[state_idx];
         for (i, upvalue) in state.upvalues.iter().enumerate() {
@@ -2305,7 +2780,4 @@ impl<'a> Compiler<'a> {
         state.upvalues.push(CompilerUpvalue { index, is_local });
         (state.upvalues.len() - 1) as u8
     }
-    
-
-
 }
