@@ -28,6 +28,11 @@ run.log
 *.swp
 *.swo
 *~
+docs/node_modules/
+dist/
+.dotnet/
+target/
+
 
 # OS
 .DS_Store

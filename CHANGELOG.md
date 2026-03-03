@@ -17,6 +17,7 @@ All notable changes to Pulse are documented in this file.
 - Language baseline docs:
   - `docs/LANGUAGE_SPEC.md`
   - `docs/COMPATIBILITY_POLICY.md`
+  - `docs/RELEASE_SIGNING_POLICY.md`
 
 ### Changed
 - Enforced static type checking in default `compile()` pipeline before bytecode emission.
@@ -29,6 +30,7 @@ All notable changes to Pulse are documented in this file.
   - compiler parser now accepts `import "path" as alias;` declaration form
   - compiler `let/const` declarations now accept optional type annotations (`let x: Int = ...`)
   - `ParserV2` pre-pass now accepts import expressions used by legacy sources
+  - added AST lowering stage (`ParserV2 AST -> canonical source -> bytecode emission parser`) so user syntax is accepted by a single front-end grammar before bytecode generation.
 - Improved type checker behavior for production paths:
   - function/class symbol resolution in variable inference
   - constructor-call handling for class names
@@ -48,6 +50,7 @@ All notable changes to Pulse are documented in this file.
 - CI adds a dedicated performance gate job.
 - Release workflow supports required signing mode (`require_signing`) with cosign signing + verification and signature artifact upload.
 - Runtime diagnostics now include actionable fixes for bounds, arity, actor lookup, mailbox saturation, and oversized messages.
+- JIT test expectations updated for `map_has_key` compilation support.
 - VS Code extension packaging quality improvements:
   - added `repository`, `license`, `homepage`, `bugs` metadata
   - added `.vscodeignore`

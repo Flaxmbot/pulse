@@ -169,7 +169,14 @@ pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> 
         return Err(PulseError::CompileError(lines.join("\n"), line));
     }
 
-    let parser = Rc::new(RefCell::new(Parser::new(source)));
+    // Front-end unification:
+    // 1. Parse user source with ParserV2 into AST.
+    // 2. Lower AST to canonical Pulse source.
+    // 3. Bytecode emission parses canonical source, removing user-syntax drift.
+    let canonical_source = crate::ast_lowering::lower_script_to_source(&script);
+    let canonical_source: &'static str = Box::leak(canonical_source.into_boxed_str());
+
+    let parser = Rc::new(RefCell::new(Parser::new(canonical_source)));
     let function_type = if module_path.is_some() {
         FunctionType::Module
     } else {

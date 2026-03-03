@@ -317,7 +317,7 @@ fn test_map_build_and_access() {
 
 #[test]
 fn test_map_contains_key() {
-    // map_has_key is not yet lowered in JIT; ensure unsupported code fails deterministically.
+    // map_has_key lowering should compile through the JIT path.
     let code = r#"
         let m = {"a": 1};
         if map_has_key(m, "a") {
@@ -326,8 +326,8 @@ fn test_map_contains_key() {
     "#;
     let result = quick_compile(code);
     assert!(
-        result.is_err(),
-        "Map contains key is expected to fail until JIT lowering is implemented"
+        result.is_ok(),
+        "Map contains key should compile successfully"
     );
 }
 

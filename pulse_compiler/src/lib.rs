@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod ast_lowering;
 pub mod compiler;
 pub mod lexer;
 pub mod parser_v2;
