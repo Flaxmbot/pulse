@@ -21,7 +21,12 @@ async fn run_file_expect_success(relative_path: &str) {
                 VMStatus::Halted => (), // Success
                 VMStatus::Error(e) => {
                     // We expect connection refused in isolated tests
-                    if !e.to_string().contains("Connection refused") && !e.to_string().contains("Bincode does not support") { panic!("VM error running {:?}: {}", path, e) }
+                    let error_str = e.to_string();
+                    if !error_str.contains("Connection refused") && 
+                       !error_str.contains("Bincode does not support") && 
+                       !error_str.contains("No connection could be made") { 
+                        panic!("VM error running {:?}: {}", path, e) 
+                    }
                 },
                 other => panic!("Unexpected VM status running {:?}: {:?}", path, other),
             }

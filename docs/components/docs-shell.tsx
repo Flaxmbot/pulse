@@ -76,6 +76,12 @@ export function DocsShell({ docs, activeSlug, children }: DocsShellProps) {
             </div>
           );
         })}
+
+        <div className="sidebar-footer">
+          <Link href="/docs/interactive/playground" className="playground-link">
+            🎮 Try the Playground
+          </Link>
+        </div>
       </aside>
 
       <main className="docs-main">{children}</main>

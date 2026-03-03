@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAllDocs } from "../lib/docs";
+import { Playground } from "../components/playground";
 
 export default function HomePage() {
   const docs = getAllDocs();
@@ -33,6 +34,11 @@ export default function HomePage() {
             </Link>
           ))}
         </div>
+      </section>
+
+      {/* Interactive Playground */}
+      <section className="playground-section">
+        <Playground />
       </section>
     </div>
   );

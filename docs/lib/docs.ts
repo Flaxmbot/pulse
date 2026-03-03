@@ -14,7 +14,8 @@ export const SECTION_ORDER = [
   "Tutorials",
   "Language Reference",
   "Guides",
-  "Advanced"
+  "Advanced",
+  "Interactive"
 ] as const;
 
 export const DOCS: DocPage[] = [
@@ -858,6 +859,61 @@ pulse check self-hosted --diagnostics-json
 - Rust remains canonical compiler until criteria met
 - Automatic rollback path remains active
 - Production release blocked on parity regressions`,
+  },
+  {
+    slug: "interactive/playground",
+    title: "Pulse Playground",
+    summary: "Interactive coding environment to learn and experiment with Pulse language.",
+    section: "Interactive",
+    level: "Beginner",
+    keywords: ["playground", "interactive", "live", "demo"],
+    readTime: "5 min",
+    content: `# Pulse Playground
+
+The Pulse Playground is an interactive environment where you can write, run, and test Pulse code without having to install anything locally.
+
+## Features
+
+- **Live Code Editing**: Write and edit Pulse code in the integrated editor
+- **Instant Execution**: Run your code with a single click
+- **Real-time Output**: See results and errors immediately
+- **Error Handling**: Clear error messages and stack traces
+- **Syntax Highlighting**: Code is highlighted for better readability
+- **Reset Functionality**: Start fresh with the default example code
+
+## Getting Started
+
+1. **Write Code**: Type your Pulse code in the editor on the left
+2. **Run**: Click the "Run" button to execute your code
+3. **View Output**: See the results in the output panel on the right
+4. **Reset**: Click "Reset" to return to the default example
+
+## Example Code
+
+The playground comes with a default example that demonstrates:
+- Basic variable declaration and manipulation
+- Loop constructs
+- Print statements
+- Actor creation and message passing
+
+## What You Can Try
+
+- Modify the existing code to see how it affects the output
+- Try different control flow statements
+- Experiment with actor messaging patterns
+- Test arithmetic operations and string manipulation
+
+## Limitations
+
+The playground is a demo environment and has some limitations:
+- Execution time is limited
+- No file system access
+- No network connectivity
+- Limited memory resources
+- Not suitable for large or complex programs
+
+For production use, we recommend installing the Pulse compiler and runtime locally.
+`,
   },
   {
     slug: "advanced/production-checklist",
