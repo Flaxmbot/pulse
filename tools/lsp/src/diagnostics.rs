@@ -1,5 +1,5 @@
-use pulse_compiler::lexer::Lexer;
 use pulse_ast::PulseError;
+use pulse_compiler::lexer::Lexer;
 use tower_lsp::lsp_types::*;
 
 /// Run diagnostics on source code and return LSP diagnostics

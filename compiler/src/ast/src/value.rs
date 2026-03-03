@@ -60,7 +60,15 @@ impl<'de> Deserialize<'de> for PulseSocket {
 
 #[derive(Clone, Debug)]
 pub struct PulseWebSocket(
-    pub Arc<tokio::sync::Mutex<Option<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>>>,
+    pub  Arc<
+        tokio::sync::Mutex<
+            Option<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+            >,
+        >,
+    >,
 );
 
 impl PartialEq for PulseWebSocket {

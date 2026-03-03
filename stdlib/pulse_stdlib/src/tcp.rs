@@ -1,12 +1,12 @@
 use pulse_ast::object::{HeapInterface, Object};
 use pulse_ast::value::PulseSocket;
 use pulse_ast::{PulseError, PulseResult, Value};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use std::future::Future;
-use std::pin::Pin;
 
 pub fn tcp_connect_native<'a>(
     heap: &'a mut dyn HeapInterface,
@@ -33,7 +33,10 @@ pub fn tcp_connect_native<'a>(
                 let handle = heap.alloc_object(Object::Socket(socket_obj));
                 Ok(Value::Obj(handle))
             }
-            Err(e) => Err(PulseError::RuntimeError(format!("TCP connect failed: {}", e))),
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "TCP connect failed: {}",
+                e
+            ))),
         }
     })
 }

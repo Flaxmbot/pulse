@@ -1340,7 +1340,11 @@ impl<'ctx> LLVMBackend<'ctx> {
     // ============ Object File Emission ============
 
     /// Emit compiled module as a native object file
-    pub fn emit_object_file(&self, path: &Path, opt_level: OptimizationLevel) -> Result<(), String> {
+    pub fn emit_object_file(
+        &self,
+        path: &Path,
+        opt_level: OptimizationLevel,
+    ) -> Result<(), String> {
         self.verify()?; // Harden: verify IR before emitting
 
         let triple = TargetMachine::get_default_triple();
@@ -1583,7 +1587,8 @@ mod tests {
 
         // Emit to temp file
         let tmp = std::env::temp_dir().join("pulse_aot_test.o");
-        let result = target_machine.write_to_file(&backend.module, inkwell::targets::FileType::Object, &tmp);
+        let result =
+            target_machine.write_to_file(&backend.module, inkwell::targets::FileType::Object, &tmp);
         assert!(
             result.is_ok(),
             "Object file emission failed: {:?}",

@@ -1,5 +1,5 @@
-use pulse_compiler::{compile, Lexer, ParserV2, Token};
 use pulse_ast::{Op, PulseError};
+use pulse_compiler::{compile, Lexer, ParserV2, Token};
 use std::fs;
 use std::path::PathBuf;
 

@@ -1,5 +1,5 @@
-use pulse_compiler::compile;
 use pulse_ast::PulseError;
+use pulse_compiler::compile;
 
 #[test]
 fn syntax_error_reports_line_column_and_snippet() {

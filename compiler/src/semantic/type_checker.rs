@@ -342,11 +342,19 @@ impl TypeContext {
         );
         self.functions.insert(
             "bincode_serialize".to_string(),
-            (vec![Type::Any], Type::List(Box::new(Type::Int)), EffectSet::pure()),
+            (
+                vec![Type::Any],
+                Type::List(Box::new(Type::Int)),
+                EffectSet::pure(),
+            ),
         );
         self.functions.insert(
             "bincode_deserialize".to_string(),
-            (vec![Type::List(Box::new(Type::Int))], Type::Any, EffectSet::pure()),
+            (
+                vec![Type::List(Box::new(Type::Int))],
+                Type::Any,
+                EffectSet::pure(),
+            ),
         );
         self.functions.insert(
             "sha256".to_string(),

@@ -626,16 +626,31 @@ impl VM {
         self.define_native_async("tcp_write", pulse_stdlib::tcp::tcp_write_native);
         self.define_native_async("tcp_read", pulse_stdlib::tcp::tcp_read_native);
 
-        self.define_native_async("websocket_connect", pulse_stdlib::websocket::websocket_connect_native);
-        self.define_native_async("websocket_send", pulse_stdlib::websocket::websocket_send_native);
-        self.define_native_async("websocket_recv", pulse_stdlib::websocket::websocket_recv_native);
+        self.define_native_async(
+            "websocket_connect",
+            pulse_stdlib::websocket::websocket_connect_native,
+        );
+        self.define_native_async(
+            "websocket_send",
+            pulse_stdlib::websocket::websocket_send_native,
+        );
+        self.define_native_async(
+            "websocket_recv",
+            pulse_stdlib::websocket::websocket_recv_native,
+        );
 
         // ====================================================================
         // PHASE 4: CRYPTO & BINCODE
         // ====================================================================
         self.define_native("sha256", pulse_stdlib::crypto::sha256_native);
-        self.define_native("bincode_serialize", pulse_stdlib::crypto::bincode_serialize_native);
-        self.define_native("bincode_deserialize", pulse_stdlib::crypto::bincode_deserialize_native);
+        self.define_native(
+            "bincode_serialize",
+            pulse_stdlib::crypto::bincode_serialize_native,
+        );
+        self.define_native(
+            "bincode_deserialize",
+            pulse_stdlib::crypto::bincode_deserialize_native,
+        );
     }
 
     pub fn new_spawn(
@@ -2945,12 +2960,10 @@ impl VM {
         }
 
         // 2. Create new open upvalue
-        let handle = self
-            .heap
-            .alloc(Object::Upvalue(pulse_ast::object::Upvalue {
-                location: Some(local_idx),
-                closed: None,
-            }));
+        let handle = self.heap.alloc(Object::Upvalue(pulse_ast::object::Upvalue {
+            location: Some(local_idx),
+            closed: None,
+        }));
 
         // 3. Keep it in open_upvalues list
         self.open_upvalues.push(handle);

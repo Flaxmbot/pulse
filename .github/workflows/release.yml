@@ -38,7 +38,7 @@ jobs:
             echo "VS Code extension packaging emitted metadata warnings."
             exit 1
           fi
-        working-directory: pulse_lang/vscode-pulse
+        working-directory: vscode-pulse
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
@@ -79,7 +79,7 @@ jobs:
         run: |
           chmod +x scripts/build-packages.sh
           scripts/build-packages.sh --track ${{ matrix.track }} --version "${{ github.event.inputs.version || github.ref_name }}"
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: Upload unix artifacts
         uses: actions/upload-artifact@v4
@@ -127,7 +127,7 @@ jobs:
       - name: Build MSI
         shell: powershell
         run: .\scripts\build-msi.ps1 -Track ${{ matrix.track }} -Version "${{ github.event.inputs.version || github.ref_name }}"
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: Upload MSI artifacts
         uses: actions/upload-artifact@v4

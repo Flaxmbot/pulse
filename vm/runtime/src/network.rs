@@ -41,11 +41,7 @@ pub struct RemoteSpawnRequest {
 }
 
 impl RemoteSpawnRequest {
-    pub fn new(
-        function: Arc<Function>,
-        args: Vec<pulse_ast::Value>,
-        name: Option<String>,
-    ) -> Self {
+    pub fn new(function: Arc<Function>, args: Vec<pulse_ast::Value>, name: Option<String>) -> Self {
         Self {
             function,
             args,

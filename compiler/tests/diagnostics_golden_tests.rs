@@ -1,5 +1,5 @@
-use pulse_compiler::compile;
 use pulse_ast::PulseError;
+use pulse_compiler::compile;
 
 fn normalize_diagnostic(err: &PulseError) -> String {
     let diag = err.to_diagnostic();

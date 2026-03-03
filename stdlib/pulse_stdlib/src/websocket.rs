@@ -1,11 +1,11 @@
 use pulse_ast::object::{HeapInterface, Object};
 use pulse_ast::value::PulseWebSocket;
 use pulse_ast::{PulseError, PulseResult, Value};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use std::future::Future;
-use std::pin::Pin;
 
 pub fn websocket_connect_native<'a>(
     heap: &'a mut dyn HeapInterface,
@@ -28,13 +28,14 @@ pub fn websocket_connect_native<'a>(
 
         match connect_async(url).await {
             Ok((ws_stream, _)) => {
-                let ws_obj = PulseWebSocket(
-                    Arc::new(Mutex::new(Some(ws_stream))),
-                );
+                let ws_obj = PulseWebSocket(Arc::new(Mutex::new(Some(ws_stream))));
                 let handle = heap.alloc_object(Object::WebSocket(ws_obj));
                 Ok(Value::Obj(handle))
             }
-            Err(e) => Err(PulseError::RuntimeError(format!("WebSocket connect failed: {}", e))),
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "WebSocket connect failed: {}",
+                e
+            ))),
         }
     })
 }
@@ -45,7 +46,9 @@ pub fn websocket_send_native<'a>(
 ) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
     Box::pin(async move {
         if args.len() < 2 {
-            return Err(PulseError::RuntimeError("Expected websocket and message".into()));
+            return Err(PulseError::RuntimeError(
+                "Expected websocket and message".into(),
+            ));
         }
 
         let ws_handle = if let Value::Obj(h) = args[0] {
@@ -75,7 +78,10 @@ pub fn websocket_send_native<'a>(
             use futures_util::SinkExt;
             match sender.send(Message::Text(msg_str.into())).await {
                 Ok(_) => Ok(Value::Bool(true)),
-                Err(e) => Err(PulseError::RuntimeError(format!("WebSocket send failed: {}", e))),
+                Err(e) => Err(PulseError::RuntimeError(format!(
+                    "WebSocket send failed: {}",
+                    e
+                ))),
             }
         } else {
             Err(PulseError::RuntimeError("WebSocket closed".into()))
@@ -117,7 +123,10 @@ pub fn websocket_recv_native<'a>(
                         Ok(Value::Unit) // Ignore non-text messages for now
                     }
                 }
-                Some(Err(e)) => Err(PulseError::RuntimeError(format!("WebSocket recv failed: {}", e))),
+                Some(Err(e)) => Err(PulseError::RuntimeError(format!(
+                    "WebSocket recv failed: {}",
+                    e
+                ))),
                 None => Err(PulseError::RuntimeError("WebSocket closed".into())),
             }
         } else {

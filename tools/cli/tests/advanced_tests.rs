@@ -1,6 +1,6 @@
-use pulse_compiler::compiler::compile;
 use pulse_ast::error::PulseError;
 use pulse_ast::value::ActorId;
+use pulse_compiler::compiler::compile;
 use pulse_vm::vm::{VMStatus, VM};
 use std::fs;
 use std::path::PathBuf;
@@ -18,11 +18,15 @@ async fn run_file_expect_success(relative_path: &str) {
             let result = vm.run(usize::MAX).await;
             match result {
                 VMStatus::Spawn(..) => (), // Allowed for mocked test envs
-                VMStatus::Halted => (), // Success
+                VMStatus::Halted => (),    // Success
                 VMStatus::Error(e) => {
                     // We expect connection refused in isolated tests
-                    if !e.to_string().contains("Connection refused") && !e.to_string().contains("Bincode does not support") { panic!("VM error running {:?}: {}", path, e) }
-                },
+                    if !e.to_string().contains("Connection refused")
+                        && !e.to_string().contains("Bincode does not support")
+                    {
+                        panic!("VM error running {:?}: {}", path, e)
+                    }
+                }
                 other => panic!("Unexpected VM status running {:?}: {:?}", path, other),
             }
         }

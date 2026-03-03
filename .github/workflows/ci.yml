@@ -56,29 +56,29 @@ jobs:
 
       - name: Cargo fmt
         run: cargo fmt --all -- --check
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: Cargo clippy
         run: cargo clippy --workspace --all-targets
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: Cargo test
         run: cargo test --workspace --all-targets
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: AOT/JIT verification
         if: runner.os == 'Windows'
         shell: powershell
         run: .\scripts\verify-aot-jit.ps1
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: Docs build
         run: cargo doc --workspace --no-deps
-        working-directory: pulse_lang
+        working-directory: .
 
       - name: Selfhost smoke
         run: cargo run --bin pulse_cli -- selfhost test
-        working-directory: pulse_lang
+        working-directory: .
 
   vscode-extension-gates:
     name: vscode-extension-gates
@@ -93,7 +93,7 @@ jobs:
           node-version: 20
 
       - name: Build and package VS Code extension
-        working-directory: pulse_lang/vscode-pulse
+        working-directory: vscode-pulse
         shell: bash
         run: |
           npm ci
@@ -147,14 +147,14 @@ jobs:
 
       - name: Build unix package (Linux)
         if: runner.os == 'Linux'
-        working-directory: pulse_lang
+        working-directory: .
         run: |
           chmod +x scripts/build-packages.sh
           scripts/build-packages.sh --track ${{ matrix.track }} --version "ci-${{ github.run_number }}"
 
       - name: Build MSI package (Windows)
         if: runner.os == 'Windows'
-        working-directory: pulse_lang
+        working-directory: .
         shell: powershell
         run: .\scripts\build-msi.ps1 -Track ${{ matrix.track }} -Version "0.0.${{ github.run_number }}"
 
@@ -175,6 +175,6 @@ jobs:
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
 
       - name: Benchmark regression gate
-        working-directory: pulse_lang
+        working-directory: .
         run: |
           cargo run --release --bin pulse_cli -- benchmark tests/bench_baseline.pulse --iterations 3 --max-avg-ms 4000

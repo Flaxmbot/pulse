@@ -1,6 +1,6 @@
-use pulse_compiler::compiler::compile;
 use pulse_ast::error::PulseError;
 use pulse_ast::value::ActorId;
+use pulse_compiler::compiler::compile;
 use pulse_vm::vm::{VMStatus, VM};
 use std::fs;
 use std::path::PathBuf;
