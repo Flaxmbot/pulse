@@ -1,0 +1,20 @@
+[package]
+name = "pulse_cli"
+version = "0.1.2"
+edition = "2021"
+
+[dependencies]
+pulse_ast = { path = "../../compiler/src/ast" }
+pulse_vm = { path = "../../vm/bytecode" }
+pulse_compiler = { path = "../../compiler" }
+pulse_runtime = { path = "../../vm/runtime" }
+rustyline = "14"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+inkwell = { version = "0.5.0", features = ["llvm18-0"] }
+pulse_llvm_backend = { path = "../../llvm/backend" }
+

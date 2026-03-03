@@ -1517,14 +1517,29 @@ name = "pulse_aot_runtime"
 version = "0.1.2"
 
 [[package]]
+name = "pulse_ast"
+version = "0.1.2"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "bytes",
+ "futures",
+ "futures-util",
+ "regex",
+ "serde",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "pulse_cli"
 version = "0.1.2"
 dependencies = [
  "clap",
  "dirs",
  "inkwell",
+ "pulse_ast",
  "pulse_compiler",
- "pulse_core",
  "pulse_llvm_backend",
  "pulse_runtime",
  "pulse_vm",
@@ -1541,22 +1556,7 @@ version = "0.1.2"
 dependencies = [
  "inkwell",
  "llvm-sys",
- "pulse_core",
-]
-
-[[package]]
-name = "pulse_core"
-version = "0.1.2"
-dependencies = [
- "async-trait",
- "bincode",
- "bytes",
- "futures",
- "futures-util",
- "regex",
- "serde",
- "tokio",
- "tokio-tungstenite",
+ "pulse_ast",
 ]
 
 [[package]]
@@ -1566,8 +1566,8 @@ dependencies = [
  "env_logger",
  "inkwell",
  "log",
+ "pulse_ast",
  "pulse_compiler",
- "pulse_core",
  "pulse_runtime",
  "pulse_stdlib",
  "serde",
@@ -1578,8 +1578,8 @@ dependencies = [
 name = "pulse_lsp"
 version = "0.1.2"
 dependencies = [
+ "pulse_ast",
  "pulse_compiler",
- "pulse_core",
  "serde",
  "serde_json",
  "tokio",
@@ -1591,8 +1591,8 @@ name = "pulse_runtime"
 version = "0.1.2"
 dependencies = [
  "bincode",
+ "pulse_ast",
  "pulse_compiler",
- "pulse_core",
  "pulse_stdlib",
  "pulse_vm",
  "rand 0.8.5",
@@ -1609,6 +1609,7 @@ name = "pulse_stdlib"
 version = "0.1.2"
 dependencies = [
  "async-trait",
+ "bincode",
  "chrono",
  "csv",
  "dns-lookup",
@@ -1619,11 +1620,12 @@ dependencies = [
  "ndarray",
  "num",
  "once_cell",
- "pulse_core",
+ "pulse_ast",
  "pulse_vm",
  "rand 0.8.5",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde_json",
  "tokio",
@@ -1637,8 +1639,8 @@ version = "0.1.2"
 dependencies = [
  "async-trait",
  "parking_lot",
+ "pulse_ast",
  "pulse_compiler",
- "pulse_core",
  "pulse_runtime",
  "pulse_stdlib",
  "tokio",

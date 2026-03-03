@@ -2,11 +2,13 @@
 resolver = "2"
 
 members = [
-    "pulse_core",
-    "pulse_vm",
-    "pulse_compiler",
-    "pulse_runtime",
-    "pulse_cli",
-    "pulse_stdlib", "pulse_lsp", "pulse_aot_runtime",
-    "pulse_llvm_backend",
+    "compiler/src/ast", # pulse_core
+    "vm/bytecode", # pulse_vm
+    "compiler", # pulse_compiler
+    "vm/runtime", # pulse_runtime
+    "tools/cli", # pulse_cli
+    "stdlib/pulse_stdlib", # pulse_stdlib
+    "tools/lsp", # pulse_lsp
+    "llvm/aot", # pulse_aot_runtime
+    "llvm/backend", # pulse_llvm_backend
 ]

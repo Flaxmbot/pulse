@@ -1,0 +1,5 @@
+// Supervision strategies tests
+
+let sup_pid = spawn {
+};
+assert_eq(type_of(sup_pid), "pid");

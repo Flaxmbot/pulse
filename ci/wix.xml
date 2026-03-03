@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  wix.xml
+  Basic configuration for cargo-wix to build an MSI installer for Windows.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product Id="*" Name="Pulse" Language="1033" Version="1.0.0.0" Manufacturer="Pulse Contributors" UpgradeCode="12345678-1234-1234-1234-123456789012">
+        <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <Feature Id="MainFeature" Title="Pulse CLI" Level="1">
+            <ComponentGroupRef Id="ProductComponents" />
+            <!-- Include Path Modification here in a real implementation -->
+        </Feature>
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFilesFolder">
+                <Directory Id="INSTALLFOLDER" Name="Pulse">
+                    <Directory Id="BIN_DIR" Name="bin" />
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <ComponentGroup Id="ProductComponents" Directory="BIN_DIR">
+            <Component Id="cmp_pulse_cli" Guid="*">
+                <File Id="fil_pulse_cli" Source="target\release\pulse_cli.exe" KeyPath="yes" />
+            </Component>
+        </ComponentGroup>
+    </Product>
+</Wix>

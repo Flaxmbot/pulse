@@ -1,0 +1,21 @@
+// TCP Network tests
+// Currently simulated in VM
+
+let sock = tcp_connect("127.0.0.1:8080");
+assert_eq(type_of(sock), "Socket");
+
+let write_ok = tcp_write(sock, "GET / HTTP/1.1\r\n\r\n");
+assert_eq(write_ok, true);
+
+let read_data = tcp_read(sock);
+assert_eq(type_of(read_data), "String");
+assert_eq(read_data, "test_data");
+
+let ws = websocket_connect("ws://127.0.0.1:8080");
+assert_eq(type_of(ws), "WebSocket");
+
+let ws_write = websocket_send(ws, "Hello");
+assert_eq(ws_write, true);
+
+let ws_read = websocket_recv(ws);
+assert_eq(ws_read, "test_message");

@@ -1,0 +1,13 @@
+:root {
+    --brand-color: #3B82F6;
+    --brand-color-hover: #2563EB;
+}
+.sidebar {
+    background-color: #0f172a;
+}
+.sidebar a {
+    color: #e2e8f0;
+}
+.sidebar-title {
+    color: #38bdf8;
+}
