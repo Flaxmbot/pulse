@@ -1,0 +1,14 @@
+--- llvm/backend/src/backend.rs
++++ llvm/backend/src/backend.rs
+@@ -1563,7 +1563,7 @@
+         );
+         let _ = backend.compile_chunk(&chunk).unwrap();
+         let _ = backend.generate_main_entry().unwrap();
+-
++
+         // Add explicit return so verify() doesn't fail
+-        if backend.builder.get_insert_block().unwrap().get_terminator().is_none() {
+-            backend.builder.build_return(Some(&backend.context.i32_type().const_zero())).unwrap();
+-        }
+
+         // Emit to temp file
