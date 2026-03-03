@@ -1,10 +1,10 @@
 //! Pulse REPL - Interactive Read-Eval-Print-Loop
 
+use pulse_core::Chunk;
+use pulse_runtime::Runtime;
+use pulse_vm::{VMStatus, VM};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
-use pulse_runtime::Runtime;
-use pulse_vm::{VM, VMStatus};
-use pulse_core::Chunk;
 use std::path::PathBuf;
 
 const PROMPT: &str = "pulse> ";
@@ -29,19 +29,23 @@ pub async fn start() {
 
     // Persistent runtime and VM across REPL session
     let runtime = Runtime::new(0);
-    
+
     // Create a persistent VM for the REPL environment
     let mut vm = VM::new(
-        Chunk::new(), 
+        Chunk::new(),
         pulse_core::ActorId::new(0, 0), // PID 0,0 for REPL
-        Some(runtime.handle.shared_heap())
+        Some(runtime.handle.shared_heap()),
     );
-    
+
     let mut input_buffer = String::new();
 
     loop {
-        let prompt = if input_buffer.is_empty() { PROMPT } else { CONTINUATION_PROMPT };
-        
+        let prompt = if input_buffer.is_empty() {
+            PROMPT
+        } else {
+            CONTINUATION_PROMPT
+        };
+
         match rl.readline(prompt) {
             Ok(line) => {
                 // Handle special commands
@@ -90,9 +94,9 @@ pub async fn start() {
 }
 
 async fn handle_command(cmd: &str, runtime: &Runtime, vm: &mut VM) -> bool {
-    let parts: Vec<&str> = cmd.trim().split_whitespace().collect();
-    let base_cmd = parts.get(0).map(|s| *s).unwrap_or("");
-    
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let base_cmd = parts.first().copied().unwrap_or("");
+
     match base_cmd {
         ":help" | ":h" => {
             println!("Available commands:");
@@ -145,7 +149,10 @@ async fn handle_command(cmd: &str, runtime: &Runtime, vm: &mut VM) -> bool {
             true
         }
         _ => {
-            println!("Unknown command: {}. Type :help for available commands.", base_cmd);
+            println!(
+                "Unknown command: {}. Type :help for available commands.",
+                base_cmd
+            );
             true
         }
     }
@@ -163,7 +170,7 @@ fn is_complete(input: &str) -> bool {
             escape_next = false;
             continue;
         }
-        
+
         match ch {
             '\\' if in_string => escape_next = true,
             '"' => in_string = !in_string,
@@ -197,39 +204,38 @@ async fn execute_input(input: &str, runtime: &Runtime, vm: &mut VM) {
     match pulse_compiler::compile(&source, None) {
         Ok(chunk) => {
             let status = vm.execute_chunk(chunk).await;
-            
-            // Handle effects (Spawn, Send, etc.) for the REPL actor
-            while let VMStatus::Running = status {
-                 // In execute_chunk, we call vm.run(usize::MAX), so it should
-                 // only return if it halts, errors, or needs an effect.
-                 // Actually, VMStatus::Running shouldn't be returned by vm.run(MAX).
-                 break;
-            }
-            
+
             match status {
                 VMStatus::Error(e) => eprintln!("Runtime Error: {}", e),
-                VMStatus::Spawn(ip) => {
-                    // This is tricky: VM wants to spawn from its CURRENT chunk.
-                    // For REPL, we just spawned a temporary chunk.
-                    let current_chunk = match vm.get_current_chunk() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("Error getting current chunk: {:?}", e);
-                            return;
-                        }
-                    };
-                    // Use runtime.spawn_from_actor if Runtime is from pulse_runtime.
-                    // If repl.rs Runtime has handle, use it.
-                    // Assuming runtime.spawn_from_actor is correct based on actor.rs
-                    // But if original code use runtime.handle, maybe keep it?
-                    // Original: runtime.handle.spawn_from_actor
-                    // Let's check imports first. If verified, update.
-                    // For now, I will use runtime.handle as it was in original.
-                    let _ = runtime.handle.spawn_from_actor(current_chunk, ip).await;
-                },
+                VMStatus::Spawn(closure, captured_upvalues, globals) => {
+                    let _ = runtime
+                        .handle
+                        .spawn_from_actor(closure, captured_upvalues, globals, Vec::new())
+                        .await;
+                }
+                VMStatus::SpawnCall(args, captured_upvalues, globals) => {
+                    if args.is_empty() {
+                        eprintln!("SpawnCall called with no arguments");
+                        return;
+                    }
+                    let closure = args[0].clone();
+                    let actual_args = args[1..].to_vec();
+
+                    let _ = runtime
+                        .handle
+                        .spawn_from_actor(closure, captured_upvalues, globals, actual_args)
+                        .await;
+                }
+                VMStatus::SpawnLink(closure, captured_upvalues, globals) => {
+                    let _ = runtime
+                        .handle
+                        .spawn_from_actor(closure, captured_upvalues, globals, Vec::new())
+                        .await;
+                    // Link handling in REPL is limited as REPL VM itself isn't a proper actor in this context
+                }
                 _ => {} // Halted, etc.
             }
-            
+
             // Allow background actors to run a bit
             tokio::task::yield_now().await;
         }
@@ -241,27 +247,40 @@ async fn execute_input(input: &str, runtime: &Runtime, vm: &mut VM) {
 
 fn should_print_result(input: &str) -> bool {
     let trimmed = input.trim();
-    
+
     // Don't print for statements
-    let statement_starters = ["let ", "fn ", "if ", "while ", "for ", "print ", "send ", 
-                               "link ", "monitor ", "spawn_link ", "import ", "try ", "throw "];
-    
+    let statement_starters = [
+        "let ",
+        "fn ",
+        "if ",
+        "while ",
+        "for ",
+        "print ",
+        "send ",
+        "link ",
+        "monitor ",
+        "spawn_link ",
+        "import ",
+        "try ",
+        "throw ",
+    ];
+
     for starter in statement_starters {
         if trimmed.starts_with(starter) {
             return false;
         }
     }
-    
+
     // Don't print if it ends with semicolon (explicit statement)
     if trimmed.ends_with(';') {
         return false;
     }
-    
+
     // Don't print if it's a block (probably function def or control flow)
     if trimmed.ends_with('}') {
         return false;
     }
-    
+
     true
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "pulse_compiler"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
@@ -10,4 +10,5 @@ llvm-sys = { version = "180.0.0", features = ["prefer-dynamic"] }
 
 [dev-dependencies]
 pulse_core = { path = "../pulse_core" }
+
 

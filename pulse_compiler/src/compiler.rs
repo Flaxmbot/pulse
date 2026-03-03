@@ -1,5 +1,6 @@
 use crate::lexer::Token;
 use crate::parser_v2::ParserV2 as Parser;
+use crate::type_checker::TypeError;
 use pulse_core::object::Function;
 use pulse_core::{Chunk, Constant, Op, PulseError, PulseResult};
 
@@ -147,6 +148,27 @@ pub struct Compiler<'a> {
 }
 
 pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> {
+    // Parse + type-check through the AST parser first so default compilation
+    // enforces static checks consistently.
+    let mut ast_parser = Parser::new(source);
+    let script = ast_parser.parse()?;
+    let mut checker = crate::type_checker::TypeChecker::new();
+    let type_errors = checker.check_script(&script);
+    if !type_errors.is_empty() {
+        let mut lines = Vec::new();
+        for err in type_errors.iter().take(5) {
+            lines.push(format!("[E-TYPE-0001] {}", err));
+        }
+        if type_errors.len() > 5 {
+            lines.push(format!(
+                "... and {} more type error(s)",
+                type_errors.len() - 5
+            ));
+        }
+        let line = type_error_line(&type_errors[0]).max(1);
+        return Err(PulseError::CompileError(lines.join("\n"), line));
+    }
+
     let parser = Rc::new(RefCell::new(Parser::new(source)));
     let function_type = if module_path.is_some() {
         FunctionType::Module
@@ -155,6 +177,26 @@ pub fn compile(source: &str, module_path: Option<String>) -> PulseResult<Chunk> 
     };
     let mut compiler = Compiler::new(parser.clone(), function_type, module_path);
     compiler.compile_script()
+}
+
+fn type_error_line(err: &TypeError) -> usize {
+    match err {
+        TypeError::TypeMismatch { location, .. }
+        | TypeError::InvalidOperator { location, .. }
+        | TypeError::WrongArgumentCount { location, .. }
+        | TypeError::InvalidCall { location, .. }
+        | TypeError::InvalidReturnType { location, .. }
+        | TypeError::CannotInferType(location)
+        | TypeError::InvalidMemberAccess { location, .. }
+        | TypeError::PropertyExists { location, .. }
+        | TypeError::ActorWithoutReceive(location)
+        | TypeError::InvalidAssignmentTarget(location)
+        | TypeError::UnificationFailure { location, .. }
+        | TypeError::InfiniteType { location, .. }
+        | TypeError::EffectMismatch { location, .. }
+        | TypeError::InvalidEffect { location, .. } => location.line,
+        _ => 1,
+    }
 }
 
 impl<'a> Compiler<'a> {
@@ -192,9 +234,10 @@ impl<'a> Compiler<'a> {
 
     // --- Declarations ---
     fn declaration(&mut self) -> PulseResult<()> {
-        println!("DEBUG declaration: current token {:?}", self.parser.borrow().current);
         if self.matches(Token::Fn)? || self.matches(Token::Def)? {
             self.fun_declaration()
+        } else if self.matches(Token::Import)? {
+            self.import_declaration()
         } else if self.matches(Token::Let)? || self.matches(Token::Const)? {
             self.var_declaration()
         } else if self.matches(Token::Actor)? {
@@ -224,6 +267,36 @@ impl<'a> Compiler<'a> {
         };
         self.function(FunctionType::Function, name)?;
         self.define_variable(global);
+        Ok(())
+    }
+
+    fn import_declaration(&mut self) -> PulseResult<()> {
+        self.consume_string("Expect module path string.")?;
+        let previous = self.parser.borrow().previous.clone();
+        let path = if let Token::String(s) = previous {
+            s
+        } else {
+            return Err(self.compile_error("Expect module path string."));
+        };
+
+        let sanitized = sanitize_import_path(&path)?;
+        let idx = self.state().chunk.add_constant(Constant::String(sanitized));
+        if idx > u16::MAX as usize {
+            return Err(self.compile_error("Too many constants."));
+        }
+
+        self.emit_byte(Op::Import as u8);
+        self.emit_u16(idx as u16);
+
+        if self.matches(Token::As)? {
+            let alias = self.parse_variable("Expect alias name after 'as'.")?;
+            self.consume(Token::Semicolon, "Expect ';' after import.")?;
+            self.define_variable(alias);
+        } else {
+            self.consume(Token::Semicolon, "Expect ';' after import.")?;
+            self.emit_byte(Op::Pop as u8);
+        }
+
         Ok(())
     }
 
@@ -316,6 +389,11 @@ impl<'a> Compiler<'a> {
     fn var_declaration(&mut self) -> PulseResult<()> {
         let global = self.parse_variable("Expect variable name.")?;
 
+        // Optional type annotation for parser parity with ParserV2.
+        if self.matches(Token::Colon)? {
+            let _ = self.parse_type()?;
+        }
+
         if self.matches(Token::Equal)? {
             self.expression()?;
         } else {
@@ -349,7 +427,7 @@ impl<'a> Compiler<'a> {
         let class_name = if let Token::Identifier(s) = previous {
             s
         } else {
-            return Err(PulseError::CompileError("Expected class name".into(), 0));
+            return Err(self.compile_error("Expected class name"));
         };
 
         let name_idx = self.identifier_constant(&Token::Identifier(class_name.clone()))?;
@@ -542,13 +620,13 @@ impl<'a> Compiler<'a> {
 
     fn fence_statement(&mut self) -> PulseResult<()> {
         // Parse: fence; | acquire; | release;
-        // Consume the fence/acquire/release keyword (already consumed by matches_any)
+        // Capture the fence keyword now (before consuming ';').
+        let fence_keyword = self.parser.borrow().previous.clone();
 
         self.consume(Token::Semicolon, "Expect ';' after fence statement.")?;
 
         // Emit the appropriate fence instruction based on the previous token
-        let previous = self.parser.borrow().previous.clone();
-        match &previous {
+        match &fence_keyword {
             Token::Fence => {
                 self.emit_byte(Op::MemoryFenceSeqCst as u8);
             }
@@ -558,7 +636,7 @@ impl<'a> Compiler<'a> {
             Token::Release => {
                 self.emit_byte(Op::MemoryFenceRelease as u8);
             }
-            _ => return Err(PulseError::CompileError("Expected fence keyword".into(), 0)),
+            _ => return Err(self.compile_error("Expected fence keyword")),
         }
 
         Ok(())
@@ -566,7 +644,6 @@ impl<'a> Compiler<'a> {
 
     // --- Statements ---
     fn statement(&mut self) -> PulseResult<()> {
-        println!("DEBUG statement: current token {:?}", self.parser.borrow().current);
         if self.matches(Token::Print)? {
             self.print_statement()?;
         } else if self.matches(Token::If)? {
@@ -602,11 +679,9 @@ impl<'a> Compiler<'a> {
             self.block()?;
             self.end_scope();
         } else if self.matches(Token::Match)? {
-            println!("DEBUG statement: handling Match token!");
             self.match_expression(false)?;
             self.emit_byte(Op::Pop as u8);
         } else {
-            println!("DEBUG statement: handling expression statement!");
             self.expression_statement()?;
         }
         Ok(())
@@ -742,7 +817,7 @@ impl<'a> Compiler<'a> {
         let handler_ip = self.state().chunk.code.len();
         let offset = handler_ip - try_offset - 2; // Offset from after Op::Try u16
         if offset > u16::MAX as usize {
-            return Err(PulseError::CompileError("Try block too large".into(), 0));
+            return Err(self.compile_error("Try block too large"));
         }
         self.state().chunk.code[try_offset] = ((offset >> 8) & 0xff) as u8;
         self.state().chunk.code[try_offset + 1] = (offset & 0xff) as u8;
@@ -1130,7 +1205,7 @@ impl<'a> Compiler<'a> {
         match &previous {
             Token::Int(n) => self.emit_constant(Constant::Int(*n)),
             Token::Float(n) => self.emit_constant(Constant::Float(*n)),
-            _ => return Err(PulseError::CompileError("Expected number".into(), 0)),
+            _ => return Err(self.compile_error("Expected number")),
         }
         Ok(())
     }
@@ -1152,13 +1227,12 @@ impl<'a> Compiler<'a> {
             Token::Minus => self.emit_byte(Op::Negate as u8),
             Token::Bang => self.emit_byte(Op::Not as u8),
             Token::Tilde => self.emit_byte(Op::BitNot as u8),
-            _ => return Err(PulseError::CompileError("Invalid unary operator".into(), 0)),
+            _ => return Err(self.compile_error("Invalid unary operator")),
         }
         Ok(())
     }
 
     fn match_expression(&mut self, _can_assign: bool) -> PulseResult<()> {
-        println!("DEBUG match_expression: current token before expression() {:?}", self.parser.borrow().current);
         self.expression()?; // Compile subject
         self.consume(Token::LeftBrace, "Expect '{' after match subject.")?;
 
@@ -1202,13 +1276,11 @@ impl<'a> Compiler<'a> {
             }
 
             self.consume(Token::FatArrow, "Expect '=>' after pattern.")?;
-            println!("DEBUG match_expression: current token before body {:?}, check Print {:?}", self.parser.borrow().current, self.check(Token::Print));
             // Body
             if self.check(Token::LeftBrace) {
                 self.consume(Token::LeftBrace, "Expect '{' start of arm body.")?;
                 self.block()?;
             } else if self.check(Token::Print) {
-                println!("DEBUG match_expression: handling print body");
                 // Print statement body
                 self.print_statement()?;
             } else {
@@ -1550,7 +1622,7 @@ impl<'a> Compiler<'a> {
                 self.advance()?;
                 self.literal(false)?;
             } else {
-                return Err(PulseError::CompileError("Expect pattern.".into(), 0));
+                return Err(self.compile_error("Expect pattern."));
             }
 
             self.emit_byte(Op::Eq as u8);
@@ -1615,7 +1687,7 @@ impl<'a> Compiler<'a> {
         let previous = self.parser.borrow().previous.clone();
         let s = match previous {
             Token::String(s) => s,
-            _ => return Err(PulseError::CompileError("Expected string".into(), 0)),
+            _ => return Err(self.compile_error("Expected string")),
         };
         self.emit_constant(Constant::String(s));
         Ok(())
@@ -1687,13 +1759,12 @@ impl<'a> Compiler<'a> {
             Token::True => self.emit_constant(Constant::Bool(true)),
             Token::False => self.emit_constant(Constant::Bool(false)),
             Token::Nil => self.emit_byte(Op::Unit as u8),
-            _ => return Err(PulseError::CompileError("Expected literal".into(), 0)),
+            _ => return Err(self.compile_error("Expected literal")),
         }
         Ok(())
     }
 
     fn variable(&mut self, can_assign: bool) -> PulseResult<()> {
-        println!("DEBUG variable() previous {:?}", self.parser.borrow().previous);
         let previous = self.parser.borrow().previous.clone();
         if let Token::This = previous {
             // Handle 'this' keyword
@@ -1709,7 +1780,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) -> PulseResult<()> {
-        println!("DEBUG named_variable: name {:?} can_assign {:?}", name, can_assign);
         // Detect compound assignment operators: += -= *= /= %=
         let compound_op = if can_assign {
             if self.check(Token::PlusEqual) {
@@ -1781,7 +1851,6 @@ impl<'a> Compiler<'a> {
         } else {
             // Global
             let global_idx = self.identifier_constant(&name)?;
-            println!("DEBUG named_variable: global case, name {:?} can_assign {:?} check equal {:?}", name, can_assign, self.check(Token::Equal));
             if can_assign && self.matches(Token::Equal)? {
                 self.expression()?;
                 self.emit_byte(Op::SetGlobal as u8);
@@ -1881,11 +1950,11 @@ impl<'a> Compiler<'a> {
             Token::Identifier(s) => {
                 let idx = self.state().chunk.add_constant(Constant::String(s.clone()));
                 if idx > u16::MAX as usize {
-                    return Err(PulseError::CompileError("Too many constants.".into(), 0));
+                    return Err(self.compile_error("Too many constants."));
                 }
                 Ok(idx as u16)
             }
-            _ => Err(PulseError::CompileError("Expected identifier.".into(), 0)),
+            _ => Err(self.compile_error("Expected identifier.")),
         }
     }
 
@@ -1896,7 +1965,7 @@ impl<'a> Compiler<'a> {
                 self.advance()?;
                 Ok(())
             }
-            _ => Err(PulseError::CompileError(msg.into(), 0)),
+            _ => Err(self.compile_error(msg)),
         }
     }
 
@@ -1907,7 +1976,7 @@ impl<'a> Compiler<'a> {
                 self.advance()?;
                 Ok(())
             }
-            _ => Err(PulseError::CompileError(msg.into(), 0)),
+            _ => Err(self.compile_error(msg)),
         }
     }
 
@@ -1924,10 +1993,9 @@ impl<'a> Compiler<'a> {
                 break;
             }
             if local.name == name {
-                return Err(PulseError::CompileError(
-                    "Variable with this name already declared in this scope.".into(),
-                    0,
-                ));
+                return Err(
+                    self.compile_error("Variable with this name already declared in this scope.")
+                );
             }
         }
 
@@ -1951,10 +2019,7 @@ impl<'a> Compiler<'a> {
 
     fn add_local(&mut self, name: Token) -> PulseResult<()> {
         if self.state().locals.len() >= 256 {
-            return Err(PulseError::CompileError(
-                "Too many local variables in function.".into(),
-                0,
-            ));
+            return Err(self.compile_error("Too many local variables in function."));
         }
         self.state().locals.push(Local {
             name,
@@ -2252,7 +2317,7 @@ impl<'a> Compiler<'a> {
         let idx = self.state().chunk.add_constant(Constant::String(sanitized));
 
         if idx > u16::MAX as usize {
-            return Err(PulseError::CompileError("Too many constants.".into(), 0));
+            return Err(self.compile_error("Too many constants."));
         }
 
         self.emit_byte(Op::Import as u8);
@@ -2364,10 +2429,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> PulseResult<()> {
-        println!("DEBUG parse_precedence: before advance(), current {:?}", self.parser.borrow().current);
         self.advance()?;
-        println!("DEBUG parse_precedence: after advance(), previous {:?}", self.parser.borrow().previous);
-        println!("DEBUG parse_precedence: after advance(), current {:?}", self.parser.borrow().current);
 
         let previous = self.parser.borrow().previous.clone();
         let prefix_rule = self.get_rule(&previous).prefix;
@@ -2375,7 +2437,7 @@ impl<'a> Compiler<'a> {
             let can_assign = precedence <= Precedence::Assignment;
             prefix_fn(self, can_assign)?;
         } else {
-            return Err(PulseError::CompileError("Expect expression.".into(), 0));
+            return Err(self.compile_error("Expect expression."));
         }
 
         while {
@@ -2619,6 +2681,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn compile_error(&self, message: impl Into<String>) -> PulseError {
+        let parser = self.parser.borrow();
+        let line = parser.line();
+        let token = format!("{:?}", parser.current);
+        PulseError::CompileError(format!("{} Near token {}.", message.into(), token), line)
+    }
+
     // --- Jump Helpers ---
     fn emit_jump(&mut self, instruction: u8) -> usize {
         self.emit_byte(instruction);
@@ -2630,10 +2699,7 @@ impl<'a> Compiler<'a> {
     fn patch_jump(&mut self, offset: usize) -> PulseResult<()> {
         let jump = self.state().chunk.code.len() - offset - 2;
         if jump > u16::MAX as usize {
-            return Err(PulseError::CompileError(
-                "Too much code to jump over.".into(),
-                0,
-            ));
+            return Err(self.compile_error("Too much code to jump over."));
         }
         self.state().chunk.code[offset] = (jump as u16 & 0xff) as u8;
         self.state().chunk.code[offset + 1] = ((jump as u16 >> 8) & 0xff) as u8;
@@ -2645,7 +2711,7 @@ impl<'a> Compiler<'a> {
 
         let offset = self.state().chunk.code.len() - loop_start + 2;
         if offset > u16::MAX as usize {
-            return Err(PulseError::CompileError("Loop body too large.".into(), 0));
+            return Err(self.compile_error("Loop body too large."));
         }
 
         self.emit_byte((offset as u16 & 0xff) as u8);
@@ -2674,9 +2740,7 @@ impl<'a> Compiler<'a> {
     // Iterates from the current state downwards.
     fn resolve_local(&mut self, name: &Token) -> PulseResult<Option<u8>> {
         let state = self.state();
-        println!("DEBUG resolve_local: searching for {:?}", name);
         for (i, local) in state.locals.iter().enumerate().rev() {
-            println!("DEBUG resolve_local: local i={} {:?}", i, local.name);
             if let Token::Identifier(local_name) = &local.name {
                 if let Token::Identifier(target) = name {
                     if local_name == target {
@@ -2685,7 +2749,6 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        println!("DEBUG resolve_local: not found locally");
         Ok(None)
     }
 

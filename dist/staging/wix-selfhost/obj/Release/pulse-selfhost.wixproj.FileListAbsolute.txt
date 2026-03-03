@@ -1,0 +1,6 @@
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-selfhost\_wix\Release\pulse-selfhost.msi
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-selfhost\_wix\Release\pulse-selfhost.wixpdb
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-selfhost\obj\Release\pulse-selfhost.wixproj.CoreCompileInputs.cache
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-selfhost\obj\Release\pulse-selfhost.msi
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-selfhost\obj\Release\pulse-selfhost.wixpdb
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-selfhost\obj\Release\pulse-selfhost.wixproj.BindTracking-neutral.txt

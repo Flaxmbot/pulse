@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>WixToolset.Sdk</id>
+    <version>6.0.0</version>
+    <title>WiX Toolset MSBuild integration</title>
+    <authors>WiX Toolset Team</authors>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <license type="file">OSMFEULA.txt</license>
+    <licenseUrl>https://aka.ms/deprecateLicenseUrl</licenseUrl>
+    <icon>icon.png</icon>
+    <projectUrl>https://wixtoolset.org/</projectUrl>
+    <description>WiX Toolset MSBuild integration</description>
+    <copyright>Copyright (c) .NET Foundation and contributors. All rights reserved.</copyright>
+    <tags>WiX MSI install setup</tags>
+    <packageTypes>
+      <packageType name="MSBuildSdk" />
+    </packageTypes>
+    <repository type="git" url="https://github.com/wixtoolset/wix" commit="8c7432e50072e009353ea5f2c956ccf453476f71" />
+  </metadata>
+</package>

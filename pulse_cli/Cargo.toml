@@ -1,6 +1,6 @@
 [package]
 name = "pulse_cli"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
@@ -16,3 +16,5 @@ serde_json = "1"
 toml = "0.8"
 tokio = { version = "1.0", features = ["full"] }
 inkwell = { version = "0.5.0", features = ["llvm18-0"] }
+pulse_llvm_backend = { path = "../pulse_llvm_backend" }
+

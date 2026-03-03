@@ -1,0 +1,7 @@
+// Minimal test
+let integerNumber = 42;
+let floatNumber = 3.14159;
+let doubleQuoteString = "Double quoted string";
+print("Type checking test:");
+print("Type of integerNumber:", type_of(integerNumber));
+print("Type of floatNumber:", type_of(floatNumber));

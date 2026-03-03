@@ -1,0 +1,12 @@
+// Integration test: lists and maps
+let list = [1, 2, 3, 4, 5];
+print(len(list));
+print(list[0]);
+print(list[4]);
+
+push(list, 6);
+print(len(list));
+
+let map = {"name": "Pulse", "version": 1};
+print(map["name"]);
+print(map["version"]);

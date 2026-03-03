@@ -1,0 +1,25 @@
+// Integration test: functions and closures 
+fn add(a, b) {
+    return a + b;
+}
+print(add(3, 4));
+
+fn make_counter() {
+    let count = 0;
+    fn increment() {
+        count = count + 1;
+        return count;
+    }
+    return increment;
+}
+
+let counter = make_counter();
+print(counter());
+print(counter());
+print(counter());
+
+fn fib(n) {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+print(fib(10));

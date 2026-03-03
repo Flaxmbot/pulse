@@ -1,0 +1,279 @@
+// comprehensive_super.pulse
+// End-to-end grammar and feature coverage file for compiler readiness checks.
+
+const PROGRAM = "comprehensive-super";
+const YEAR = 2026;
+let major = 1;
+let minor = 3;
+print("BOOT", PROGRAM, YEAR, major, minor);
+
+// Scalars, arithmetic, bitwise, comparisons, booleans
+let a = 42;
+let b = 15;
+let sum = a + b;
+let diff = a - b;
+let prod = a * b;
+let quot = a / 3;
+let rem = a % 5;
+let bit_and = a & b;
+let bit_or = a | b;
+let bit_xor = a ^ b;
+let shift_l = 1 << 6;
+let shift_r = 128 >> 3;
+let pow2 = 2 ** 10;
+let bit_not = ~b;
+let logic = (a > b) and (b < a) or false;
+print(sum, diff, prod, quot, rem, bit_and, bit_or, bit_xor, shift_l, shift_r, pow2, bit_not, logic);
+
+// Strings and stdlib string transforms
+let raw = "pulse language runtime";
+let up = string_uppercase(raw);
+let low = string_lowercase(up);
+let replaced = string_replace(raw, "runtime", "compiler");
+let parts = split_string(raw, " ");
+let joined = join_strings(parts, "-");
+let has_lang = string_contains(raw, "language");
+let prefix = substring(raw, 0, 5);
+print(up, low, replaced, joined, has_lang, prefix);
+
+// Collections: list + map + set + queue
+let items = [10, 20, 30, 40];
+push(items, 50);
+let popped = pop(items);
+items[1] = 21;
+print(items[0], items[1], popped, len(items));
+
+let profile = {
+    "name": "Pulse",
+    "version": "0.1.x",
+    "stable": false
+};
+profile["stable"] = true;
+print(profile["name"], profile["version"], profile["stable"], map_has_key(profile, "name"));
+
+let setx = create_set();
+add_to_set(setx, "alpha");
+add_to_set(setx, "beta");
+let set_ok = contains_in_set(setx, "beta");
+
+let queuex = create_queue();
+enqueue(queuex, "job-1");
+enqueue(queuex, "job-2");
+let q1 = dequeue(queuex);
+let q2 = dequeue(queuex);
+print(set_ok, q1, q2);
+
+// Functions, recursion, closures, default control flow
+fn fib(n: Int) -> Int {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn fact(n: Int) -> Int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * fact(n - 1);
+}
+
+fn make_scaler(k: Int) {
+    fn scale(v: Int) -> Int {
+        return v * k;
+    }
+    return scale;
+}
+
+let scale7 = make_scaler(7);
+print(fib(8), fact(6), scale7(3));
+
+// While + for + for-in + break + continue
+let counter = 0;
+let acc = 0;
+while (counter < 10) {
+    counter = counter + 1;
+    if (counter == 3) {
+        continue;
+    }
+    if (counter > 8) {
+        break;
+    }
+    acc = acc + counter;
+}
+print(counter, acc);
+
+let for_sum = 0;
+for (let i = 0; i < len(items); i = i + 1) {
+    for_sum = for_sum + items[i];
+}
+print(for_sum);
+
+let for_in_sum = 0;
+for value in items {
+    for_in_sum = for_in_sum + value;
+}
+print(for_in_sum);
+
+// Pattern matching (expression + statement forms)
+let bucket = match 5 {
+    0 => "zero",
+    1 => "one",
+    2 => "two",
+    _ => "many"
+};
+print("bucket", bucket);
+
+let mm = match 2 {
+    0 => "m0",
+    1 => "m1",
+    _ => "m*"
+};
+print(mm);
+
+// Try/catch/throw
+try {
+    if (len(items) > 0) {
+        throw "forced error";
+    }
+} catch err {
+    print("caught", err);
+}
+
+// Linked list
+class Node {
+    fn init(value, next) {
+        this.value = value;
+        this.next = next;
+    }
+}
+
+class LinkedList {
+    fn init() {
+        this.head = nil;
+        this.size = 0;
+    }
+
+    fn push_back(v) {
+        let node = Node(v, nil);
+        if (this.head == nil) {
+            this.head = node;
+        } else {
+            let cur = this.head;
+            while (cur.next != nil) {
+                cur = cur.next;
+            }
+            cur.next = node;
+        }
+        this.size = this.size + 1;
+    }
+
+    fn at(i) {
+        let cur = this.head;
+        let k = 0;
+        while (k < i) {
+            cur = cur.next;
+            k = k + 1;
+        }
+        return cur.value;
+    }
+}
+
+let ll = LinkedList();
+ll.push_back(11);
+ll.push_back(22);
+ll.push_back(33);
+print(ll.size, ll.at(0), ll.at(2));
+
+// Binary search tree
+class TreeNode {
+    fn init(v) {
+        this.value = v;
+        this.left = nil;
+        this.right = nil;
+    }
+}
+
+class BST {
+    fn init() {
+        this.root = nil;
+    }
+
+    fn insert(v) {
+        if (this.root == nil) {
+            this.root = TreeNode(v);
+            return nil;
+        }
+        let cur = this.root;
+        while (true) {
+            if (v < cur.value) {
+                if (cur.left == nil) {
+                    cur.left = TreeNode(v);
+                    return nil;
+                }
+                cur = cur.left;
+            } else {
+                if (cur.right == nil) {
+                    cur.right = TreeNode(v);
+                    return nil;
+                }
+                cur = cur.right;
+            }
+        }
+    }
+
+    fn contains(v) {
+        let cur = this.root;
+        while (cur != nil) {
+            if (v == cur.value) {
+                return true;
+            }
+            if (v < cur.value) {
+                cur = cur.left;
+            } else {
+                cur = cur.right;
+            }
+        }
+        return false;
+    }
+}
+
+let bst = BST();
+bst.insert(50);
+bst.insert(25);
+bst.insert(75);
+bst.insert(60);
+print(bst.contains(25), bst.contains(61));
+
+// Actor declaration + spawn
+actor Logger {
+    print("logger actor parsed");
+}
+
+let worker = spawn {
+    let local = 99;
+    print("worker", local);
+};
+print(worker);
+
+// Type-introspection assertions
+assert_eq(type_of(PROGRAM), "String");
+assert_eq(type_of(items), "List");
+assert_eq(type_of(profile), "Map");
+assert_ne(type_of(worker), "Nil");
+
+// Input + shared/atomic + fences are compile-checked in a dead branch.
+if (false) {
+    let user_input = input_prompt("enter value: ");
+    print("input", user_input);
+
+    shared memory cache = 1;
+    atomic lock_counter = 0;
+    lock cache;
+    unlock cache;
+    fence;
+    acquire;
+    release;
+}
+
+print("DONE", PROGRAM);

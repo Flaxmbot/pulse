@@ -1,6 +1,6 @@
 [package]
 name = "pulse_llvm_backend"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -15,3 +15,4 @@ env_logger = "0.10"
 
 [dev-dependencies]
 pulse_stdlib = { path = "../pulse_stdlib" }
+

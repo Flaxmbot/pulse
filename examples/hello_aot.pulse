@@ -1,0 +1,5 @@
+// hello_aot.pulse — Simple test program for AOT compilation e2e test
+// This should produce: Hello from Pulse AOT!
+let x = 42;
+print x;
+print "\n";

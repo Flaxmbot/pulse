@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
-use pulse_core::{Constant, ActorId};
+use pulse_core::{ActorId, Constant};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
@@ -14,7 +14,6 @@ pub enum SystemMessage {
     Link(ActorId),
     Monitor(ActorId),
 }
-
 
 // Mailbox struct is removed in favor of tokio::sync::mpsc
 // The Actor struct will hold the Receiver, and the Runtime/Handle will hold Senders.

@@ -1,7 +1,5 @@
-// Simple test
-println("Hello from Pulse!");
-let x = 10 + 5;
-println(x);
-let y = x * 2;
-println(y);
-println("Test completed!");
+// Simple test file
+let integerNumber = 42;
+let floatNumber = 3.14159;
+let doubleQuoteString = "Double quoted string";
+print(integerNumber);

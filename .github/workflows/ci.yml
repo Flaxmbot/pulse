@@ -1,0 +1,180 @@
+name: pulse-ci
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - release/**
+  pull_request:
+    branches:
+      - "**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install LLVM (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-18 lld-18
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18
+          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install llvm --version=18.1.8 -y
+          Add-Content $env:GITHUB_ENV "LLVM_SYS_180_PREFIX=C:\Program Files\LLVM"
+
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
+        working-directory: pulse_lang
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets
+        working-directory: pulse_lang
+
+      - name: Cargo test
+        run: cargo test --workspace --all-targets
+        working-directory: pulse_lang
+
+      - name: AOT/JIT verification
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\scripts\verify-aot-jit.ps1
+        working-directory: pulse_lang
+
+      - name: Docs build
+        run: cargo doc --workspace --no-deps
+        working-directory: pulse_lang
+
+      - name: Selfhost smoke
+        run: cargo run --bin pulse_cli -- selfhost test
+        working-directory: pulse_lang
+
+  vscode-extension-gates:
+    name: vscode-extension-gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build and package VS Code extension
+        working-directory: pulse_lang/vscode-pulse
+        shell: bash
+        run: |
+          npm ci
+          npm run compile
+          output="$(npm run package 2>&1)"
+          echo "${output}"
+          if echo "${output}" | grep -Ei "warning.*(repository|license|\\.vscodeignore)"; then
+            echo "VS Code extension packaging emitted metadata warnings."
+            exit 1
+          fi
+
+  packaging-smoke:
+    name: packaging-smoke-${{ matrix.os }}-${{ matrix.track }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        track: [rust, selfhost]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup .NET (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install LLVM (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-18 lld-18
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install llvm --version=18.1.8 -y
+          Add-Content $env:GITHUB_ENV "LLVM_SYS_180_PREFIX=C:\Program Files\LLVM"
+
+      - name: Build unix package (Linux)
+        if: runner.os == 'Linux'
+        working-directory: pulse_lang
+        run: |
+          chmod +x scripts/build-packages.sh
+          scripts/build-packages.sh --track ${{ matrix.track }} --version "ci-${{ github.run_number }}"
+
+      - name: Build MSI package (Windows)
+        if: runner.os == 'Windows'
+        working-directory: pulse_lang
+        shell: powershell
+        run: .\scripts\build-msi.ps1 -Track ${{ matrix.track }} -Version "0.0.${{ github.run_number }}"
+
+  performance-gate:
+    name: performance-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-18 lld-18
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Benchmark regression gate
+        working-directory: pulse_lang
+        run: |
+          cargo run --release --bin pulse_cli -- benchmark tests/bench_baseline.pulse --iterations 3 --max-avg-ms 4000

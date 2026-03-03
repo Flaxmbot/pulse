@@ -1,6 +1,6 @@
 [package]
 name = "pulse_lsp"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "Language Server Protocol implementation for Pulse"
 
@@ -15,3 +15,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 pulse_compiler = { path = "../pulse_compiler" }
 pulse_core = { path = "../pulse_core" }
+

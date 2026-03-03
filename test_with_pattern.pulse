@@ -1,0 +1,18 @@
+// Test with pattern matching
+let integerNumber = 42;
+let floatNumber = 3.14159;
+let doubleQuoteString = "Double quoted string";
+print("Type checking test:");
+print("Type of integerNumber:", type_of(integerNumber));
+print("Type of floatNumber:", type_of(floatNumber));
+
+// Pattern matching
+print("Pattern matching:");
+let value = 42;
+match value {
+    0 => print("Value is zero"),
+    1..10 => print("Value is between 1 and 10"),
+    10..100 => print("Value is between 10 and 100"),
+    _ => print("Value is 100 or greater")
+};
+print("");

@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-rust\\pulse-rust.wixproj": {}
+  },
+  "projects": {
+    "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-rust\\pulse-rust.wixproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-rust\\pulse-rust.wixproj",
+        "projectName": "pulse-rust",
+        "projectPath": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-rust\\pulse-rust.wixproj",
+        "packagesPath": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\.dotnet\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-rust\\obj\\",
+        "projectStyle": "PackageReference",
+        "UsingMicrosoftNETSdk": false,
+        "configFilePaths": [
+          "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-rust\\NuGet.config"
+        ],
+        "originalTargetFrameworks": [
+          "native"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "native": {
+            "targetAlias": "native",
+            "projectReferences": {}
+          }
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "native": {
+          "targetAlias": "native"
+        }
+      }
+    }
+  }
+}

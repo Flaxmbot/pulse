@@ -1,0 +1,196 @@
+// Comprehensive language coverage program for end-to-end validation.
+
+const TITLE = "pulse-comprehensive";
+let major = 1;
+let minor = 2;
+print("START", TITLE, major, minor);
+
+// Variables, arithmetic, strings, control flow
+let x = 10;
+let y = 3;
+let z = (x + y) * 2 - 4 / 2;
+print(z);
+print(string_uppercase("pulse"), string_lowercase("LANG"));
+
+// Collections
+let numbers = [1, 2, 3, 4, 5];
+push(numbers, 6);
+let tail = pop(numbers);
+print(numbers[0], tail, len(numbers));
+
+let profile = {
+    "name": "Pulse",
+    "kind": "language",
+    "year": 2026
+};
+print(map_has_key(profile, "name"), profile["name"]);
+
+// Functions + recursion
+fn fib(n: Int) -> Int {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn factorial(n: Int) -> Int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+print(fib(8), factorial(6));
+
+// Closures
+fn make_adder(k: Int) {
+    fn add(v: Int) -> Int {
+        return v + k;
+    }
+    return add;
+}
+
+let add5 = make_adder(5);
+print(add5(10));
+
+// Loops + break/continue
+let sum = 0;
+for (let i = 0; i < 10; i = i + 1) {
+    if (i == 2) {
+        continue;
+    }
+    if (i > 7) {
+        break;
+    }
+    sum = sum + i;
+}
+print(sum);
+
+let sum2 = 0;
+for item in numbers {
+    sum2 = sum2 + item;
+}
+print(sum2);
+
+// Linked list
+class ListNode {
+    fn init(value, next) {
+        this.value = value;
+        this.next = next;
+    }
+}
+
+class LinkedList {
+    fn init() {
+        this.head = nil;
+        this.size = 0;
+    }
+
+    fn push_back(value) {
+        let node = ListNode(value, nil);
+        if (this.head == nil) {
+            this.head = node;
+        } else {
+            let cur = this.head;
+            while (cur.next != nil) {
+                cur = cur.next;
+            }
+            cur.next = node;
+        }
+        this.size = this.size + 1;
+    }
+}
+
+let ll = LinkedList();
+ll.push_back(11);
+ll.push_back(22);
+print(ll.size);
+
+// Binary tree
+class TreeNode {
+    fn init(v) {
+        this.value = v;
+        this.left = nil;
+        this.right = nil;
+    }
+}
+
+class BST {
+    fn init() {
+        this.root = nil;
+    }
+
+    fn insert(v) {
+        if (this.root == nil) {
+            this.root = TreeNode(v);
+            return nil;
+        }
+        let cur = this.root;
+        while (true) {
+            if (v < cur.value) {
+                if (cur.left == nil) {
+                    cur.left = TreeNode(v);
+                    return nil;
+                }
+                cur = cur.left;
+            } else {
+                if (cur.right == nil) {
+                    cur.right = TreeNode(v);
+                    return nil;
+                }
+                cur = cur.right;
+            }
+        }
+    }
+}
+
+let bst = BST();
+bst.insert(50);
+bst.insert(25);
+bst.insert(75);
+print("tree-ready");
+
+// Pattern matching
+let band = match 5 {
+    0 => "zero",
+    1 => "small",
+    _ => "large"
+};
+print(band);
+
+// Error handling
+try {
+    throw "sample-error";
+} catch err {
+    print("caught", err);
+}
+
+// Actors
+actor Logger {
+    print("logger started");
+}
+
+let worker = spawn {
+    let local = 42;
+    print("worker", local);
+};
+sleep(1);
+print(worker);
+
+// Shared/atomic/fences (syntax and pipeline coverage)
+if (false) {
+    let user_input = input_prompt("enter value: ");
+    print(user_input);
+
+    shared memory cache = 1;
+    atomic counter = 0;
+    lock cache;
+    unlock cache;
+    fence;
+    acquire;
+    release;
+}
+
+assert_eq(type_of(numbers), "List");
+assert_ne(type_of(profile), "Nil");
+print("DONE");

@@ -1,0 +1,6 @@
+// Integration test: string operations
+let greeting = "Hello" + " " + "World";
+print(greeting);
+print(len(greeting));
+print("hello" == "hello");
+print("hello" != "world");

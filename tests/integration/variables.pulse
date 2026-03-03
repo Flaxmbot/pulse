@@ -1,0 +1,11 @@
+// Integration test: variables and scoping
+let x = 10;
+let y = 20;
+print(x + y);
+{
+    let x = 100;
+    print(x);
+}
+print(x);
+x = 42;
+print(x);

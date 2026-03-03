@@ -1,8 +1,9 @@
 //! Tests for serialization of complex objects
 
-use pulse_core::{Value, Object, Function, Chunk, Constant, ActorId};
-use std::sync::Arc;
+use pulse_core::{ActorId, Chunk, Constant, Function, Object, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::f64::consts::{E, PI};
+use std::sync::Arc;
 
 /// Test serialization of basic types
 #[test]
@@ -13,11 +14,11 @@ fn test_basic_types_serialize() {
         Value::Bool(false),
         Value::Int(42),
         Value::Int(-100),
-        Value::Float(3.14),
-        Value::Float(-2.718),
+        Value::Float(PI),
+        Value::Float(-E),
         Value::Unit,
     ];
-    
+
     for value in values {
         let serialized = bincode::serialize(&value).expect("Should serialize");
         let deserialized: Value = bincode::deserialize(&serialized).expect("Should deserialize");
@@ -46,11 +47,7 @@ fn test_object_string_serialize() {
 /// Test Object::List serialization
 #[test]
 fn test_object_list_serialize() {
-    let list = Object::List(vec![
-        Value::Int(1),
-        Value::Int(2),
-        Value::Int(3),
-    ]);
+    let list = Object::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     let serialized = bincode::serialize(&list).expect("Should serialize");
     let _deserialized: Result<Object, _> = bincode::deserialize(&serialized);
     // Note: Object deserialization returns error as expected
@@ -101,7 +98,7 @@ fn test_function_serialize() {
         upvalue_count: 0,
         module_path: Some("test.pulse".to_string()),
     };
-    
+
     let serialized = bincode::serialize(&function).expect("Should serialize");
     let deserialized: Function = bincode::deserialize(&serialized).expect("Should deserialize");
     assert_eq!(function.name, deserialized.name);
@@ -114,14 +111,14 @@ fn test_chunk_serialize() {
     let mut chunk = Chunk::new();
     chunk.add_constant(Constant::Int(42));
     chunk.add_constant(Constant::String("test".to_string()));
-    
+
     // Serialize - this should work
     let result = bincode::serialize(&chunk);
     assert!(result.is_ok(), "Should serialize: {:?}", result.err());
-    
+
     let serialized = result.unwrap();
     assert!(!serialized.is_empty(), "Should have serialized data");
-    
+
     // Note: Full round-trip deserialization requires SerializableConstant wrapper
     // This test verifies serialization works correctly
 }
@@ -129,23 +126,23 @@ fn test_chunk_serialize() {
 /// Test MessageEnvelope serialization
 #[test]
 fn test_message_envelope_serialize() {
-    use pulse_runtime::network::MessageEnvelope;
     use pulse_runtime::mailbox::Message;
-    
+    use pulse_runtime::network::MessageEnvelope;
+
     let target = ActorId::new(1, 100);
     let sender = ActorId::new(1, 200);
     // Use serializable constants only
     let message = Message::User(Constant::Int(42));
-    
+
     let envelope = MessageEnvelope::new(target, Some(sender), message);
-    
+
     // Serialize - this should work
     let result = envelope.to_bytes();
     assert!(result.is_ok(), "Should serialize: {:?}", result.err());
-    
+
     let serialized = result.unwrap();
     assert!(!serialized.is_empty(), "Should have serialized data");
-    
+
     // Note: Full round-trip deserialization requires SerializableConstant wrapper
     // This test verifies serialization works correctly
 }
@@ -153,10 +150,10 @@ fn test_message_envelope_serialize() {
 /// Test RemoteSpawnRequest serialization
 #[test]
 fn test_remote_spawn_request_serialize() {
-    use pulse_runtime::network::RemoteSpawnRequest;
     use pulse_core::object::Function;
+    use pulse_runtime::network::RemoteSpawnRequest;
     use std::sync::Arc;
-    
+
     let chunk = Arc::new(Chunk::new());
     let function = Arc::new(Function {
         arity: 1,
@@ -165,10 +162,10 @@ fn test_remote_spawn_request_serialize() {
         upvalue_count: 0,
         module_path: Some("actor.pulse".to_string()),
     });
-    
+
     let args = vec![Value::Int(42), Value::Bool(true)];
     let request = RemoteSpawnRequest::new(function.clone(), args, Some("my_actor".to_string()));
-    
+
     let serialized = request.to_bytes().expect("Should serialize");
     let _deserialized = RemoteSpawnRequest::from_bytes(&serialized).expect("Should deserialize");
     // Note: The function chunk will be cloned properly
@@ -178,10 +175,10 @@ fn test_remote_spawn_request_serialize() {
 #[test]
 fn test_non_serializable_fails() {
     // Test Object::AtomicInt serialization (stores value as i64)
-    use pulse_core::Object::AtomicInt;
     use pulse_core::object::AtomicInt as PulseAtomicInt;
+    use pulse_core::Object::AtomicInt;
     use std::sync::atomic::AtomicI64;
-    
+
     let atomic = PulseAtomicInt {
         value: Arc::new(AtomicI64::new(42)),
     };
@@ -189,7 +186,7 @@ fn test_non_serializable_fails() {
     let result = bincode::serialize(&obj);
     // This should work - AtomicInt serializes its value
     assert!(result.is_ok());
-    
+
     // Test Function serialization in Closure (should serialize as Function only)
     use pulse_core::object::Closure;
     let chunk = Arc::new(Chunk::new());
@@ -205,6 +202,7 @@ fn test_non_serializable_fails() {
         upvalues: vec![],
     };
     let serialized = bincode::serialize(&closure).expect("Should serialize closure");
-    let deserialized: Function = bincode::deserialize(&serialized).expect("Should deserialize to function");
+    let deserialized: Function =
+        bincode::deserialize(&serialized).expect("Should deserialize to function");
     assert_eq!(deserialized.name, "test");
 }

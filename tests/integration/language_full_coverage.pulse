@@ -1,0 +1,238 @@
+// Integration test: broad language + stdlib coverage in a single file
+
+const BUILD_TAG = "full-coverage";
+let version_major = 1;
+let version_minor = 0;
+print("Pulse", BUILD_TAG, version_major, version_minor);
+
+let numbers = [1, 2, 3, 4, 5];
+push(numbers, 6);
+let first_number = numbers[0];
+let last_number = pop(numbers);
+print(first_number, last_number, len(numbers));
+
+let profile = {
+    "name": "Pulse",
+    "kind": "lang",
+    "stable": false,
+    "year": 2026
+};
+print(profile["name"], profile["year"]);
+
+let joined = join_strings(split_string("a,b,c", ","), "-");
+let replaced = string_replace("pulse runtime", "runtime", "compiler");
+let upper = string_uppercase("pulse");
+let lower = string_lowercase("PULSE");
+let has = string_contains("pulse-language", "lang");
+let sub = substring("compiler", 0, 4);
+print(joined, replaced, upper, lower, has, sub);
+
+fn add(a: Int, b: Int) -> Int {
+    return a + b;
+}
+
+fn factorial(n: Int) -> Int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn make_multiplier(scale: Int) {
+    fn mul(v: Int) -> Int {
+        return v * scale;
+    }
+    return mul;
+}
+
+let mul3 = make_multiplier(3);
+print(add(3, 4), factorial(6), mul3(7));
+
+let counter = 0;
+while (counter < 8) {
+    counter = counter + 1;
+    if (counter == 2) {
+        continue;
+    }
+    if (counter > 6) {
+        break;
+    }
+}
+print(counter);
+
+let sum = 0;
+for (let i = 0; i < len(numbers); i = i + 1) {
+    sum = sum + numbers[i];
+}
+print(sum);
+
+let loop_sum = 0;
+for item in numbers {
+    loop_sum = loop_sum + item;
+}
+print(loop_sum);
+
+class ListNode {
+    fn init(value, next) {
+        this.value = value;
+        this.next = next;
+    }
+}
+
+class LinkedList {
+    fn init() {
+        this.head = nil;
+        this.size = 0;
+    }
+
+    fn push_back(value) {
+        let node = ListNode(value, nil);
+        if (this.head == nil) {
+            this.head = node;
+        } else {
+            let cur = this.head;
+            while (cur.next != nil) {
+                cur = cur.next;
+            }
+            cur.next = node;
+        }
+        this.size = this.size + 1;
+    }
+
+    fn at(index) {
+        let cur = this.head;
+        let i = 0;
+        while (i < index) {
+            cur = cur.next;
+            i = i + 1;
+        }
+        return cur.value;
+    }
+}
+
+let list = LinkedList();
+list.push_back(10);
+list.push_back(20);
+list.push_back(30);
+print(list.at(0), list.at(2), list.size);
+
+class TreeNode {
+    fn init(v) {
+        this.value = v;
+        this.left = nil;
+        this.right = nil;
+    }
+}
+
+class BinarySearchTree {
+    fn init() {
+        this.root = nil;
+    }
+
+    fn insert(v) {
+        if (this.root == nil) {
+            this.root = TreeNode(v);
+            return nil;
+        }
+
+        let cur = this.root;
+        while (true) {
+            if (v < cur.value) {
+                if (cur.left == nil) {
+                    cur.left = TreeNode(v);
+                    return nil;
+                }
+                cur = cur.left;
+            } else {
+                if (cur.right == nil) {
+                    cur.right = TreeNode(v);
+                    return nil;
+                }
+                cur = cur.right;
+            }
+        }
+    }
+
+    fn contains(v) {
+        let cur = this.root;
+        while (cur != nil) {
+            if (v == cur.value) {
+                return true;
+            }
+            if (v < cur.value) {
+                cur = cur.left;
+            } else {
+                cur = cur.right;
+            }
+        }
+        return false;
+    }
+}
+
+let tree = BinarySearchTree();
+tree.insert(50);
+tree.insert(25);
+tree.insert(75);
+tree.insert(60);
+print(tree.contains(25), tree.contains(61));
+
+let bucket = match 42 {
+    0 => "zero",
+    1 => "one",
+    _ => "many"
+};
+print(bucket);
+
+try {
+    if (len(numbers) > 0) {
+        throw "forced error path";
+    }
+} catch err {
+    print("caught", err);
+}
+
+actor Logger {
+    print("logger actor declaration parsed");
+}
+
+let worker = spawn {
+    let local_value = 99;
+    print("spawned", local_value);
+};
+sleep(5);
+print(worker);
+
+let set1 = create_set();
+add_to_set(set1, "a");
+add_to_set(set1, "b");
+print(contains_in_set(set1, "b"));
+
+let q = create_queue();
+enqueue(q, "task-1");
+enqueue(q, "task-2");
+print(peek_queue(q), dequeue(q), dequeue(q));
+
+let r = range(1, 5, 1);
+let merged = list_concat([1, 2], [3, 4]);
+print(len(r), len(merged), map_has_key(profile, "name"));
+
+if (false) {
+    // Input-taking and lower-level synchronization keywords are compile-checked,
+    // but never executed in CI.
+    let user_input = input_prompt("enter value: ");
+    print(user_input);
+
+    shared memory cache = 1;
+    atomic lock_counter = 0;
+    lock cache;
+    unlock cache;
+    fence;
+    acquire;
+    release;
+}
+
+assert_eq(type_of(BUILD_TAG), "String");
+assert_eq(type_of(numbers), "List");
+assert_ne(type_of(profile), "Nil");
+
+print("full coverage complete");

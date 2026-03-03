@@ -1,0 +1,231 @@
+name: pulse-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0)"
+        required: true
+        default: "0.1.2"
+      require_signing:
+        description: "Require cosign key material and fail release if missing"
+        required: true
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  vscode-extension:
+    name: vscode-extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build VS Code extension
+        run: |
+          npm install
+          npm run compile
+          output="$(npm run package 2>&1)"
+          echo "${output}"
+          if echo "${output}" | grep -Ei "warning.*(repository|license|\\.vscodeignore)"; then
+            echo "VS Code extension packaging emitted metadata warnings."
+            exit 1
+          fi
+        working-directory: pulse_lang/vscode-pulse
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-vscode-extension
+          path: pulse_lang/vscode-pulse/*.vsix
+
+  build-unix:
+    name: build-unix-${{ matrix.os }}-${{ matrix.track }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        track: [rust, selfhost]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install LLVM (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-18 lld-18
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18
+          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
+
+      - name: Build tarball package
+        run: |
+          chmod +x scripts/build-packages.sh
+          scripts/build-packages.sh --track ${{ matrix.track }} --version "${{ github.event.inputs.version || github.ref_name }}"
+        working-directory: pulse_lang
+
+      - name: Upload unix artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-${{ matrix.os }}-${{ matrix.track }}
+          path: pulse_lang/dist/unix/*.tar.gz
+
+      - name: Generate unix checksums
+        run: |
+          cd pulse_lang/dist/unix
+          shasum -a 256 *.tar.gz > SHA256SUMS-${{ matrix.os }}-${{ matrix.track }}.txt
+
+      - name: Upload unix checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-${{ matrix.os }}-${{ matrix.track }}-checksums
+          path: pulse_lang/dist/unix/SHA256SUMS-${{ matrix.os }}-${{ matrix.track }}.txt
+
+  build-windows:
+    name: build-windows-msi
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        track: [rust, selfhost]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install LLVM
+        shell: powershell
+        run: |
+          choco install llvm --version=18.1.8 -y
+          Add-Content $env:GITHUB_ENV "LLVM_SYS_180_PREFIX=C:\Program Files\LLVM"
+
+      - name: Build MSI
+        shell: powershell
+        run: .\scripts\build-msi.ps1 -Track ${{ matrix.track }} -Version "${{ github.event.inputs.version || github.ref_name }}"
+        working-directory: pulse_lang
+
+      - name: Upload MSI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-windows-${{ matrix.track }}
+          path: pulse_lang/dist/windows/*.msi
+
+      - name: Generate MSI checksums
+        shell: powershell
+        run: |
+          Get-FileHash -Algorithm SHA256 pulse_lang\dist\windows\*.msi |
+            ForEach-Object { "$($_.Hash) *$($_.Path | Split-Path -Leaf)" } |
+            Set-Content pulse_lang\dist\windows\SHA256SUMS-${{ matrix.track }}.txt
+
+      - name: Upload MSI checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-windows-${{ matrix.track }}-checksums
+          path: pulse_lang/dist/windows/SHA256SUMS-${{ matrix.track }}.txt
+
+  verify-release-artifacts:
+    name: verify-release-artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - build-unix
+      - build-windows
+      - vscode-extension
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Verify checksum files exist
+        run: |
+          find artifacts -type f -name "SHA256SUMS-*.txt" | tee /tmp/checksum_files.txt
+          test -s /tmp/checksum_files.txt
+
+      - name: Enforce signing policy
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.require_signing == 'true' }}
+        run: |
+          if [ -z "${{ secrets.COSIGN_PRIVATE_KEY }}" ]; then
+            echo "COSIGN_PRIVATE_KEY is required when require_signing=true."
+            exit 1
+          fi
+          if [ -z "${{ secrets.COSIGN_PASSWORD }}" ]; then
+            echo "COSIGN_PASSWORD is required when require_signing=true."
+            exit 1
+          fi
+
+      - name: Install cosign
+        if: ${{ secrets.COSIGN_PUBLIC_KEY != '' || secrets.COSIGN_PRIVATE_KEY != '' }}
+        uses: sigstore/cosign-installer@v3
+
+      - name: Optional artifact signing (cosign)
+        if: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          echo "${COSIGN_PRIVATE_KEY}" > cosign.key
+          mapfile -t files < <(find artifacts -type f \( -name "*.tar.gz" -o -name "*.msi" -o -name "*.vsix" \))
+          for file in "${files[@]}"; do
+            cosign sign-blob --yes --key cosign.key --output-signature "${file}.sig" "${file}"
+          done
+
+      - name: Upload signatures
+        if: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-signatures
+          path: artifacts/**/*.sig
+
+      - name: Optional signature verification (cosign)
+        if: ${{ secrets.COSIGN_PUBLIC_KEY != '' || secrets.COSIGN_PRIVATE_KEY != '' }}
+        env:
+          COSIGN_PUBLIC_KEY: ${{ secrets.COSIGN_PUBLIC_KEY }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          if [ -n "${COSIGN_PUBLIC_KEY}" ]; then
+            echo "${COSIGN_PUBLIC_KEY}" > cosign.pub
+          elif [ -n "${COSIGN_PRIVATE_KEY}" ]; then
+            echo "${COSIGN_PRIVATE_KEY}" > cosign.key
+            cosign public-key --key cosign.key > cosign.pub
+          else
+            echo "No cosign key material available for verification."
+            exit 1
+          fi
+
+          for sig in $(find artifacts -type f -name "*.sig"); do
+            target="${sig%.sig}"
+            if [ -f "${target}" ]; then
+              cosign verify-blob --key cosign.pub --signature "${sig}" "${target}"
+            fi
+          done
+
+      - name: Require signatures exist
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.require_signing == 'true' }}
+        run: |
+          find artifacts -type f -name "*.sig" | tee /tmp/signature_files.txt
+          test -s /tmp/signature_files.txt

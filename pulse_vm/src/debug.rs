@@ -4,9 +4,10 @@
 use std::collections::HashSet;
 
 /// Debug execution modes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StepMode {
     /// Normal execution, only stop at breakpoints
+    #[default]
     Continue,
     /// Step one instruction
     StepIn,
@@ -14,12 +15,6 @@ pub enum StepMode {
     StepOver { target_depth: usize },
     /// Step out of current function
     StepOut { target_depth: usize },
-}
-
-impl Default for StepMode {
-    fn default() -> Self {
-        StepMode::Continue
-    }
 }
 
 /// Debug context containing debugging state
@@ -116,13 +111,17 @@ impl DebugContext {
     /// Step over (stay at same or higher frame depth)
     pub fn step_over(&mut self, current_depth: usize) {
         self.paused = false;
-        self.step_mode = StepMode::StepOver { target_depth: current_depth };
+        self.step_mode = StepMode::StepOver {
+            target_depth: current_depth,
+        };
     }
 
     /// Step out of current function
     pub fn step_out(&mut self, current_depth: usize) {
         self.paused = false;
-        self.step_mode = StepMode::StepOut { target_depth: current_depth };
+        self.step_mode = StepMode::StepOut {
+            target_depth: current_depth,
+        };
     }
 
     /// Record that we paused at this IP

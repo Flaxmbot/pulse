@@ -1,0 +1,50 @@
+{
+  "version": 3,
+  "targets": {
+    "native,Version=v0.0": {}
+  },
+  "libraries": {},
+  "projectFileDependencyGroups": {
+    "native,Version=v0.0": []
+  },
+  "packageFolders": {
+    "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\.dotnet\\.nuget\\packages\\": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-selfhost\\pulse-selfhost.wixproj",
+      "projectName": "pulse-selfhost",
+      "projectPath": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-selfhost\\pulse-selfhost.wixproj",
+      "packagesPath": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\.dotnet\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-selfhost\\obj\\",
+      "projectStyle": "PackageReference",
+      "UsingMicrosoftNETSdk": false,
+      "configFilePaths": [
+        "C:\\Users\\Kuntal\\Documents\\Pulse\\pulse_lang\\dist\\staging\\wix-selfhost\\NuGet.config"
+      ],
+      "originalTargetFrameworks": [
+        "native"
+      ],
+      "sources": {
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "native": {
+          "targetAlias": "native",
+          "projectReferences": {}
+        }
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      }
+    },
+    "frameworks": {
+      "native": {
+        "targetAlias": "native"
+      }
+    }
+  }
+}

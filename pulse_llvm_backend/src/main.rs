@@ -1,5 +1,5 @@
 //! LLVM Backend main entry point
-//! 
+//!
 //! This crate provides an LLVM-based compiler backend for Pulse.
 
 fn main() {

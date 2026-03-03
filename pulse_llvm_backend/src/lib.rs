@@ -7,7 +7,7 @@ pub mod backend;
 pub mod jit;
 
 pub use backend::LLVMBackend;
-pub use jit::{JITCompiler, JITError, JITResult, JITStats, quick_compile, JITCompiler as PulseJIT};
+pub use jit::{JITCompiler, JITCompiler as PulseJIT, JITError, JITResult, JITStats, quick_compile};
 
 /// Re-export commonly used JIT types
 pub mod jit_types {

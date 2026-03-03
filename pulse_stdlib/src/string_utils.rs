@@ -1,13 +1,15 @@
 //! Additional string manipulation native functions
 
-use pulse_core::{Value, PulseResult, PulseError};
 use pulse_core::object::{HeapInterface, Object};
+use pulse_core::{PulseError, PulseResult, Value};
 
 /// split_string(str: String, delimiter: String) -> List
 /// Splits a string by the given delimiter
 pub fn split_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("split_string expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "split_string expects 2 arguments".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -17,14 +19,16 @@ pub fn split_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let delimiter = match &args[1] {
@@ -34,17 +38,20 @@ pub fn split_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[1].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[1].type_name(),
+            })
+        }
     };
 
-    let parts: Vec<Value> = input.split(&delimiter)
+    let parts: Vec<Value> = input
+        .split(&delimiter)
         .map(|part| {
             let handle = heap.alloc_object(Object::String(part.to_string()));
             Value::Obj(handle)
@@ -59,15 +66,19 @@ pub fn split_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
 /// Joins a list of strings with the given separator
 pub fn join_strings_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("join_strings expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "join_strings expects 2 arguments".into(),
+        ));
     }
 
     let list_handle = match args[0] {
         Value::Obj(handle) => handle,
-        _ => return Err(PulseError::TypeMismatch{
-            expected: "list".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "list".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let separator = match &args[1] {
@@ -77,46 +88,54 @@ pub fn join_strings_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[1].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[1].type_name(),
+            })
+        }
     };
 
     // Get the list
-    let list_obj = heap.get_object(list_handle).ok_or(PulseError::RuntimeError("Invalid handle".into()))?;
+    let list_obj = heap
+        .get_object(list_handle)
+        .ok_or(PulseError::RuntimeError("Invalid handle".into()))?;
     let list_values = if let Object::List(ref vals) = list_obj {
         vals.clone()
     } else {
-        return Err(PulseError::TypeMismatch{expected: "list".into(), got: "other".into()});
+        return Err(PulseError::TypeMismatch {
+            expected: "list".into(),
+            got: "other".into(),
+        });
     };
 
-    let string_parts: Result<Vec<String>, _> = list_values.iter().map(|val| {
-        match val {
+    let string_parts: Result<Vec<String>, _> = list_values
+        .iter()
+        .map(|val| match val {
             Value::Obj(h) => {
                 if let Some(Object::String(s)) = heap.get_object(*h) {
                     Ok(s.clone())
                 } else {
                     Err(PulseError::TypeMismatch {
                         expected: "string".into(),
-                        got: "object".into()
+                        got: "object".into(),
                     })
                 }
             }
             _ => Err(PulseError::TypeMismatch {
                 expected: "string".into(),
-                got: val.type_name()
+                got: val.type_name(),
             }),
-        }
-    }).collect();
+        })
+        .collect();
 
     let string_parts = string_parts?;
     let joined = string_parts.join(&separator);
-    
+
     let handle = heap.alloc_object(Object::String(joined));
     Ok(Value::Obj(handle))
 }
@@ -125,7 +144,9 @@ pub fn join_strings_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
 /// Checks if a string starts with the given prefix
 pub fn starts_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("starts_with expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "starts_with expects 2 arguments".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -135,14 +156,16 @@ pub fn starts_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let prefix = match &args[1] {
@@ -152,14 +175,16 @@ pub fn starts_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[1].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[1].type_name(),
+            })
+        }
     };
 
     Ok(Value::Bool(input.starts_with(&prefix)))
@@ -169,7 +194,9 @@ pub fn starts_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
 /// Checks if a string ends with the given suffix
 pub fn ends_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("ends_with expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "ends_with expects 2 arguments".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -179,14 +206,16 @@ pub fn ends_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let suffix = match &args[1] {
@@ -196,14 +225,16 @@ pub fn ends_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[1].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[1].type_name(),
+            })
+        }
     };
 
     Ok(Value::Bool(input.ends_with(&suffix)))
@@ -213,7 +244,9 @@ pub fn ends_with_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
 /// Trims whitespace from both ends of a string
 pub fn trim_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 1 {
-        return Err(PulseError::RuntimeError("trim_string expects 1 argument".into()));
+        return Err(PulseError::RuntimeError(
+            "trim_string expects 1 argument".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -223,14 +256,16 @@ pub fn trim_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let trimmed = input.trim();
@@ -242,7 +277,9 @@ pub fn trim_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
 /// Returns the length of a string
 pub fn string_length_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 1 {
-        return Err(PulseError::RuntimeError("string_length expects 1 argument".into()));
+        return Err(PulseError::RuntimeError(
+            "string_length expects 1 argument".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -252,14 +289,16 @@ pub fn string_length_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     Ok(Value::Int(input.len() as i64))
@@ -269,7 +308,9 @@ pub fn string_length_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
 /// Returns a substring from start to end indices
 pub fn substring_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 3 {
-        return Err(PulseError::RuntimeError("substring expects 3 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "substring expects 3 arguments".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -279,26 +320,30 @@ pub fn substring_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let start = args[1].as_int()?;
     let end = args[2].as_int()?;
 
     if start < 0 || end < 0 || start > end || end > input.len() as i64 {
-        return Err(PulseError::RuntimeError("Invalid indices for substring".into()));
+        return Err(PulseError::RuntimeError(
+            "Invalid indices for substring".into(),
+        ));
     }
 
     let start_idx = start as usize;
     let end_idx = end as usize;
-    
+
     let substr = &input[start_idx..end_idx];
     let handle = heap.alloc_object(Object::String(substr.to_string()));
     Ok(Value::Obj(handle))
@@ -308,7 +353,9 @@ pub fn substring_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
 /// Checks if a string contains a substring
 pub fn string_contains_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("string_contains expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "string_contains expects 2 arguments".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -318,14 +365,16 @@ pub fn string_contains_native(heap: &mut dyn HeapInterface, args: &[Value]) -> P
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let substr = match &args[1] {
@@ -335,14 +384,16 @@ pub fn string_contains_native(heap: &mut dyn HeapInterface, args: &[Value]) -> P
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[1].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[1].type_name(),
+            })
+        }
     };
 
     Ok(Value::Bool(input.contains(&substr)))
@@ -352,7 +403,9 @@ pub fn string_contains_native(heap: &mut dyn HeapInterface, args: &[Value]) -> P
 /// Replaces all occurrences of old substring with new substring
 pub fn string_replace_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 3 {
-        return Err(PulseError::RuntimeError("string_replace expects 3 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "string_replace expects 3 arguments".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -362,14 +415,16 @@ pub fn string_replace_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pu
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let old = match &args[1] {
@@ -379,14 +434,16 @@ pub fn string_replace_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pu
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[1].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[1].type_name(),
+            })
+        }
     };
 
     let new = match &args[2] {
@@ -396,14 +453,16 @@ pub fn string_replace_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pu
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[2].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[2].type_name(),
+            })
+        }
     };
 
     let result = input.replace(&old, &new);
@@ -415,7 +474,9 @@ pub fn string_replace_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pu
 /// Converts a string to uppercase
 pub fn string_uppercase_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 1 {
-        return Err(PulseError::RuntimeError("string_uppercase expects 1 argument".into()));
+        return Err(PulseError::RuntimeError(
+            "string_uppercase expects 1 argument".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -425,14 +486,16 @@ pub fn string_uppercase_native(heap: &mut dyn HeapInterface, args: &[Value]) -> 
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let upper = input.to_uppercase();
@@ -444,7 +507,9 @@ pub fn string_uppercase_native(heap: &mut dyn HeapInterface, args: &[Value]) -> 
 /// Converts a string to lowercase
 pub fn string_lowercase_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 1 {
-        return Err(PulseError::RuntimeError("string_lowercase expects 1 argument".into()));
+        return Err(PulseError::RuntimeError(
+            "string_lowercase expects 1 argument".into(),
+        ));
     }
 
     let input = match &args[0] {
@@ -454,14 +519,16 @@ pub fn string_lowercase_native(heap: &mut dyn HeapInterface, args: &[Value]) -> 
             } else {
                 return Err(PulseError::TypeMismatch {
                     expected: "string".into(),
-                    got: "object".into()
+                    got: "object".into(),
                 });
             }
         }
-        _ => return Err(PulseError::TypeMismatch {
-            expected: "string".into(),
-            got: args[0].type_name()
-        }),
+        _ => {
+            return Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: args[0].type_name(),
+            })
+        }
     };
 
     let lower = input.to_lowercase();
@@ -480,10 +547,16 @@ fn extract_str(heap: &dyn HeapInterface, val: &Value) -> PulseResult<String> {
             if let Some(Object::String(s)) = heap.get_object(*h) {
                 Ok(s.clone())
             } else {
-                Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() })
+                Err(PulseError::TypeMismatch {
+                    expected: "string".into(),
+                    got: "object".into(),
+                })
             }
         }
-        _ => Err(PulseError::TypeMismatch { expected: "string".into(), got: val.type_name() }),
+        _ => Err(PulseError::TypeMismatch {
+            expected: "string".into(),
+            got: val.type_name(),
+        }),
     }
 }
 
@@ -491,7 +564,9 @@ fn extract_str(heap: &dyn HeapInterface, val: &Value) -> PulseResult<String> {
 /// Returns the index of the first occurrence of substr in str, or -1 if not found
 pub fn index_of_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("index_of_string expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "index_of_string expects 2 arguments".into(),
+        ));
     }
 
     let input = extract_str(heap, &args[0])?;
@@ -507,7 +582,9 @@ pub fn index_of_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> P
 /// Returns the character at the given index as a single-character string
 pub fn char_at_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("char_at expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "char_at expects 2 arguments".into(),
+        ));
     }
 
     let input = extract_str(heap, &args[0])?;
@@ -515,11 +592,15 @@ pub fn char_at_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
 
     if idx < 0 || idx >= input.len() as i64 {
         return Err(PulseError::RuntimeError(format!(
-            "Index {} out of bounds for string of length {}", idx, input.len()
+            "Index {} out of bounds for string of length {}",
+            idx,
+            input.len()
         )));
     }
 
-    let ch = input.chars().nth(idx as usize)
+    let ch = input
+        .chars()
+        .nth(idx as usize)
         .ok_or_else(|| PulseError::RuntimeError("Invalid character index".into()))?;
     let handle = heap.alloc_object(Object::String(ch.to_string()));
     Ok(Value::Obj(handle))
@@ -529,14 +610,18 @@ pub fn char_at_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
 /// Repeats a string count times
 pub fn repeat_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("repeat_string expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "repeat_string expects 2 arguments".into(),
+        ));
     }
 
     let input = extract_str(heap, &args[0])?;
     let count = args[1].as_int()?;
 
     if count < 0 {
-        return Err(PulseError::RuntimeError("repeat_string count cannot be negative".into()));
+        return Err(PulseError::RuntimeError(
+            "repeat_string count cannot be negative".into(),
+        ));
     }
 
     let result = input.repeat(count as usize);
@@ -548,7 +633,9 @@ pub fn repeat_string_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
 /// Pads the start of a string to reach the target length
 pub fn pad_start_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 3 {
-        return Err(PulseError::RuntimeError("pad_start expects 3 arguments (str, target_len, pad_char)".into()));
+        return Err(PulseError::RuntimeError(
+            "pad_start expects 3 arguments (str, target_len, pad_char)".into(),
+        ));
     }
 
     let input = extract_str(heap, &args[0])?;
@@ -556,7 +643,9 @@ pub fn pad_start_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
     let pad_str = extract_str(heap, &args[2])?;
 
     if pad_str.is_empty() {
-        return Err(PulseError::RuntimeError("pad_start pad string cannot be empty".into()));
+        return Err(PulseError::RuntimeError(
+            "pad_start pad string cannot be empty".into(),
+        ));
     }
 
     let result = if input.len() >= target_len {
@@ -575,7 +664,9 @@ pub fn pad_start_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
 /// Pads the end of a string to reach the target length
 pub fn pad_end_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 3 {
-        return Err(PulseError::RuntimeError("pad_end expects 3 arguments (str, target_len, pad_char)".into()));
+        return Err(PulseError::RuntimeError(
+            "pad_end expects 3 arguments (str, target_len, pad_char)".into(),
+        ));
     }
 
     let input = extract_str(heap, &args[0])?;
@@ -583,7 +674,9 @@ pub fn pad_end_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResu
     let pad_str = extract_str(heap, &args[2])?;
 
     if pad_str.is_empty() {
-        return Err(PulseError::RuntimeError("pad_end pad string cannot be empty".into()));
+        return Err(PulseError::RuntimeError(
+            "pad_end pad string cannot be empty".into(),
+        ));
     }
 
     let result = if input.len() >= target_len {

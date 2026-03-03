@@ -1,18 +1,20 @@
-pub mod vm;
+pub mod debug;
 pub mod heap;
 pub mod shared_heap;
-pub mod debug;
+pub mod vm;
 // mod send_check;
 
-pub use vm::{VM, VMStatus, CallFrame};
-pub use heap::Heap;
-pub use shared_heap::{SharedHeap, SharedHandle, create_shared_heap};
 pub use debug::{DebugContext, StepMode};
+pub use heap::Heap;
+pub use shared_heap::{create_shared_heap, SharedHandle, SharedHeap};
+pub use vm::{
+    CallFrame, Capability, ResourceLimits, ResourceTracker, SecurityContext, VMStatus, VM,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulse_core::{Chunk, Op, Value, Constant, ActorId};
+    use pulse_core::{ActorId, Chunk, Constant, Op, Value};
 
     #[tokio::test]
     async fn test_add() {

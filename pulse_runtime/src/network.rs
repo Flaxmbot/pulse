@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use pulse_core::ActorId;
-use pulse_core::object::Function;
 use crate::mailbox::Message;
+use pulse_core::object::Function;
+use pulse_core::ActorId;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,11 @@ pub struct MessageEnvelope {
 
 impl MessageEnvelope {
     pub fn new(target: ActorId, sender: Option<ActorId>, message: Message) -> Self {
-        Self { target, sender, message }
+        Self {
+            target,
+            sender,
+            message,
+        }
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
@@ -37,8 +41,16 @@ pub struct RemoteSpawnRequest {
 }
 
 impl RemoteSpawnRequest {
-    pub fn new(function: Arc<Function>, args: Vec<pulse_core::Value>, name: Option<String>) -> Self {
-        Self { function, args, name }
+    pub fn new(
+        function: Arc<Function>,
+        args: Vec<pulse_core::Value>,
+        name: Option<String>,
+    ) -> Self {
+        Self {
+            function,
+            args,
+            name,
+        }
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
@@ -63,11 +75,19 @@ pub struct RemoteSpawnResponse {
 
 impl RemoteSpawnResponse {
     pub fn success(actor_id: ActorId) -> Self {
-        Self { actor_id, success: true, error: None }
+        Self {
+            actor_id,
+            success: true,
+            error: None,
+        }
     }
 
     pub fn failure(actor_id: ActorId, error: String) -> Self {
-        Self { actor_id, success: false, error: Some(error) }
+        Self {
+            actor_id,
+            success: false,
+            error: Some(error),
+        }
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {

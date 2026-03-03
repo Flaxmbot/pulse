@@ -1,0 +1,30 @@
+print("Benchmarking Message Throughput...");
+
+let pinger = spawn {
+    let count = 0;
+    while (true) {
+        let msg = receive;
+        if (msg == "ping") {
+            count = count + 1;
+            if (count == 100000) {
+                print("Received 100,000 messages!");
+                return;
+            }
+        }
+    }
+};
+
+let start = current_timestamp_millis();
+
+let i = 0;
+while (i < 100000) {
+    send pinger, "ping";
+    i = i + 1;
+}
+
+// How to wait? In pulse, maybe just sleep or block waiting for a response back
+let end = current_timestamp_millis();
+print("Time to send 100,000 messages: " + to_string(end - start) + "ms");
+// Wait to ensure processing is done
+sleep(100);
+

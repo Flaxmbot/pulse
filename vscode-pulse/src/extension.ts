@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import { workspace, ExtensionContext } from 'vscode';
 import {
     LanguageClient,
@@ -9,11 +10,40 @@ import {
 
 let client: LanguageClient;
 
+function resolveServerCommand(context: ExtensionContext): string {
+    const configured = workspace.getConfiguration('pulse').get<string>('lsp.path');
+    if (configured && configured.trim().length > 0) {
+        return configured;
+    }
+
+    const envPath = process.env.PULSE_LSP_PATH;
+    if (envPath && envPath.trim().length > 0) {
+        return envPath;
+    }
+
+    const extRoot = context.extensionPath;
+    const candidates = process.platform === 'win32'
+        ? [
+            path.join(extRoot, '..', 'pulse_lang', 'target', 'release', 'pulse-lsp.exe'),
+            path.join(extRoot, '..', 'pulse_lang', 'target', 'debug', 'pulse-lsp.exe'),
+        ]
+        : [
+            path.join(extRoot, '..', 'pulse_lang', 'target', 'release', 'pulse-lsp'),
+            path.join(extRoot, '..', 'pulse_lang', 'target', 'debug', 'pulse-lsp'),
+        ];
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    // Fallback to PATH lookup
+    return process.platform === 'win32' ? 'pulse-lsp.exe' : 'pulse-lsp';
+}
+
 export function activate(context: ExtensionContext) {
-    // Path to the compiled LSP binary
-    const serverPath = context.asAbsolutePath(
-        path.join('..', 'pulse_lang', 'target', 'debug', 'pulse-lsp.exe')
-    );
+    const serverPath = resolveServerCommand(context);
 
     const serverOptions: ServerOptions = {
         run: { command: serverPath, transport: TransportKind.stdio },

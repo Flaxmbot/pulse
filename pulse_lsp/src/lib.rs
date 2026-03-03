@@ -1,9 +1,9 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
 
 mod diagnostics;
 
@@ -66,56 +66,74 @@ impl LanguageServer for PulseBackend {
         let uri = params.text_document.uri.clone();
         let content = params.text_document.text.clone();
         let version = params.text_document.version;
-        
+
         {
             let mut docs = self.documents.write().await;
-            docs.insert(uri.clone(), DocumentState { content: content.clone(), version });
+            docs.insert(
+                uri.clone(),
+                DocumentState {
+                    content: content.clone(),
+                    version,
+                },
+            );
         }
-        
+
         // Run diagnostics
         let diagnostics = diagnose_source(&content);
-        self.client.publish_diagnostics(uri, diagnostics, Some(version)).await;
+        self.client
+            .publish_diagnostics(uri, diagnostics, Some(version))
+            .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let version = params.text_document.version;
-        
+
         if let Some(change) = params.content_changes.into_iter().last() {
             let content = change.text;
             {
                 let mut docs = self.documents.write().await;
-                docs.insert(uri.clone(), DocumentState { content: content.clone(), version });
+                docs.insert(
+                    uri.clone(),
+                    DocumentState {
+                        content: content.clone(),
+                        version,
+                    },
+                );
             }
-            
+
             // Run diagnostics
             let diagnostics = diagnose_source(&content);
-            self.client.publish_diagnostics(uri, diagnostics, Some(version)).await;
+            self.client
+                .publish_diagnostics(uri, diagnostics, Some(version))
+                .await;
         }
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        
+
         let content = {
             let docs = self.documents.read().await;
             docs.get(&uri).map(|d| d.content.clone())
         };
-        
+
         if let Some(content) = content {
             let diagnostics = diagnose_source(&content);
-            self.client.publish_diagnostics(uri, diagnostics, None).await;
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
         }
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        
+
         let _content = {
             let docs = self.documents.read().await;
             docs.get(&uri).map(|d| d.content.clone())
         };
-        
+
         // Basic keyword completions
         let completions = vec![
             CompletionItem::new_simple("fn".into(), "Function definition".into()),

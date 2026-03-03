@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::value::Constant;
+use serde::{Deserialize, Serialize};
 // use crate::value::Value; // No longer used in Chunk constants
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,7 +63,7 @@ pub enum Op {
     SetIndex = 0x48,  // Pops value, index, target. Sets value.
 
     // Distribution
-    Spawn = 0x50,     // u8 constant index for function.
+    Spawn = 0x50, // u8 constant index for function.
     Send = 0x51,
     Receive = 0x52,
     SelfId = 0x53,
@@ -74,40 +74,55 @@ pub enum Op {
     Register = 0x58,
     Unregister = 0x59,
     WhereIs = 0x5A,
-    
+
     // Shared Memory
-    CreateSharedMemory = 0x5B,  // Create shared memory region
-    ReadSharedMemory = 0x5C,    // Read from shared memory
-    WriteSharedMemory = 0x5D,   // Write to shared memory
-    LockSharedMemory = 0x5E,    // Acquire lock on shared memory
-    UnlockSharedMemory = 0x5F,  // Release lock on shared memory
-    
+    CreateSharedMemory = 0x5B, // Create shared memory region
+    ReadSharedMemory = 0x5C,   // Read from shared memory
+    WriteSharedMemory = 0x5D,  // Write to shared memory
+    LockSharedMemory = 0x5E,   // Acquire lock on shared memory
+    UnlockSharedMemory = 0x5F, // Release lock on shared memory
+
     // IO
     Print = 0x60,
     PrintMulti = 0x61,
 
     // Error Handling
-    Try = 0x70,      // u16 handler offset. Push exception handler frame.
-    Throw = 0x71,    // Pop value, unwind to handler.
-    EndTry = 0x72,   // Pop exception handler frame.
+    Try = 0x70,    // u16 handler offset. Push exception handler frame.
+    Throw = 0x71,  // Pop value, unwind to handler.
+    EndTry = 0x72, // Pop exception handler frame.
 
     // Object Oriented
-    BuildClass = 0x73,  // u8 name_idx, u8 has_super, [u8 super_idx if has_super], u8 method_count, [u8 method_name_idx for each method]
-    GetSuper = 0x74,    // u16 method_name_idx. Pops super, this. Pushes BoundMethod.
-    Method = 0x75,      // u16 name_idx. Pops closure, peeks class, adds method.
-    
+    BuildClass = 0x73, // u8 name_idx, u8 has_super, [u8 super_idx if has_super], u8 method_count, [u8 method_name_idx for each method]
+    GetSuper = 0x74,   // u16 method_name_idx. Pops super, this. Pushes BoundMethod.
+    Method = 0x75,     // u16 name_idx. Pops closure, peeks class, adds method.
+
     // Atomic Operations
-    AtomicCreate = 0x76,  // Create atomic int, pops initial value
-    AtomicLoad = 0x77,    // Load from atomic, pushes value
-    AtomicStore = 0x78,   // Store to atomic, pops value, pushes old value
-    AtomicAdd = 0x79,     // Atomic add, pops value, pushes old value
-    AtomicSub = 0x7A,     // Atomic subtract, pops value, pushes old value
-    AtomicCompareAndSwap = 0x7B,  // CAS, pops expected, new, pushes success (bool)
-    
+    AtomicCreate = 0x76,         // Create atomic int, pops initial value
+    AtomicLoad = 0x77,           // Load from atomic, pushes value
+    AtomicStore = 0x78,          // Store to atomic, pops value, pushes old value
+    AtomicAdd = 0x79,            // Atomic add, pops value, pushes old value
+    AtomicSub = 0x7A,            // Atomic subtract, pops value, pushes old value
+    AtomicCompareAndSwap = 0x7B, // CAS, pops expected, new, pushes success (bool)
+
     // Memory Fences
-    MemoryFenceAcquire = 0x7C,  // Acquire fence - all reads after this see writes before matching release
-    MemoryFenceRelease = 0x7D,  // Release fence - all writes before this are visible to threads doing acquire
+    MemoryFenceAcquire = 0x7C, // Acquire fence - all reads after this see writes before matching release
+    MemoryFenceRelease = 0x7D, // Release fence - all writes before this are visible to threads doing acquire
     MemoryFenceSeqCst = 0x7E,  // Full memory barrier (Sequentially consistent)
+    SpawnCall = 0x7F,
+
+    // Bitwise Operations (0x80+)
+    BitAnd = 0x80,
+    BitOr = 0x81,
+    BitXor = 0x82,
+    BitNot = 0x83,
+    Shl = 0x84,
+    Shr = 0x85,
+
+    // Power
+    Pow = 0x86,
+
+    // List
+    Append = 0x87,
 }
 
 impl From<u8> for Op {
@@ -189,6 +204,15 @@ impl From<u8> for Op {
             0x7C => Op::MemoryFenceAcquire,
             0x7D => Op::MemoryFenceRelease,
             0x7E => Op::MemoryFenceSeqCst,
+            0x7F => Op::SpawnCall,
+            0x80 => Op::BitAnd,
+            0x81 => Op::BitOr,
+            0x82 => Op::BitXor,
+            0x83 => Op::BitNot,
+            0x84 => Op::Shl,
+            0x85 => Op::Shr,
+            0x86 => Op::Pow,
+            0x87 => Op::Append,
             _ => Op::Halt, // Default to halt for invalid opcodes
         }
     }
@@ -219,7 +243,7 @@ impl Chunk {
         self.constants.push(value);
         self.constants.len() - 1
     }
-    
+
     pub fn get_constant(&self, index: usize) -> Option<&Constant> {
         self.constants.get(index)
     }

@@ -1,0 +1,23 @@
+// Integration test: control flow
+let x = 10;
+if (x > 5) {
+    print("greater");
+} else {
+    print("less");
+}
+
+let i = 0;
+while (i < 5) {
+    i = i + 1;
+}
+print(i);
+
+if (true and false) {
+    print("bad");
+} else {
+    print("good");
+}
+
+if (true or false) {
+    print("yes");
+}

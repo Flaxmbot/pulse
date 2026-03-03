@@ -1,5 +1,5 @@
 //! Documentation Generator
-//! 
+//!
 //! Generates Markdown documentation from Pulse source files.
 
 use std::fs;
@@ -27,11 +27,11 @@ pub enum DocKind {
 pub fn extract_docs(source: &str) -> Vec<DocItem> {
     use pulse_compiler::Lexer;
     use pulse_compiler::Token;
-    
+
     let mut lexer = Lexer::new(source);
     let mut items = Vec::new();
     let mut pending_doc = String::new();
-    
+
     loop {
         match lexer.next_token() {
             Ok(Token::DocComment(doc)) => {
@@ -68,18 +68,21 @@ pub fn extract_docs(source: &str) -> Vec<DocItem> {
             Err(_) => break,
         }
     }
-    
+
     items
 }
 
 /// Generate Markdown documentation
 pub fn generate_markdown(items: &[DocItem], module_name: &str) -> String {
     let mut md = String::new();
-    
+
     md.push_str(&format!("# {}\n\n", module_name));
-    
+
     // Functions
-    let functions: Vec<_> = items.iter().filter(|i| matches!(i.kind, DocKind::Function)).collect();
+    let functions: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i.kind, DocKind::Function))
+        .collect();
     if !functions.is_empty() {
         md.push_str("## Functions\n\n");
         for item in functions {
@@ -92,9 +95,12 @@ pub fn generate_markdown(items: &[DocItem], module_name: &str) -> String {
             }
         }
     }
-    
+
     // Actors
-    let actors: Vec<_> = items.iter().filter(|i| matches!(i.kind, DocKind::Actor)).collect();
+    let actors: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i.kind, DocKind::Actor))
+        .collect();
     if !actors.is_empty() {
         md.push_str("## Actors\n\n");
         for item in actors {
@@ -107,40 +113,40 @@ pub fn generate_markdown(items: &[DocItem], module_name: &str) -> String {
             }
         }
     }
-    
+
     md
 }
 
 /// Generate documentation for a directory of Pulse files
 pub fn generate_docs(dir: &Path, output_dir: &Path) -> Result<usize, String> {
-    fs::create_dir_all(output_dir)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
-    
+    fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
+
     let files = collect_pulse_files(dir);
     let mut count = 0;
-    
+
     for file in &files {
         let source = fs::read_to_string(file)
             .map_err(|e| format!("Failed to read {}: {}", file.display(), e))?;
-        
+
         let items = extract_docs(&source);
         if items.is_empty() {
             continue;
         }
-        
-        let module_name = file.file_stem()
+
+        let module_name = file
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("module");
-        
+
         let md = generate_markdown(&items, module_name);
-        
+
         let out_file = output_dir.join(format!("{}.md", module_name));
         fs::write(&out_file, md)
             .map_err(|e| format!("Failed to write {}: {}", out_file.display(), e))?;
-        
+
         count += 1;
     }
-    
+
     Ok(count)
 }
 

@@ -2,8 +2,17 @@
     "name": "pulse-language",
     "displayName": "Pulse Language",
     "description": "Language support for Pulse - a concurrent actor-based programming language",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "publisher": "pulse-lang",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/pulse-lang/pulse"
+    },
+    "homepage": "https://github.com/pulse-lang/pulse",
+    "bugs": {
+        "url": "https://github.com/pulse-lang/pulse/issues"
+    },
     "engines": {
         "vscode": "^1.75.0"
     },
@@ -25,12 +34,24 @@
             "language": "pulse",
             "scopeName": "source.pulse",
             "path": "./syntaxes/pulse.tmLanguage.json"
-        }]
+        }],
+        "configuration": {
+            "title": "Pulse",
+            "properties": {
+                "pulse.lsp.path": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Absolute path to pulse-lsp executable. If empty, Pulse tries env PULSE_LSP_PATH and then PATH."
+                }
+            }
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./"
+        "watch": "tsc -watch -p ./",
+        "package": "vsce package --no-dependencies",
+        "install-local": "npm run package && code --install-extension pulse-language-0.1.2.vsix --force"
     },
     "dependencies": {
         "vscode-languageclient": "^9.0.1"
@@ -38,6 +59,8 @@
     "devDependencies": {
         "@types/vscode": "^1.75.0",
         "@types/node": "^18.0.0",
+        "@vscode/vsce": "^3.1.0",
         "typescript": "^5.0.0"
     }
 }
+

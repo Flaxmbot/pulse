@@ -1,6 +1,6 @@
 [package]
 name = "pulse_vm"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
@@ -13,3 +13,4 @@ parking_lot = "0.12"
 tokio = { version = "1", features = ["rt", "macros"] }
 pulse_compiler = { path = "../pulse_compiler" }
 pulse_runtime = { path = "../pulse_runtime" }
+

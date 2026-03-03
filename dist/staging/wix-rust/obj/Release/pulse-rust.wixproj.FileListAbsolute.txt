@@ -1,0 +1,6 @@
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-rust\_wix\Release\pulse-rust.msi
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-rust\_wix\Release\pulse-rust.wixpdb
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-rust\obj\Release\pulse-rust.wixproj.CoreCompileInputs.cache
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-rust\obj\Release\pulse-rust.msi
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-rust\obj\Release\pulse-rust.wixpdb
+C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\wix-rust\obj\Release\pulse-rust.wixproj.BindTracking-neutral.txt

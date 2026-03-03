@@ -1,237 +1,412 @@
 //! File I/O native functions
+//!
+//! Provides file reading, writing, and manipulation operations.
 
-use pulse_core::{Value, PulseResult, PulseError};
-use pulse_core::object::{HeapInterface, Object};
-use tokio::fs;
-use std::pin::Pin;
-use std::future::Future;
 use futures::FutureExt;
+use pulse_core::object::{HeapInterface, Object};
+use pulse_core::{PulseError, PulseResult, Value};
+use std::future::Future;
+use std::pin::Pin;
+use tokio::fs;
 
 /// read_file(path: String) -> String
 /// Reads entire file contents as a string
-pub fn read_file_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
-    let args = args.to_vec(); // Clone args to move into future? Or handle differently.
-    // Value is Clone, so args.to_vec() is fine.
-    // However, heap access inside future?
-    // SyncNativeFn takes `&mut dyn HeapInterface`.
-    // AsyncNativeFn takes `&mut dyn HeapInterface` too?
-    // Wait, let's check `AsyncNativeFn` definition in `pulse_core`.
-    // It likely is `fn(...) -> Pin<Box<dyn Future...>>`.
-    // Inside the future, we can't use `heap` if it's a reference with lifetime 'a, unless we use it before await or capture it?
-    // `HeapInterface` is not Send? VM is Send (or was made Send).
-    // `Heap` struct methods are synchronous.
-    // If we need to allocate the result string on heap, we need access to heap *after* await.
-    // This is tricky with `&mut HeapInterface`.
-    // We can't hold `&mut HeapInterface` across await.
-    //
-    // SOLUTION:
-    // 1. Read arguments (extract path) synchronously.
-    // 2. Perform async I/O (read file).
-    // 3. Return the content string.
-    // 4. BUT `AsyncNativeFn` returns `PulseResult<Value>`. We need to allocate `Object::String` on heap.
-    //    We can't access heap after await if we don't have it.
-    //
-    // Alternative: Return `String` from async part, and have a wrapper? No, native fn must return Value.
-    //
-    // Maybe we pass `Arc<Mutex<Heap>>`? No, VM structure is single threaded usually but running in Actor.
-    // Use `vm.heap` which is available.
-    //
-    // If we can't access heap after await, we have a problem for creating Objects.
-    //
-    // Check `tcp_connect_native` implementation in `networking.rs`.
-    // It returns `Value::Unit` or `Value::Obj` (Socket).
-    // How does it allocate `Socket`?
-    // It captures `heap`?
-    // Let's check `networking.rs` again.
-    //
-    // `tcp_connect_native` signature: `fn tcp_connect_native<'a>(_heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future... + 'a>>`
-    // It likely doesn't use `_heap` after await?
-    // `tcp_connect` returns `Value::Unit` (or `Socket`?).
-    // `networking.rs` shows:
-    // `match TcpStream::connect(addr).await { Ok(stream) => { ... Value::Obj(heap.alloc...) } }`
-    // WAIT. If `heap` is captured in `async move`, and `heap` is `&'a mut ...`.
-    // `&mut T` is not `Copy`. We cannot move it into `async block`.
-    // 
-    // This suggests my `networking.rs` implementation might be wrong or compiled because I didn't verify it properly?
-    // Or I used `Arc`?
-    //
-    // Let's look at `networking.rs` implementation I wrote in `Previous Session`.
-    // `tcp_connect_native` had `_heap`.
-    // Ah, I might have used `_heap` (unused) or used it.
-    // If I use it, it must be `Send`?
-    // `dyn HeapInterface + 'a` is (?) `Send`.
-    // But `&mut` reference cannot be moved if it's borrowed?
-    //
-    // Actually, `add_native_async` signature: `for<'a> fn(&'a mut ..., &'a ...) -> Pin<Box<dyn Future... + 'a>>`.
-    // The Future captures the lifetime 'a.
-    // So inside the future, we HAVE the reference `heap`.
-    // BUT `&mut Heap` is not `Send` unless `Heap` is `Send`. `Heap` contains `Rc`? No, `Vec<Object>`. `Object` contains `Arc`. So `Heap` is `Send`.
-    // So `&mut Heap` is `Send`.
-    // BUT we cannot hold `&mut Heap` across an `.await` point if the future itself is executed by a runtime interacting with that heap?
-    // No, the *Actor* runs the future. The Actor *owns* the VM/Heap.
-    // While the future is polling, the Actor is blocked on it (or yielding).
-    // So it should be safe to hold the reference?
-    //
-    // However, Rust borrow checker might complain if we hold `&mut heap` across yield point?
-    //
-    // Let's try to implement `read_file_native` as:
-    // Extract path (needs heap?) - `args[0]` might be object handle. `heap.get_object` needed.
-    // Do this SYNC part first.
-    // Then `async move { ... fs::read ... }`.
-    // Then `heap.alloc`?
-    // If `async move` block captures `heap`, and we `await fs::read`, `heap` is held.
-    //
-    // Let's write the code.
-    
-    // First, extract path synchronously.
-    // We can't access `args` inside async block easily if they are references.
-    // So we clone args or extract what we need.
-    
-    let path_str = match &args[0] {
-        Value::Obj(h) => {
-             // We need access to heap to get string.
-             // We can use `heap` here.
-             // But we also need `heap` INSIDE the future to alloc the result.
-             // We cannot move `heap` into future AND use it here?
-             // `heap` is `&mut`. We can reborrow?
-             // But valid lifetime...
-             //
-             // We can split the logic?
-             // But `read_file_native` is one function.
-             //
-             // Maybe `heap` shouldn't be captured?
-             // If we return `String` from file read, can we return `Result<String>` and let caller alloc?
-             // No, `NativeFn` signature is fixed.
-             //
-             // Strategy:
-             // 1. Extract path using `heap` (methods on `heap` take `&self` or `&mut self`).
-             // 2. Clone the string path.
-             // 3. Perform async read.
-             // 4. Alloc result using `heap`.
-             //
-             // Issue: Capture `heap` in async block.
-             // `path` is owned String.
-             //
-             // `async move { let content = fs::read_to_string(&path).await?; heap.alloc... }`
-             // This captures `heap`.
-             // If `heap` is `&mut dyn HeapInterface`, it is `Send` (if dyn HeapInterface expects Send? Yes, `VM` is Send).
-             //
-             // Note: `args` access in async block? `args` is `&[Value]`.
-             // If we extract path before, we don't need `args`.
-             
-             if let Some(Object::String(s)) = heap.get_object(*h) {
-                 s.clone()
-             } else {
-                 return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() }) }.boxed();
-             }
-        }
-        _ => return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: args[0].type_name() }) }.boxed(),
-    };
-
+pub fn read_file_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
     async move {
-        match fs::read_to_string(&path_str).await {
+        if args.is_empty() {
+            return Err(PulseError::RuntimeError(
+                "read_file requires a path argument".to_string(),
+            ));
+        }
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        match fs::read_to_string(&path).await {
             Ok(content) => {
                 let handle = heap.alloc_object(Object::String(content));
                 Ok(Value::Obj(handle))
             }
-            Err(e) => Err(PulseError::RuntimeError(format!("Failed to read file '{}': {}", path_str, e))),
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "Failed to read file '{}': {}",
+                path, e
+            ))),
         }
-    }.boxed()
+    }
+    .boxed()
 }
 
-/// write_file(path: String, content: String) -> Bool
-/// Writes content to file, returns true on success
-pub fn write_file_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
-    // Extract arguments
-    let path_str = if args.len() >= 1 {
-         match &args[0] {
-            Value::Obj(h) => {
-                if let Some(Object::String(s)) = heap.get_object(*h) {
-                    s.clone()
-                } else {
-                    return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() }) }.boxed();
-                }
-            }
-            _ => return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: args[0].type_name() }) }.boxed(),
-         }
-    } else {
-        return async move { Err(PulseError::RuntimeError("write_file expects 2 arguments".into())) }.boxed();
-    };
-
-    let content_str = if args.len() >= 2 {
-         match &args[1] {
-            Value::Obj(h) => {
-                if let Some(Object::String(s)) = heap.get_object(*h) {
-                    s.clone()
-                } else {
-                    return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() }) }.boxed();
-                }
-            }
-            _ => return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: args[1].type_name() }) }.boxed(),
-         }
-    } else {
-        return async move { Err(PulseError::RuntimeError("write_file expects 2 arguments".into())) }.boxed();
-    };
-
-
+/// write_file(path: String, content: String) -> Unit
+/// Writes string content to a file (overwrites existing)
+pub fn write_file_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
     async move {
-        match fs::write(&path_str, &content_str).await {
-            Ok(_) => Ok(Value::Bool(true)),
-            Err(_) => Ok(Value::Bool(false)),
+        if args.len() < 2 {
+            return Err(PulseError::RuntimeError(
+                "write_file requires path and content arguments".to_string(),
+            ));
         }
-    }.boxed()
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        let content = match &args[1] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => {
+                    return Err(PulseError::RuntimeError(
+                        "Expected string content".to_string(),
+                    ))
+                }
+            },
+            _ => {
+                return Err(PulseError::RuntimeError(
+                    "Expected string content".to_string(),
+                ))
+            }
+        };
+
+        match fs::write(&path, content).await {
+            Ok(_) => Ok(Value::Unit),
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "Failed to write file '{}': {}",
+                path, e
+            ))),
+        }
+    }
+    .boxed()
+}
+
+/// append_file(path: String, content: String) -> Unit
+/// Appends string content to a file
+pub fn append_file_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    async move {
+        if args.len() < 2 {
+            return Err(PulseError::RuntimeError(
+                "append_file requires path and content arguments".to_string(),
+            ));
+        }
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        let content = match &args[1] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => {
+                    return Err(PulseError::RuntimeError(
+                        "Expected string content".to_string(),
+                    ))
+                }
+            },
+            _ => {
+                return Err(PulseError::RuntimeError(
+                    "Expected string content".to_string(),
+                ))
+            }
+        };
+
+        use tokio::io::AsyncWriteExt;
+        match fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .await
+        {
+            Ok(mut file) => match file.write_all(content.as_bytes()).await {
+                Ok(_) => Ok(Value::Unit),
+                Err(e) => Err(PulseError::RuntimeError(format!(
+                    "Failed to append to file '{}': {}",
+                    path, e
+                ))),
+            },
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "Failed to open file '{}': {}",
+                path, e
+            ))),
+        }
+    }
+    .boxed()
+}
+
+/// read_lines(path: String) -> List<String>
+/// Reads file and returns list of lines
+pub fn read_lines_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    async move {
+        if args.is_empty() {
+            return Err(PulseError::RuntimeError(
+                "read_lines requires a path argument".to_string(),
+            ));
+        }
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        match fs::read_to_string(&path).await {
+            Ok(content) => {
+                let lines: Vec<Value> = content
+                    .lines()
+                    .map(|line| {
+                        let handle = heap.alloc_object(Object::String(line.to_string()));
+                        Value::Obj(handle)
+                    })
+                    .collect();
+                let list_handle = heap.alloc_object(Object::List(lines));
+                Ok(Value::Obj(list_handle))
+            }
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "Failed to read file '{}': {}",
+                path, e
+            ))),
+        }
+    }
+    .boxed()
 }
 
 /// file_exists(path: String) -> Bool
 /// Checks if a file exists
-pub fn file_exists_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
-    let path_str = if args.len() >= 1 {
-         match &args[0] {
-            Value::Obj(h) => {
-                if let Some(Object::String(s)) = heap.get_object(*h) {
-                    s.clone()
-                } else {
-                    return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() }) }.boxed();
-                }
-            }
-            _ => return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: args[0].type_name() }) }.boxed(),
-         }
-    } else {
-        return async move { Err(PulseError::RuntimeError("file_exists expects 1 argument".into())) }.boxed();
-    };
-
+pub fn file_exists_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
     async move {
-        // file_exists is sync in std::path usually, but tokio usually has fs::try_exists
-        // tokio::fs::try_exists is async.
-        match fs::try_exists(&path_str).await {
-            Ok(exists) => Ok(Value::Bool(exists)),
-            Err(_) => Ok(Value::Bool(false)), // mimic std::path::exists behavior? Or return error?
+        if args.is_empty() {
+            return Err(PulseError::RuntimeError(
+                "file_exists requires a path argument".to_string(),
+            ));
         }
-    }.boxed()
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        let exists = tokio::fs::metadata(&path).await.is_ok();
+        Ok(Value::Bool(exists))
+    }
+    .boxed()
 }
 
-/// delete_file(path: String) -> Bool
-/// Deletes a file, returns true on success
-pub fn delete_file_native<'a>(heap: &'a mut dyn HeapInterface, args: &'a [Value]) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
-    let path_str = if args.len() >= 1 {
-         match &args[0] {
-            Value::Obj(h) => {
-                if let Some(Object::String(s)) = heap.get_object(*h) {
-                    s.clone()
-                } else {
-                    return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() }) }.boxed();
-                }
-            }
-            _ => return async move { Err(PulseError::TypeMismatch { expected: "string".into(), got: args[0].type_name() }) }.boxed(),
-         }
-    } else {
-        return async move { Err(PulseError::RuntimeError("delete_file expects 1 argument".into())) }.boxed();
-    };
-
+/// create_dir(path: String) -> Unit
+/// Creates a directory
+pub fn create_dir_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
     async move {
-        match fs::remove_file(&path_str).await {
-            Ok(_) => Ok(Value::Bool(true)),
-            Err(_) => Ok(Value::Bool(false)),
+        if args.is_empty() {
+            return Err(PulseError::RuntimeError(
+                "create_dir requires a path argument".to_string(),
+            ));
         }
-    }.boxed()
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        match fs::create_dir_all(&path).await {
+            Ok(_) => Ok(Value::Unit),
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "Failed to create directory '{}': {}",
+                path, e
+            ))),
+        }
+    }
+    .boxed()
+}
+
+/// remove_file(path: String) -> Unit
+/// Removes a file
+pub fn remove_file_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    async move {
+        if args.is_empty() {
+            return Err(PulseError::RuntimeError(
+                "remove_file requires a path argument".to_string(),
+            ));
+        }
+
+        let path = match &args[0] {
+            Value::Obj(handle) => match heap.get_object(*handle) {
+                Some(Object::String(s)) => s.clone(),
+                _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+            },
+            _ => return Err(PulseError::RuntimeError("Expected string path".to_string())),
+        };
+
+        match fs::remove_file(&path).await {
+            Ok(_) => Ok(Value::Unit),
+            Err(e) => Err(PulseError::RuntimeError(format!(
+                "Failed to remove file '{}': {}",
+                path, e
+            ))),
+        }
+    }
+    .boxed()
+}
+
+/// delete_file(path: String) -> Unit
+/// Alias for remove_file
+pub fn delete_file_native<'a>(
+    heap: &'a mut dyn HeapInterface,
+    args: &'a [Value],
+) -> Pin<Box<dyn Future<Output = PulseResult<Value>> + Send + 'a>> {
+    remove_file_native(heap, args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulse_vm::Heap;
+
+    #[tokio::test]
+    async fn test_write_and_read_file() {
+        let mut heap = Heap::new();
+        let test_path = "test_io_file.txt";
+        let test_content = "Hello, Pulse!";
+
+        // Write file
+        let path_handle = heap.alloc_object(Object::String(test_path.to_string()));
+        let content_handle = heap.alloc_object(Object::String(test_content.to_string()));
+
+        let write_args = vec![Value::Obj(path_handle), Value::Obj(content_handle)];
+        let result = write_file_native(&mut heap, &write_args).await;
+        assert!(result.is_ok());
+
+        // Read file
+        let read_args = vec![Value::Obj(path_handle)];
+        let result = read_file_native(&mut heap, &read_args).await;
+        assert!(result.is_ok());
+
+        // Verify content
+        if let Ok(Value::Obj(handle)) = result {
+            if let Some(Object::String(content)) = heap.get_object(handle) {
+                assert_eq!(content, test_content);
+            } else {
+                panic!("Expected string object");
+            }
+        } else {
+            panic!("Expected object value");
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(test_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_append_file() {
+        let mut heap = Heap::new();
+        let test_path = "test_append_file.txt";
+
+        // Write initial content
+        let path_handle = heap.alloc_object(Object::String(test_path.to_string()));
+        let content1 = heap.alloc_object(Object::String("Hello".to_string()));
+
+        let _ =
+            write_file_native(&mut heap, &[Value::Obj(path_handle), Value::Obj(content1)]).await;
+
+        // Append more content
+        let content2 = heap.alloc_object(Object::String(" World".to_string()));
+        let _ =
+            append_file_native(&mut heap, &[Value::Obj(path_handle), Value::Obj(content2)]).await;
+
+        // Read and verify
+        let result = read_file_native(&mut heap, &[Value::Obj(path_handle)]).await;
+        if let Ok(Value::Obj(handle)) = result {
+            if let Some(Object::String(content)) = heap.get_object(handle) {
+                assert_eq!(content, "Hello World");
+            }
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(test_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_create_and_remove_dir() {
+        let mut heap = Heap::new();
+        let test_dir = "test_io_dir";
+
+        // Create directory
+        let path_handle = heap.alloc_object(Object::String(test_dir.to_string()));
+        let result = create_dir_native(&mut heap, &[Value::Obj(path_handle)]).await;
+        assert!(result.is_ok());
+
+        // Verify it exists
+        assert!(fs::metadata(test_dir).await.is_ok());
+
+        // Cleanup
+        let _ = fs::remove_dir(test_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_read_lines() {
+        let mut heap = Heap::new();
+        let test_path = "test_lines.txt";
+        let test_content = "Line 1\nLine 2\nLine 3";
+
+        // Write test file
+        let path_handle = heap.alloc_object(Object::String(test_path.to_string()));
+        let content_handle = heap.alloc_object(Object::String(test_content.to_string()));
+        let _ = write_file_native(
+            &mut heap,
+            &[Value::Obj(path_handle), Value::Obj(content_handle)],
+        )
+        .await;
+
+        // Read lines
+        let result = read_lines_native(&mut heap, &[Value::Obj(path_handle)]).await;
+        assert!(result.is_ok());
+
+        if let Ok(Value::Obj(handle)) = result {
+            if let Some(Object::List(lines)) = heap.get_object(handle) {
+                assert_eq!(lines.len(), 3);
+            } else {
+                panic!("Expected list object");
+            }
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(test_path).await;
+    }
 }

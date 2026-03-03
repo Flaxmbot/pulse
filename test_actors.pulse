@@ -1,0 +1,9 @@
+// Actor test
+spawn fn() {
+    println("Actor running");
+};
+
+// Or
+let myActor = spawn(fn() {
+    println("Another actor running");
+});

@@ -1,0 +1,54 @@
+// Comprehensive Pulse Program - without linked list
+let integerNumber = 42;
+let floatNumber = 3.14159;
+
+let doubleQuoteString = "Double quoted string";
+let isTrue = true;
+let isFalse = false;
+let nullValue = nil;
+
+// Type checking
+print("Type checking test:");
+print("Type of integerNumber:", type_of(integerNumber));
+print("Type of floatNumber:", type_of(floatNumber));
+print("Type of doubleQuoteString:", type_of(doubleQuoteString));
+print("Type of isTrue:", type_of(isTrue));
+print("Type of nullValue:", type_of(nullValue));
+
+// Arrays and objects
+let numbersArray = [1, 2, 3, 4, 5];
+let mixedArray = [1, "two", true, 3.14];
+
+let person = {"name": "John Doe", "age": 30, "isStudent": false, "hobbies": ["reading", "coding", "hiking"], "address": {"street": "123 Main St", "city": "New York", "country": "USA"}};
+
+// Pattern matching
+print("Pattern matching:");
+let value = 42;
+match value {
+    0 => print("Value is zero"),
+    1..10 => print("Value is between 1 and 10"),
+    10..100 => print("Value is between 10 and 100"),
+    _ => print("Value is 100 or greater")
+};
+print("");
+
+// Error handling
+print("Error handling:");
+fn divide(a, b) {
+    if (b == 0) {
+        throw "Division by zero";
+    }
+    return a / b;
+}
+
+try {
+    let result = divide(10, 0);
+    print("Result:", result);
+} catch error {
+    print("Error:", error);
+};
+print("");
+
+// Print final message
+print("");
+print("=== All major language features demonstrated! ===");

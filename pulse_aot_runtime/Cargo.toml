@@ -1,6 +1,6 @@
 [package]
 name = "pulse_aot_runtime"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 [lib]
@@ -8,3 +8,4 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 # We might need some core logic later
+

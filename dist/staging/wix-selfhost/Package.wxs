@@ -1,0 +1,36 @@
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Id="Pulse.selfhost" Name="Pulse Selfhost Compiler" Manufacturer="Pulse" Version="0.1.2" UpgradeCode="{9A31C9B5-95F6-48E6-A5BF-A17E4C2D0A21}">
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Pulse">
+        <Directory Id="BinDir" Name="bin" />
+        <Directory Id="LibDir" Name="lib" />
+        <Directory Id="ShareDir" Name="share">
+          <Directory Id="PulseShareDir" Name="pulse">
+            <Directory Id="SelfHostedDir" Name="self-hosted" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\bin\pulse.cmd" Directory="BinDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\bin\pulse_cli.exe" Directory="BinDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\bin\pulse-lsp.exe" Directory="BinDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\bin\pulse-rust.cmd" Directory="BinDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\bin\pulse-selfhost.cmd" Directory="BinDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\lib\pulse_aot_runtime.dll" Directory="LibDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\lib\pulse_aot_runtime.dll.lib" Directory="LibDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\lib\pulse_aot_runtime.lib" Directory="LibDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\pulse-language.vsix" Directory="PulseShareDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\self-hosted\ast.pulse" Directory="SelfHostedDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\self-hosted\bytecode_gen.pulse" Directory="SelfHostedDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\self-hosted\compiler.pulse" Directory="SelfHostedDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\self-hosted\lexer.pulse" Directory="SelfHostedDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\self-hosted\parser.pulse" Directory="SelfHostedDir" />
+    <File Source="C:\Users\Kuntal\Documents\Pulse\pulse_lang\dist\staging\windows-selfhost\share\pulse\self-hosted\type_checker.pulse" Directory="SelfHostedDir" />
+    <Component Id="cmpPath" Directory="INSTALLFOLDER" Guid="{6DDE72A0-BD7D-460A-90A3-5A6E5E7AB9D1}">
+      <RegistryValue Root="HKLM" Key="Software\Pulse" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      <Environment Name="PATH" Action="set" Part="last" System="yes" Value="[BinDir]" />
+    </Component>
+  </Package>
+</Wix>

@@ -1,0 +1,5 @@
+// Negate i64::MIN test
+print("Testing negate overflow...");
+let min_int = -9223372036854775807 - 1;
+let result = -min_int;
+print("Should not reach here");

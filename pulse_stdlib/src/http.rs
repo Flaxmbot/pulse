@@ -1,10 +1,10 @@
 //! HTTP client native functions with full HTTP capabilities
 
-use pulse_core::{Value, PulseResult, PulseError};
+use once_cell::sync::Lazy;
 use pulse_core::object::{HeapInterface, Object};
+use pulse_core::{PulseError, PulseResult, Value};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
 
 // Global HTTP client instance (using reqwest with rustls for HTTPS support)
 static HTTP_CLIENT: Lazy<reqwest::blocking::Client> = Lazy::new(|| {
@@ -15,13 +15,16 @@ static HTTP_CLIENT: Lazy<reqwest::blocking::Client> = Lazy::new(|| {
 });
 
 // Keep track of response bodies for streaming
-static RESPONSE_BODIES: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static RESPONSE_BODIES: Lazy<Mutex<HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// http_get(url: String, headers: Map) -> Map
 /// Performs an HTTP GET request
 pub fn http_get_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    if args.len() < 1 {
-        return Err(PulseError::RuntimeError("http_get expects at least 1 argument".into()));
+    if args.is_empty() {
+        return Err(PulseError::RuntimeError(
+            "http_get expects at least 1 argument".into(),
+        ));
     }
 
     let url = extract_string(heap, &args[0])?;
@@ -32,7 +35,7 @@ pub fn http_get_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
     };
 
     let mut request = HTTP_CLIENT.get(&url);
-    
+
     // Add headers
     for (key, val) in headers {
         if let Some(s) = val {
@@ -40,33 +43,47 @@ pub fn http_get_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
         }
     }
 
-    let response = request.send()
+    let response = request
+        .send()
         .map_err(|e| PulseError::RuntimeError(format!("HTTP GET failed: {}", e)))?;
 
     let status = response.status().as_u16();
     let mut response_headers = HashMap::new();
-    
+
     for (key, val) in response.headers() {
         let key_str = key.to_string();
         let val_str = val.to_str().unwrap_or("").to_string();
         response_headers.insert(
             key_str,
-            Value::Obj(heap.alloc_object(Object::String(val_str)))
+            Value::Obj(heap.alloc_object(Object::String(val_str))),
         );
     }
 
-    let body = response.text()
+    let body = response
+        .text()
         .map_err(|e| PulseError::RuntimeError(format!("Failed to read response body: {}", e)))?;
-    
+
     // Store body with a unique ID and return the ID
     let body_id = uuid::Uuid::new_v4().to_string();
-    RESPONSE_BODIES.lock().unwrap().insert(body_id.clone(), body);
+    RESPONSE_BODIES
+        .lock()
+        .unwrap()
+        .insert(body_id.clone(), body);
 
     let mut result = HashMap::new();
     result.insert("status".to_string(), Value::Int(status as i64));
-    result.insert("headers".to_string(), Value::Obj(heap.alloc_object(Object::Map(response_headers))));
-    result.insert("body_id".to_string(), Value::Obj(heap.alloc_object(Object::String(body_id))));
-    result.insert("body".to_string(), Value::Obj(heap.alloc_object(Object::String("".to_string()))));
+    result.insert(
+        "headers".to_string(),
+        Value::Obj(heap.alloc_object(Object::Map(response_headers))),
+    );
+    result.insert(
+        "body_id".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(body_id))),
+    );
+    result.insert(
+        "body".to_string(),
+        Value::Obj(heap.alloc_object(Object::String("".to_string()))),
+    );
 
     Ok(Value::Obj(heap.alloc_object(Object::Map(result))))
 }
@@ -75,7 +92,9 @@ pub fn http_get_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
 /// Performs an HTTP POST request
 pub fn http_post_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() < 2 {
-        return Err(PulseError::RuntimeError("http_post expects at least 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "http_post expects at least 2 arguments".into(),
+        ));
     }
 
     let url = extract_string(heap, &args[0])?;
@@ -87,7 +106,7 @@ pub fn http_post_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
     };
 
     let mut request = HTTP_CLIENT.post(&url).body(body);
-    
+
     // Add headers
     for (key, val) in headers {
         if let Some(s) = val {
@@ -95,32 +114,46 @@ pub fn http_post_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
         }
     }
 
-    let response = request.send()
+    let response = request
+        .send()
         .map_err(|e| PulseError::RuntimeError(format!("HTTP POST failed: {}", e)))?;
 
     let status = response.status().as_u16();
     let mut response_headers = HashMap::new();
-    
+
     for (key, val) in response.headers() {
         let key_str = key.to_string();
         let val_str = val.to_str().unwrap_or("").to_string();
         response_headers.insert(
             key_str,
-            Value::Obj(heap.alloc_object(Object::String(val_str)))
+            Value::Obj(heap.alloc_object(Object::String(val_str))),
         );
     }
 
-    let resp_body = response.text()
+    let resp_body = response
+        .text()
         .map_err(|e| PulseError::RuntimeError(format!("Failed to read response body: {}", e)))?;
-    
+
     let body_id = uuid::Uuid::new_v4().to_string();
-    RESPONSE_BODIES.lock().unwrap().insert(body_id.clone(), resp_body);
+    RESPONSE_BODIES
+        .lock()
+        .unwrap()
+        .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
     result.insert("status".to_string(), Value::Int(status as i64));
-    result.insert("headers".to_string(), Value::Obj(heap.alloc_object(Object::Map(response_headers))));
-    result.insert("body_id".to_string(), Value::Obj(heap.alloc_object(Object::String(body_id))));
-    result.insert("body".to_string(), Value::Obj(heap.alloc_object(Object::String("".to_string()))));
+    result.insert(
+        "headers".to_string(),
+        Value::Obj(heap.alloc_object(Object::Map(response_headers))),
+    );
+    result.insert(
+        "body_id".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(body_id))),
+    );
+    result.insert(
+        "body".to_string(),
+        Value::Obj(heap.alloc_object(Object::String("".to_string()))),
+    );
 
     Ok(Value::Obj(heap.alloc_object(Object::Map(result))))
 }
@@ -129,7 +162,9 @@ pub fn http_post_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
 /// Performs an HTTP PUT request
 pub fn http_put_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() < 2 {
-        return Err(PulseError::RuntimeError("http_put expects at least 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "http_put expects at least 2 arguments".into(),
+        ));
     }
 
     let url = extract_string(heap, &args[0])?;
@@ -141,39 +176,53 @@ pub fn http_put_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
     };
 
     let mut request = HTTP_CLIENT.put(&url).body(body);
-    
+
     for (key, val) in headers {
         if let Some(s) = val {
             request = request.header(&key, &s);
         }
     }
 
-    let response = request.send()
+    let response = request
+        .send()
         .map_err(|e| PulseError::RuntimeError(format!("HTTP PUT failed: {}", e)))?;
 
     let status = response.status().as_u16();
     let mut response_headers = HashMap::new();
-    
+
     for (key, val) in response.headers() {
         let key_str = key.to_string();
         let val_str = val.to_str().unwrap_or("").to_string();
         response_headers.insert(
             key_str,
-            Value::Obj(heap.alloc_object(Object::String(val_str)))
+            Value::Obj(heap.alloc_object(Object::String(val_str))),
         );
     }
 
-    let resp_body = response.text()
+    let resp_body = response
+        .text()
         .map_err(|e| PulseError::RuntimeError(format!("Failed to read response body: {}", e)))?;
-    
+
     let body_id = uuid::Uuid::new_v4().to_string();
-    RESPONSE_BODIES.lock().unwrap().insert(body_id.clone(), resp_body);
+    RESPONSE_BODIES
+        .lock()
+        .unwrap()
+        .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
     result.insert("status".to_string(), Value::Int(status as i64));
-    result.insert("headers".to_string(), Value::Obj(heap.alloc_object(Object::Map(response_headers))));
-    result.insert("body_id".to_string(), Value::Obj(heap.alloc_object(Object::String(body_id))));
-    result.insert("body".to_string(), Value::Obj(heap.alloc_object(Object::String("".to_string()))));
+    result.insert(
+        "headers".to_string(),
+        Value::Obj(heap.alloc_object(Object::Map(response_headers))),
+    );
+    result.insert(
+        "body_id".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(body_id))),
+    );
+    result.insert(
+        "body".to_string(),
+        Value::Obj(heap.alloc_object(Object::String("".to_string()))),
+    );
 
     Ok(Value::Obj(heap.alloc_object(Object::Map(result))))
 }
@@ -181,8 +230,10 @@ pub fn http_put_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
 /// http_delete(url: String, headers: Map) -> Map
 /// Performs an HTTP DELETE request
 pub fn http_delete_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
-    if args.len() < 1 {
-        return Err(PulseError::RuntimeError("http_delete expects at least 1 argument".into()));
+    if args.is_empty() {
+        return Err(PulseError::RuntimeError(
+            "http_delete expects at least 1 argument".into(),
+        ));
     }
 
     let url = extract_string(heap, &args[0])?;
@@ -193,39 +244,53 @@ pub fn http_delete_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
     };
 
     let mut request = HTTP_CLIENT.delete(&url);
-    
+
     for (key, val) in headers {
         if let Some(s) = val {
             request = request.header(&key, &s);
         }
     }
 
-    let response = request.send()
+    let response = request
+        .send()
         .map_err(|e| PulseError::RuntimeError(format!("HTTP DELETE failed: {}", e)))?;
 
     let status = response.status().as_u16();
     let mut response_headers = HashMap::new();
-    
+
     for (key, val) in response.headers() {
         let key_str = key.to_string();
         let val_str = val.to_str().unwrap_or("").to_string();
         response_headers.insert(
             key_str,
-            Value::Obj(heap.alloc_object(Object::String(val_str)))
+            Value::Obj(heap.alloc_object(Object::String(val_str))),
         );
     }
 
-    let resp_body = response.text()
+    let resp_body = response
+        .text()
         .map_err(|e| PulseError::RuntimeError(format!("Failed to read response body: {}", e)))?;
-    
+
     let body_id = uuid::Uuid::new_v4().to_string();
-    RESPONSE_BODIES.lock().unwrap().insert(body_id.clone(), resp_body);
+    RESPONSE_BODIES
+        .lock()
+        .unwrap()
+        .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
     result.insert("status".to_string(), Value::Int(status as i64));
-    result.insert("headers".to_string(), Value::Obj(heap.alloc_object(Object::Map(response_headers))));
-    result.insert("body_id".to_string(), Value::Obj(heap.alloc_object(Object::String(body_id))));
-    result.insert("body".to_string(), Value::Obj(heap.alloc_object(Object::String("".to_string()))));
+    result.insert(
+        "headers".to_string(),
+        Value::Obj(heap.alloc_object(Object::Map(response_headers))),
+    );
+    result.insert(
+        "body_id".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(body_id))),
+    );
+    result.insert(
+        "body".to_string(),
+        Value::Obj(heap.alloc_object(Object::String("".to_string()))),
+    );
 
     Ok(Value::Obj(heap.alloc_object(Object::Map(result))))
 }
@@ -234,16 +299,16 @@ pub fn http_delete_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
 /// Retrieves the body content by ID
 pub fn http_get_body_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 1 {
-        return Err(PulseError::RuntimeError("http_get_body expects 1 argument".into()));
+        return Err(PulseError::RuntimeError(
+            "http_get_body expects 1 argument".into(),
+        ));
     }
 
     let body_id = extract_string(heap, &args[0])?;
-    
+
     let bodies = RESPONSE_BODIES.lock().unwrap();
-    let body = bodies.get(&body_id)
-        .cloned()
-        .unwrap_or_default();
-    
+    let body = bodies.get(&body_id).cloned().unwrap_or_default();
+
     Ok(Value::Obj(heap.alloc_object(Object::String(body))))
 }
 
@@ -251,7 +316,9 @@ pub fn http_get_body_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
 /// Performs a generic HTTP request with any method
 pub fn http_request_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() < 2 {
-        return Err(PulseError::RuntimeError("http_request expects at least 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "http_request expects at least 2 arguments".into(),
+        ));
     }
 
     let method = extract_string(heap, &args[0])?.to_uppercase();
@@ -274,7 +341,12 @@ pub fn http_request_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
         "DELETE" => HTTP_CLIENT.delete(&url),
         "PATCH" => HTTP_CLIENT.patch(&url).body(body),
         "HEAD" => HTTP_CLIENT.head(&url),
-        _ => return Err(PulseError::RuntimeError(format!("Unsupported HTTP method: {}", method))),
+        _ => {
+            return Err(PulseError::RuntimeError(format!(
+                "Unsupported HTTP method: {}",
+                method
+            )))
+        }
     };
 
     // Add headers
@@ -284,33 +356,50 @@ pub fn http_request_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
         }
     }
 
-    let response = request.send()
+    let response = request
+        .send()
         .map_err(|e| PulseError::RuntimeError(format!("HTTP request failed: {}", e)))?;
 
     let status = response.status().as_u16();
     let mut response_headers = HashMap::new();
-    
+
     for (key, val) in response.headers() {
         let key_str = key.to_string();
         let val_str = val.to_str().unwrap_or("").to_string();
         response_headers.insert(
             key_str,
-            Value::Obj(heap.alloc_object(Object::String(val_str)))
+            Value::Obj(heap.alloc_object(Object::String(val_str))),
         );
     }
 
-    let resp_body = response.text()
+    let resp_body = response
+        .text()
         .map_err(|e| PulseError::RuntimeError(format!("Failed to read response body: {}", e)))?;
-    
+
     let body_id = uuid::Uuid::new_v4().to_string();
-    RESPONSE_BODIES.lock().unwrap().insert(body_id.clone(), resp_body);
+    RESPONSE_BODIES
+        .lock()
+        .unwrap()
+        .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
     result.insert("status".to_string(), Value::Int(status as i64));
-    result.insert("headers".to_string(), Value::Obj(heap.alloc_object(Object::Map(response_headers))));
-    result.insert("body_id".to_string(), Value::Obj(heap.alloc_object(Object::String(body_id))));
-    result.insert("method".to_string(), Value::Obj(heap.alloc_object(Object::String(method))));
-    result.insert("body".to_string(), Value::Obj(heap.alloc_object(Object::String("".to_string()))));
+    result.insert(
+        "headers".to_string(),
+        Value::Obj(heap.alloc_object(Object::Map(response_headers))),
+    );
+    result.insert(
+        "body_id".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(body_id))),
+    );
+    result.insert(
+        "method".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(method))),
+    );
+    result.insert(
+        "body".to_string(),
+        Value::Obj(heap.alloc_object(Object::String("".to_string()))),
+    );
 
     Ok(Value::Obj(heap.alloc_object(Object::Map(result))))
 }
@@ -323,14 +412,23 @@ fn extract_string(heap: &dyn HeapInterface, value: &Value) -> Result<String, Pul
             if let Some(Object::String(s)) = heap.get_object(*h) {
                 Ok(s.clone())
             } else {
-                Err(PulseError::TypeMismatch { expected: "string".into(), got: "object".into() })
+                Err(PulseError::TypeMismatch {
+                    expected: "string".into(),
+                    got: "object".into(),
+                })
             }
         }
-        _ => Err(PulseError::TypeMismatch { expected: "string".into(), got: value.type_name() }),
+        _ => Err(PulseError::TypeMismatch {
+            expected: "string".into(),
+            got: value.type_name(),
+        }),
     }
 }
 
-fn extract_map(heap: &dyn HeapInterface, value: &Value) -> Result<HashMap<String, Option<String>>, PulseError> {
+fn extract_map(
+    heap: &dyn HeapInterface,
+    value: &Value,
+) -> Result<HashMap<String, Option<String>>, PulseError> {
     match value {
         Value::Obj(h) => {
             if let Some(Object::Map(m)) = heap.get_object(*h) {
@@ -351,10 +449,16 @@ fn extract_map(heap: &dyn HeapInterface, value: &Value) -> Result<HashMap<String
                 }
                 Ok(result)
             } else {
-                Err(PulseError::TypeMismatch { expected: "map".into(), got: "object".into() })
+                Err(PulseError::TypeMismatch {
+                    expected: "map".into(),
+                    got: "object".into(),
+                })
             }
         }
-        _ => Err(PulseError::TypeMismatch { expected: "map".into(), got: value.type_name() }),
+        _ => Err(PulseError::TypeMismatch {
+            expected: "map".into(),
+            got: value.type_name(),
+        }),
     }
 }
 
@@ -363,7 +467,9 @@ fn extract_map(heap: &dyn HeapInterface, value: &Value) -> Result<HashMap<String
 /// Parses a raw HTTP request into a map
 pub fn http_parse_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
     if args.len() != 1 {
-        return Err(PulseError::RuntimeError("http_parse expects 1 argument".into()));
+        return Err(PulseError::RuntimeError(
+            "http_parse expects 1 argument".into(),
+        ));
     }
 
     let raw = extract_string(heap, &args[0])?;
@@ -373,7 +479,7 @@ pub fn http_parse_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseR
         Some(l) => l,
         None => return Err(PulseError::RuntimeError("Empty request".into())),
     };
-    
+
     let parts: Vec<&str> = first_line.split_whitespace().collect();
     if parts.len() < 2 {
         return Err(PulseError::RuntimeError("Invalid HTTP request line".into()));
@@ -384,7 +490,9 @@ pub fn http_parse_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseR
 
     let mut headers = HashMap::new();
     for line in lines {
-        if line.is_empty() { break; }
+        if line.is_empty() {
+            break;
+        }
         if let Some((key, val)) = line.split_once(':') {
             let handle = heap.alloc_object(Object::String(val.trim().to_string()));
             headers.insert(key.trim().to_string(), Value::Obj(handle));
@@ -392,18 +500,32 @@ pub fn http_parse_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseR
     }
 
     let mut map = HashMap::new();
-    map.insert("method".to_string(), Value::Obj(heap.alloc_object(Object::String(method))));
-    map.insert("path".to_string(), Value::Obj(heap.alloc_object(Object::String(path))));
-    map.insert("headers".to_string(), Value::Obj(heap.alloc_object(Object::Map(headers))));
+    map.insert(
+        "method".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(method))),
+    );
+    map.insert(
+        "path".to_string(),
+        Value::Obj(heap.alloc_object(Object::String(path))),
+    );
+    map.insert(
+        "headers".to_string(),
+        Value::Obj(heap.alloc_object(Object::Map(headers))),
+    );
 
     let handle = heap.alloc_object(Object::Map(map));
     Ok(Value::Obj(handle))
 }
 
 /// http_format_response(status: Int, body: String) -> String
-pub fn http_format_response_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseResult<Value> {
+pub fn http_format_response_native(
+    heap: &mut dyn HeapInterface,
+    args: &[Value],
+) -> PulseResult<Value> {
     if args.len() != 2 {
-        return Err(PulseError::RuntimeError("http_format_response expects 2 arguments".into()));
+        return Err(PulseError::RuntimeError(
+            "http_format_response expects 2 arguments".into(),
+        ));
     }
 
     let status = args[0].as_int()?;

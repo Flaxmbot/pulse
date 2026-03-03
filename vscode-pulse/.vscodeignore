@@ -1,0 +1,10 @@
+**/.git/**
+**/.github/**
+**/.vscode/**
+**/.DS_Store
+**/node_modules/**
+**/src/**
+**/tsconfig.json
+**/package-lock.json
+**/*.map
+scripts/**

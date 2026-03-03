@@ -1,0 +1,4 @@
+// Float division by zero test
+print("Testing float division by zero...");
+let x = 1.0 / 0.0;
+print("Should not reach here");

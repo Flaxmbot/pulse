@@ -1,0 +1,19 @@
+// Integration test: classes (no inheritance — simpler test)
+class Animal {
+    fn init(name, sound) {
+        this.name = name;
+        this.sound = sound;
+    }
+
+    fn speak() {
+        print(this.name + " says " + this.sound);
+    }
+}
+
+let dog = Animal("Dog", "Woof");
+dog.speak();
+print(dog.name);
+
+let cat = Animal("Cat", "Meow");
+cat.speak();
+print(cat.sound);

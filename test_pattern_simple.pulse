@@ -1,9 +1,0 @@
-// Test simple pattern matching
-print("Simple pattern matching:");
-
-let value = 42;
-print(match value {
-    0 => "Value is zero"
-    42 => "Value is 42"
-    _ => "Value is something else"
-});

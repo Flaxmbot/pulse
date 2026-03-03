@@ -1,18 +1,220 @@
-use pulse_core::{Chunk, Op, Value, PulseResult, PulseError, ActorId, NativeFn, Constant};
-use pulse_core::object::{Object, ObjHandle, HeapInterface, Function, Closure, Instance, BoundMethod};
+use pulse_core::object::{
+    BoundMethod, Closure, Function, HeapInterface, Instance, ObjHandle, Object,
+};
+use pulse_core::{ActorId, Chunk, Constant, NativeFn, Op, PulseError, PulseResult, Value};
 
-use std::sync::Arc;
-use std::collections::HashMap;
+use crate::shared_heap::{SharedHandle, SharedHeap};
 use crate::Heap;
-use crate::shared_heap::{SharedHeap, SharedHandle};
-use pulse_stdlib::utils::{clock_native, println_native, gc_native, len_native, push_native, pop_native};
+use pulse_stdlib::utils::{
+    clock_native, gc_native, len_native, pop_native, println_native, push_native,
+};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Instant;
 
 const MAX_FRAMES: usize = 1024;
+const MAX_STACK_DEPTH: usize = 10000; // Stack overflow protection
+const GC_HEAP_THRESHOLD: usize = 10 * 1024 * 1024; // 10MB trigger for GC
 
+// ====================================================================
+// PHASE 2.3b: CAPABILITY-BASED SECURITY
+// ====================================================================
+
+/// Capability enum representing permissions for privileged operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Capability {
+    /// Permission to read files
+    FileRead,
+    /// Permission to write files
+    FileWrite,
+    /// Permission for network access
+    Network,
+    /// Permission to spawn new actors
+    SpawnActor,
+    /// Permission to execute shell commands
+    Execute,
+}
+
+impl std::fmt::Display for Capability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Capability::FileRead => write!(f, "FileRead"),
+            Capability::FileWrite => write!(f, "FileWrite"),
+            Capability::Network => write!(f, "Network"),
+            Capability::SpawnActor => write!(f, "SpawnActor"),
+            Capability::Execute => write!(f, "Execute"),
+        }
+    }
+}
+
+/// Security context containing granted capabilities and security settings
+#[derive(Debug, Clone)]
+pub struct SecurityContext {
+    /// Set of granted capabilities
+    pub permitted: HashSet<Capability>,
+    /// Default to deny (true = secure by default)
+    pub deny_by_default: bool,
+}
+
+impl SecurityContext {
+    /// Create a new security context with deny-by-default policy
+    pub fn new() -> Self {
+        Self {
+            permitted: HashSet::new(),
+            deny_by_default: true,
+        }
+    }
+
+    /// Create a new security context with all capabilities granted (for trusted code)
+    pub fn trusted() -> Self {
+        let mut permitted = HashSet::new();
+        permitted.insert(Capability::FileRead);
+        permitted.insert(Capability::FileWrite);
+        permitted.insert(Capability::Network);
+        permitted.insert(Capability::SpawnActor);
+        permitted.insert(Capability::Execute);
+        Self {
+            permitted,
+            deny_by_default: false,
+        }
+    }
+
+    /// Check if a capability is granted
+    pub fn has_capability(&self, cap: Capability) -> bool {
+        if self.deny_by_default {
+            self.permitted.contains(&cap)
+        } else {
+            true
+        }
+    }
+
+    /// Grant a capability
+    pub fn grant(&mut self, cap: Capability) {
+        self.permitted.insert(cap);
+    }
+
+    /// Revoke a capability
+    pub fn revoke(&mut self, cap: Capability) {
+        self.permitted.remove(&cap);
+    }
+
+    /// Check capability and return error if denied
+    pub fn check_capability(&self, cap: Capability) -> PulseResult<()> {
+        if !self.has_capability(cap) {
+            Err(PulseError::CapabilityDenied(cap.to_string()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Default for SecurityContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ====================================================================
+// PHASE 2.3c: RESOURCE LIMITS
+// ====================================================================
+
+/// Resource limits for memory, CPU time, and file descriptors
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceLimits {
+    /// Maximum memory in MB (default: 100)
+    pub max_memory_mb: usize,
+    /// Maximum CPU time in milliseconds (default: 30000 = 30s)
+    pub max_cpu_time_ms: u64,
+    /// Maximum file descriptors (default: 50)
+    pub max_file_descriptors: usize,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_memory_mb: 100,
+            max_cpu_time_ms: 30000,
+            max_file_descriptors: 50,
+        }
+    }
+}
+
+/// Resource tracker for monitoring resource usage
+#[derive(Debug, Clone)]
+pub struct ResourceTracker {
+    /// Resource limits
+    pub limits: ResourceLimits,
+    /// Start time for CPU time tracking
+    pub start_time: Instant,
+    /// Current file descriptor count
+    pub file_descriptor_count: usize,
+}
+
+impl ResourceTracker {
+    pub fn new(limits: ResourceLimits) -> Self {
+        Self {
+            limits,
+            start_time: Instant::now(),
+            file_descriptor_count: 0,
+        }
+    }
+
+    /// Check if memory usage is within limits
+    pub fn check_memory(&self, current_bytes: usize) -> PulseResult<()> {
+        let max_bytes = self.limits.max_memory_mb * 1024 * 1024;
+        if current_bytes > max_bytes {
+            Err(PulseError::ResourceLimitExceeded(format!(
+                "Memory limit exceeded: {} MB > {} MB",
+                current_bytes / (1024 * 1024),
+                self.limits.max_memory_mb
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Check if CPU time is within limits
+    pub fn check_cpu_time(&self) -> PulseResult<()> {
+        let elapsed_ms = self.start_time.elapsed().as_millis() as u64;
+        if elapsed_ms > self.limits.max_cpu_time_ms {
+            Err(PulseError::ResourceLimitExceeded(format!(
+                "CPU time limit exceeded: {} ms > {} ms",
+                elapsed_ms, self.limits.max_cpu_time_ms
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Check if file descriptor count is within limits
+    pub fn check_file_descriptor(&self) -> PulseResult<()> {
+        if self.file_descriptor_count >= self.limits.max_file_descriptors {
+            Err(PulseError::ResourceLimitExceeded(format!(
+                "File descriptor limit exceeded: {} >= {}",
+                self.file_descriptor_count, self.limits.max_file_descriptors
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Increment file descriptor count
+    pub fn increment_fd(&mut self) {
+        self.file_descriptor_count += 1;
+    }
+
+    /// Decrement file descriptor count
+    pub fn decrement_fd(&mut self) {
+        if self.file_descriptor_count > 0 {
+            self.file_descriptor_count -= 1;
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct CallFrame {
-    pub closure: ObjHandle, 
+    pub closure: ObjHandle,
     pub ip: usize,
     pub stack_start: usize,
     pub is_module: bool,
@@ -26,15 +228,31 @@ pub enum VMStatus {
     Yielded,
     Blocked, // Waiting for message
     Halted,
-    Paused,  // Debugger pause
+    Paused, // Debugger pause
     Error(PulseError),
     // Effects
-    Spawn(usize), // ip start (spawn SAME code at this offset)
-    Send { target: ActorId, msg: Constant },
-    Import(String), // Path to import
-    Link(ActorId),      // Link to target actor
-    Monitor(ActorId),   // Monitor target actor
-    SpawnLink(usize),   // Spawn and link to new actor
+    Spawn(
+        Constant,
+        Vec<Constant>,
+        std::collections::HashMap<String, Constant>,
+    ), // closure, upvalues, globals
+    SpawnCall(
+        Vec<Constant>,
+        Vec<Constant>,
+        std::collections::HashMap<String, Constant>,
+    ), // args (first is callable), upvalues, globals
+    Send {
+        target: ActorId,
+        msg: Constant,
+    },
+    Import(String),   // Path to import
+    Link(ActorId),    // Link to target actor
+    Monitor(ActorId), // Monitor target actor
+    SpawnLink(
+        Constant,
+        Vec<Constant>,
+        std::collections::HashMap<String, Constant>,
+    ), // Spawn and link to new actor
     Register(String, ActorId),
     Unregister(String),
     WhereIs(String),
@@ -42,9 +260,9 @@ pub enum VMStatus {
 
 #[derive(Debug, Clone)]
 pub struct ExceptionFrame {
-    pub handler_ip: usize,   // Where to jump on exception
-    pub stack_depth: usize,  // Stack depth when try was entered
-    pub frame_depth: usize,  // Call frame depth when try was entered
+    pub handler_ip: usize,  // Where to jump on exception
+    pub stack_depth: usize, // Stack depth when try was entered
+    pub frame_depth: usize, // Call frame depth when try was entered
 }
 
 pub struct VM {
@@ -64,6 +282,10 @@ pub struct VM {
     pub loaded_modules: HashMap<String, ObjHandle>,
     pub exception_frames: Vec<ExceptionFrame>,
     pub debug_ctx: Option<crate::debug::DebugContext>,
+    /// Security context for capability-based access control
+    pub security_context: SecurityContext,
+    /// Resource limits and tracking
+    pub resource_tracker: ResourceTracker,
 }
 
 // unsafe impl Send for VM {}
@@ -71,7 +293,7 @@ pub struct VM {
 impl VM {
     pub fn new(chunk: Chunk, pid: ActorId, shared_heap: Option<Arc<SharedHeap>>) -> Self {
         let mut heap = Heap::new();
-        
+
         // Wrap script in Function/Closure
         let script_func = Function {
             arity: 0,
@@ -80,19 +302,19 @@ impl VM {
             upvalue_count: 0,
             module_path: None, // Default to None, Runtime sets it for main
         };
-        let _func_handle = heap.alloc(Object::Function(script_func.clone())); 
-        // Note: Object::Function stores struct. 
+        let _func_handle = heap.alloc(Object::Function(script_func.clone()));
+        // Note: Object::Function stores struct.
         // Wait, Object::Function(Function).
-        // Closure needs Function struct or handle? 
+        // Closure needs Function struct or handle?
         // Closure struct: pub function: Function.
         // So we copy Function struct into Closure.
-        
+
         let closure = Closure {
             function: script_func,
             upvalues: Vec::new(),
         };
         let closure_handle = heap.alloc(Object::Closure(closure));
-        
+
         // Initial Frame
         let frame = CallFrame {
             closure: closure_handle,
@@ -102,10 +324,9 @@ impl VM {
             module_path: None,
             prev_globals: None,
         };
-        
-        let mut stack = Vec::new();
-        stack.reserve(2048); // Reserve space for performance
-        
+
+        let stack = Vec::with_capacity(2048);
+
         let mut vm = Self {
             pid,
             stack,
@@ -119,6 +340,8 @@ impl VM {
             loaded_modules: HashMap::new(),
             exception_frames: Vec::new(),
             debug_ctx: None,
+            security_context: SecurityContext::trusted(), // Start with all capabilities for main script
+            resource_tracker: ResourceTracker::new(ResourceLimits::default()),
         };
         vm.push(Value::Obj(closure_handle)); // Push script closure to slot 0
         vm.register_all_natives();
@@ -132,7 +355,7 @@ impl VM {
         self.define_native("len", len_native);
         self.define_native("push", push_native);
         self.define_native("pop", pop_native);
-        
+
         // Standard Library v2 natives
         self.define_native_async("read_file", pulse_stdlib::io::read_file_native);
         self.define_native_async("write_file", pulse_stdlib::io::write_file_native);
@@ -150,38 +373,52 @@ impl VM {
         self.define_native("abs", pulse_stdlib::utils::abs_native);
         self.define_native("string_to_list", pulse_stdlib::utils::string_to_list_native);
 
-
-        // Networking natives
-        self.define_native_async("tcp_connect", pulse_stdlib::networking::tcp_connect_native);
-        self.define_native_async("tcp_listen", pulse_stdlib::networking::tcp_listen_native);
-        self.define_native_async("tcp_accept", pulse_stdlib::networking::tcp_accept_native);
-        self.define_native_async("tcp_send", pulse_stdlib::networking::tcp_send_native);
-        self.define_native_async("tcp_receive", pulse_stdlib::networking::tcp_receive_native);
-        self.define_native_async("http_get", pulse_stdlib::networking::http_get_native);
-        self.define_native_async("http_post", pulse_stdlib::networking::http_post_native);
-        self.define_native_async("socket_create", pulse_stdlib::networking::socket_create_native);
-        self.define_native_async("dns_resolve", pulse_stdlib::networking::dns_resolve_native);
+        // HTTP natives (only modules that exist in pulse_stdlib)
         self.define_native("http_parse", pulse_stdlib::http::http_parse_native);
-        self.define_native("http_format_response", pulse_stdlib::http::http_format_response_native);
-
-        // Regex natives
-        self.define_native("regex_compile", pulse_stdlib::regex::regex_compile_native);
-        self.define_native("regex_match", pulse_stdlib::regex::regex_match_native);
-        self.define_native("regex_find_all", pulse_stdlib::regex::regex_find_all_native);
-        self.define_native("regex_replace", pulse_stdlib::regex::regex_replace_native);
+        self.define_native(
+            "http_format_response",
+            pulse_stdlib::http::http_format_response_native,
+        );
 
         // String utility natives
-        self.define_native("split_string", pulse_stdlib::string_utils::split_string_native);
-        self.define_native("join_strings", pulse_stdlib::string_utils::join_strings_native);
-        self.define_native("starts_with", pulse_stdlib::string_utils::starts_with_native);
+        self.define_native(
+            "split_string",
+            pulse_stdlib::string_utils::split_string_native,
+        );
+        self.define_native(
+            "join_strings",
+            pulse_stdlib::string_utils::join_strings_native,
+        );
+        self.define_native(
+            "starts_with",
+            pulse_stdlib::string_utils::starts_with_native,
+        );
         self.define_native("ends_with", pulse_stdlib::string_utils::ends_with_native);
-        self.define_native("trim_string", pulse_stdlib::string_utils::trim_string_native);
-        self.define_native("string_length", pulse_stdlib::string_utils::string_length_native);
+        self.define_native(
+            "trim_string",
+            pulse_stdlib::string_utils::trim_string_native,
+        );
+        self.define_native(
+            "string_length",
+            pulse_stdlib::string_utils::string_length_native,
+        );
         self.define_native("substring", pulse_stdlib::string_utils::substring_native);
-        self.define_native("string_contains", pulse_stdlib::string_utils::string_contains_native);
-        self.define_native("string_replace", pulse_stdlib::string_utils::string_replace_native);
-        self.define_native("string_uppercase", pulse_stdlib::string_utils::string_uppercase_native);
-        self.define_native("string_lowercase", pulse_stdlib::string_utils::string_lowercase_native);
+        self.define_native(
+            "string_contains",
+            pulse_stdlib::string_utils::string_contains_native,
+        );
+        self.define_native(
+            "string_replace",
+            pulse_stdlib::string_utils::string_replace_native,
+        );
+        self.define_native(
+            "string_uppercase",
+            pulse_stdlib::string_utils::string_uppercase_native,
+        );
+        self.define_native(
+            "string_lowercase",
+            pulse_stdlib::string_utils::string_lowercase_native,
+        );
 
         // Test framework natives
         self.define_native("assert", pulse_stdlib::testing::assert_native);
@@ -192,18 +429,24 @@ impl VM {
         // Collection natives
         self.define_native("create_set", pulse_stdlib::utils::create_set_native);
         self.define_native("add_to_set", pulse_stdlib::utils::add_to_set_native);
-        self.define_native("remove_from_set", pulse_stdlib::utils::remove_from_set_native);
-        self.define_native("contains_in_set", pulse_stdlib::utils::contains_in_set_native);
+        self.define_native(
+            "remove_from_set",
+            pulse_stdlib::utils::remove_from_set_native,
+        );
+        self.define_native(
+            "contains_in_set",
+            pulse_stdlib::utils::contains_in_set_native,
+        );
         self.define_native("create_queue", pulse_stdlib::utils::create_queue_native);
         self.define_native("enqueue", pulse_stdlib::utils::enqueue_native);
         self.define_native("dequeue", pulse_stdlib::utils::dequeue_native);
         self.define_native("peek_queue", pulse_stdlib::utils::peek_queue_native);
-        
+
         // Functional programming natives
         self.define_native("map_list", pulse_stdlib::utils::map_list_native);
         self.define_native("filter_list", pulse_stdlib::utils::filter_list_native);
         self.define_native("reduce_list", pulse_stdlib::utils::reduce_list_native);
-        
+
         // Math natives
         self.define_native("sin", pulse_stdlib::utils::sin_native);
         self.define_native("cos", pulse_stdlib::utils::cos_native);
@@ -215,169 +458,9 @@ impl VM {
         self.define_native("floor", pulse_stdlib::utils::floor_native);
         self.define_native("ceil", pulse_stdlib::utils::ceil_native);
         self.define_native("round", pulse_stdlib::utils::round_native);
-        
+
         // Memory isolation natives
         self.define_native("deep_copy", pulse_stdlib::utils::deep_copy_native);
-
-        // ====================================================================
-        // STATISTICS LIBRARY
-        // ====================================================================
-        self.define_native("stats_mean", pulse_stdlib::stats::mean_native);
-        self.define_native("stats_median", pulse_stdlib::stats::median_native);
-        self.define_native("stats_mode", pulse_stdlib::stats::mode_native);
-        self.define_native("stats_std", pulse_stdlib::stats::std_native);
-        self.define_native("stats_variance", pulse_stdlib::stats::variance_native);
-        self.define_native("stats_min", pulse_stdlib::stats::min_native);
-        self.define_native("stats_max", pulse_stdlib::stats::max_native);
-        self.define_native("stats_describe", pulse_stdlib::stats::describe_native);
-        self.define_native("normal_pdf", pulse_stdlib::stats::normal_pdf_native);
-        self.define_native("normal_cdf", pulse_stdlib::stats::normal_cdf_native);
-        self.define_native("normal_sample", pulse_stdlib::stats::normal_sample_native);
-        self.define_native("binomial_pmf", pulse_stdlib::stats::binomial_pmf_native);
-        self.define_native("poisson_pmf", pulse_stdlib::stats::poisson_pmf_native);
-        self.define_native("ttest", pulse_stdlib::stats::ttest_native);
-        self.define_native("chisquare", pulse_stdlib::stats::chisquare_native);
-        self.define_native("correlation", pulse_stdlib::stats::correlation_native);
-        self.define_native("linear_regression", pulse_stdlib::stats::linear_regression_native);
-        self.define_native("covariance", pulse_stdlib::stats::covariance_native);
-
-        // ====================================================================
-        // RANDOM NUMBER GENERATION LIBRARY
-        // ====================================================================
-        self.define_native("rand_int", pulse_stdlib::random::rand_int_native);
-        self.define_native("rand_int_range", pulse_stdlib::random::rand_int_range_native);
-        self.define_native("rand_float", pulse_stdlib::random::rand_float_native);
-        self.define_native("rand_float_range", pulse_stdlib::random::rand_float_range_native);
-        self.define_native("rand_bool", pulse_stdlib::random::rand_bool_native);
-        self.define_native("seed_rng", pulse_stdlib::random::seed_rng_native);
-        self.define_native("rng_state", pulse_stdlib::random::rng_state_native);
-        self.define_native("uniform_sample", pulse_stdlib::random::uniform_sample_native);
-        self.define_native("random_normal_sample", pulse_stdlib::random::normal_sample_native);
-        self.define_native("exponential_sample", pulse_stdlib::random::exponential_sample_native);
-        self.define_native("poisson_sample", pulse_stdlib::random::poisson_sample_native);
-        self.define_native("choice", pulse_stdlib::random::choice_native);
-        self.define_native("shuffle", pulse_stdlib::random::shuffle_native);
-        self.define_native("sample", pulse_stdlib::random::sample_native);
-        self.define_native("choices", pulse_stdlib::random::choices_native);
-        self.define_native("random_bytes", pulse_stdlib::random::random_bytes_native);
-        self.define_native("random_hex", pulse_stdlib::random::random_hex_native);
-        self.define_native("random_string", pulse_stdlib::random::random_string_native);
-
-        // ====================================================================
-        // LINEAR ALGEBRA LIBRARY
-        // ====================================================================
-        // Vector operations
-        self.define_native("vector_dot", pulse_stdlib::linalg::vector_dot_native);
-        self.define_native("vector_cross", pulse_stdlib::linalg::vector_cross_native);
-        self.define_native("vector_normalize", pulse_stdlib::linalg::vector_normalize_native);
-        self.define_native("vector_magnitude", pulse_stdlib::linalg::vector_magnitude_native);
-        // Matrix operations
-        self.define_native("matrix_multiply", pulse_stdlib::linalg::matrix_multiply_native);
-        self.define_native("matrix_transpose", pulse_stdlib::linalg::matrix_transpose_native);
-        self.define_native("matrix_inverse", pulse_stdlib::linalg::matrix_inverse_native);
-        self.define_native("matrix_determinant", pulse_stdlib::linalg::matrix_determinant_native);
-        // Matrix decomposition
-        self.define_native("matrix_lu", pulse_stdlib::linalg::matrix_lu_native);
-        self.define_native("matrix_qr", pulse_stdlib::linalg::matrix_qr_native);
-        self.define_native("matrix_svd", pulse_stdlib::linalg::matrix_svd_native);
-        // Linear system solver
-        self.define_native("solve_linear", pulse_stdlib::linalg::solve_linear_native);
-        // Matrix creation
-        self.define_native("matrix_identity", pulse_stdlib::linalg::matrix_identity_native);
-        self.define_native("matrix_zeros", pulse_stdlib::linalg::matrix_zeros_native);
-        self.define_native("matrix_ones", pulse_stdlib::linalg::matrix_ones_native);
-
-        // ====================================================================
-        // NUMPY-STYLE ARRAY LIBRARY
-        // ====================================================================
-        // Array creation
-        self.define_native("np_array", pulse_stdlib::numpy::array_create_native);
-        self.define_native("np_zeros", pulse_stdlib::numpy::array_zeros_native);
-        self.define_native("np_ones", pulse_stdlib::numpy::array_ones_native);
-        self.define_native("np_eye", pulse_stdlib::numpy::array_eye_native);
-        self.define_native("np_linspace", pulse_stdlib::numpy::array_linspace_native);
-        self.define_native("np_arange", pulse_stdlib::numpy::array_arange_native);
-        // Array operations
-        self.define_native("np_shape", pulse_stdlib::numpy::array_shape_native);
-        self.define_native("np_reshape", pulse_stdlib::numpy::array_reshape_native);
-        self.define_native("np_get", pulse_stdlib::numpy::array_get_native);
-        self.define_native("np_set", pulse_stdlib::numpy::array_set_native);
-        self.define_native("np_slice", pulse_stdlib::numpy::array_slice_native);
-        // Matrix operations
-        self.define_native("np_matmul", pulse_stdlib::numpy::matmul_native);
-        self.define_native("np_dot", pulse_stdlib::numpy::dot_native);
-        self.define_native("np_transpose", pulse_stdlib::numpy::transpose_native);
-        self.define_native("np_inverse", pulse_stdlib::numpy::inverse_native);
-        self.define_native("np_determinant", pulse_stdlib::numpy::determinant_native);
-        // Element-wise operations
-        self.define_native("np_add", pulse_stdlib::numpy::add_native);
-        self.define_native("np_sub", pulse_stdlib::numpy::sub_native);
-        self.define_native("np_mul", pulse_stdlib::numpy::mul_native);
-        self.define_native("np_div", pulse_stdlib::numpy::div_native);
-        self.define_native("np_sqrt", pulse_stdlib::numpy::sqrt_native);
-        self.define_native("np_abs", pulse_stdlib::numpy::abs_native);
-        self.define_native("np_pow", pulse_stdlib::numpy::pow_native);
-        self.define_native("np_sin", pulse_stdlib::numpy::sin_native);
-        self.define_native("np_cos", pulse_stdlib::numpy::cos_native);
-        self.define_native("np_tan", pulse_stdlib::numpy::tan_native);
-        self.define_native("np_exp", pulse_stdlib::numpy::exp_native);
-        self.define_native("np_log", pulse_stdlib::numpy::numpy_log_native);
-        self.define_native("np_log10", pulse_stdlib::numpy::log10_native);
-        self.define_native("np_floor", pulse_stdlib::numpy::floor_native);
-        self.define_native("np_ceil", pulse_stdlib::numpy::ceil_native);
-        self.define_native("np_round", pulse_stdlib::numpy::round_native);
-        self.define_native("np_negate", pulse_stdlib::numpy::negate_native);
-        // Aggregations
-        self.define_native("np_sum", pulse_stdlib::numpy::sum_native);
-        self.define_native("np_mean", pulse_stdlib::numpy::mean_native);
-        self.define_native("np_std", pulse_stdlib::numpy::std_native);
-        self.define_native("np_var", pulse_stdlib::numpy::var_native);
-        self.define_native("np_min", pulse_stdlib::numpy::min_native);
-        self.define_native("np_max", pulse_stdlib::numpy::max_native);
-        self.define_native("np_argmin", pulse_stdlib::numpy::argmin_native);
-        self.define_native("np_argmax", pulse_stdlib::numpy::argmax_native);
-        // Constants
-        self.define_native("np_pi", pulse_stdlib::numpy::pi_native);
-        self.define_native("np_e", pulse_stdlib::numpy::e_native);
-
-        // ====================================================================
-        // PANDAS DATAFRAME LIBRARY
-        // ====================================================================
-        // DataFrame creation
-        self.define_native("df_create", pulse_stdlib::pandas::df_create_native);
-        self.define_native("df_from_list", pulse_stdlib::pandas::df_from_list_native);
-        self.define_native("df_from_csv", pulse_stdlib::pandas::df_from_csv_native);
-        self.define_native("df_from_json", pulse_stdlib::pandas::df_from_json_native);
-        // DataFrame operations
-        self.define_native("df_columns", pulse_stdlib::pandas::df_columns_native);
-        self.define_native("df_shape", pulse_stdlib::pandas::df_shape_native);
-        self.define_native("df_head", pulse_stdlib::pandas::df_head_native);
-        self.define_native("df_tail", pulse_stdlib::pandas::df_tail_native);
-        self.define_native("df_select", pulse_stdlib::pandas::df_select_native);
-        self.define_native("df_filter", pulse_stdlib::pandas::df_filter_native);
-        self.define_native("df_sort", pulse_stdlib::pandas::df_sort_native);
-        // Data operations
-        self.define_native("df_group_by", pulse_stdlib::pandas::df_group_by_native);
-        self.define_native("df_aggregate", pulse_stdlib::pandas::df_aggregate_native);
-        self.define_native("df_join", pulse_stdlib::pandas::df_join_native);
-        self.define_native("df_concat", pulse_stdlib::pandas::df_concat_native);
-        // Column operations
-        self.define_native("df_add_column", pulse_stdlib::pandas::df_add_column_native);
-        self.define_native("df_drop_column", pulse_stdlib::pandas::df_drop_column_native);
-        self.define_native("df_rename", pulse_stdlib::pandas::df_rename_native);
-        // Statistics
-        self.define_native("df_describe", pulse_stdlib::pandas::df_describe_native);
-        self.define_native("df_corr", pulse_stdlib::pandas::df_corr_native);
-
-        // ====================================================================
-        // PLOTTING LIBRARY (ASCII)
-        // ====================================================================
-        self.define_native("bar_chart", pulse_stdlib::plotting::bar_chart_native);
-        self.define_native("line_chart", pulse_stdlib::plotting::line_chart_native);
-        self.define_native("histogram", pulse_stdlib::plotting::histogram_native);
-        self.define_native("box_plot", pulse_stdlib::plotting::box_plot_native);
-        self.define_native("scatter_plot", pulse_stdlib::plotting::scatter_plot_native);
-        self.define_native("hbar_chart", pulse_stdlib::plotting::hbar_chart_native);
 
         // ====================================================================
         // FILESYSTEM LIBRARY (async)
@@ -398,83 +481,38 @@ impl VM {
         self.define_native_async("set_current_dir", pulse_stdlib::fs::set_current_dir_native);
 
         // ====================================================================
-        // PROCESS MANAGEMENT LIBRARY
-        // ====================================================================
-        self.define_native("spawn_process", pulse_stdlib::process::spawn_process_native);
-        self.define_native("wait_process", pulse_stdlib::process::wait_process_native);
-        self.define_native("kill_process", pulse_stdlib::process::kill_process_native);
-        self.define_native("exit_code", pulse_stdlib::process::exit_code_native);
-        self.define_native("process_running", pulse_stdlib::process::process_running_native);
-        self.define_native_async("shell", pulse_stdlib::process::shell_native);
-        self.define_native("system_info", pulse_stdlib::process::system_info_native);
-        self.define_native("get_env", pulse_stdlib::process::get_env_native);
-        self.define_native("set_env", pulse_stdlib::process::set_env_native);
-        self.define_native("get_args", pulse_stdlib::process::get_args_native);
-        self.define_native("get_pid", pulse_stdlib::process::get_pid_native);
-
-        // ====================================================================
         // TIME LIBRARY
         // ====================================================================
-        self.define_native("current_timestamp", pulse_stdlib::time::current_timestamp_native);
-        self.define_native("current_timestamp_millis", pulse_stdlib::time::current_timestamp_millis_native);
-        self.define_native("current_timestamp_micros", pulse_stdlib::time::current_timestamp_micros_native);
+        self.define_native(
+            "current_timestamp",
+            pulse_stdlib::time::current_timestamp_native,
+        );
+        self.define_native(
+            "current_timestamp_millis",
+            pulse_stdlib::time::current_timestamp_millis_native,
+        );
+        self.define_native(
+            "current_timestamp_micros",
+            pulse_stdlib::time::current_timestamp_micros_native,
+        );
         self.define_native_async("sleep_seconds", pulse_stdlib::time::sleep_seconds_native);
         self.define_native("now", pulse_stdlib::time::now_native);
         self.define_native("format_time", pulse_stdlib::time::format_time_native);
         self.define_native("parse_time", pulse_stdlib::time::parse_time_native);
-        self.define_native("duration_create", pulse_stdlib::time::duration_create_native);
+        self.define_native(
+            "duration_create",
+            pulse_stdlib::time::duration_create_native,
+        );
         self.define_native("duration_add", pulse_stdlib::time::duration_add_native);
         self.define_native_async("measure_time", pulse_stdlib::time::measure_time_native);
-        self.define_native("unix_to_datetime", pulse_stdlib::time::unix_to_datetime_native);
-        self.define_native("datetime_to_unix", pulse_stdlib::time::datetime_to_unix_native);
-
-        // ====================================================================
-        // DATABASE LIBRARY (SQLite)
-        // ====================================================================
-        self.define_native("db_open", pulse_stdlib::database::db_open_native);
-        self.define_native("db_open_memory", pulse_stdlib::database::db_open_memory_native);
-        self.define_native("db_execute", pulse_stdlib::database::db_execute_native);
-        self.define_native("db_query", pulse_stdlib::database::db_query_native);
-        self.define_native("db_close", pulse_stdlib::database::db_close_native);
-        self.define_native("db_begin", pulse_stdlib::database::db_begin_native);
-        self.define_native("db_commit", pulse_stdlib::database::db_commit_native);
-        self.define_native("db_rollback", pulse_stdlib::database::db_rollback_native);
-        self.define_native("db_tables", pulse_stdlib::database::db_tables_native);
-
-        // ====================================================================
-        // UUID LIBRARY
-        // ====================================================================
-        self.define_native("uuid_generate", pulse_stdlib::uuid::uuid_generate_native);
-        self.define_native("uuid_v4", pulse_stdlib::uuid::uuid_v4_native);
-        self.define_native("uuid_parse", pulse_stdlib::uuid::uuid_parse_native);
-        self.define_native("uuid_to_string", pulse_stdlib::uuid::uuid_to_string_native);
-        self.define_native("uuid_is_valid", pulse_stdlib::uuid::uuid_is_valid_native);
-        self.define_native("uuid_nil", pulse_stdlib::uuid::uuid_nil_native);
-        self.define_native("uuid_namespace_dns", pulse_stdlib::uuid::uuid_namespace_ns_dns_native);
-        self.define_native("uuid_namespace_url", pulse_stdlib::uuid::uuid_namespace_ns_url_native);
-        self.define_native("uuid_namespace_oid", pulse_stdlib::uuid::uuid_namespace_ns_oid_native);
-        self.define_native("uuid_namespace_x500", pulse_stdlib::uuid::uuid_namespace_x500_native);
-        self.define_native("uuid_from_bytes", pulse_stdlib::uuid::uuid_from_bytes_native);
-
-        // ====================================================================
-        // LOGGING LIBRARY
-        // ====================================================================
-        self.define_native("set_log_level", pulse_stdlib::logging::set_log_level_native);
-        self.define_native("get_log_level", pulse_stdlib::logging::get_log_level_native);
-        self.define_native("log_debug", pulse_stdlib::logging::debug_native);
-        self.define_native("log_info", pulse_stdlib::logging::info_native);
-        self.define_native("log_warn", pulse_stdlib::logging::warn_native);
-        self.define_native("log_error", pulse_stdlib::logging::error_native);
-        self.define_native("log", pulse_stdlib::logging::log_native);
-        self.define_native("set_log_format", pulse_stdlib::logging::set_log_format_native);
-        self.define_native("enable_logging", pulse_stdlib::logging::enable_logging_native);
-        self.define_native("disable_logging", pulse_stdlib::logging::disable_logging_native);
-        self.define_native("logging_enabled", pulse_stdlib::logging::logging_enabled_native);
-        self.define_native("log_fatal", pulse_stdlib::logging::log_fatal_native);
-        self.define_native("log_debug_if", pulse_stdlib::logging::log_debug_if_native);
-        self.define_native("log_info_if", pulse_stdlib::logging::log_info_if_native);
-        self.define_native("log_trace", pulse_stdlib::logging::trace_native);
-        self.define_native("log_with_context", pulse_stdlib::logging::log_with_context_native);
+        self.define_native(
+            "unix_to_datetime",
+            pulse_stdlib::time::unix_to_datetime_native,
+        );
+        self.define_native(
+            "datetime_to_unix",
+            pulse_stdlib::time::datetime_to_unix_native,
+        );
 
         // ====================================================================
         // HTTP CLIENT LIBRARY (additional methods)
@@ -512,48 +550,116 @@ impl VM {
         self.define_native("list_flatten", pulse_stdlib::utils::list_flatten_native);
 
         // String operations
-        self.define_native("index_of_string", pulse_stdlib::string_utils::index_of_string_native);
+        self.define_native(
+            "index_of_string",
+            pulse_stdlib::string_utils::index_of_string_native,
+        );
         self.define_native("char_at", pulse_stdlib::string_utils::char_at_native);
-        self.define_native("repeat_string", pulse_stdlib::string_utils::repeat_string_native);
+        self.define_native(
+            "repeat_string",
+            pulse_stdlib::string_utils::repeat_string_native,
+        );
         self.define_native("pad_start", pulse_stdlib::string_utils::pad_start_native);
         self.define_native("pad_end", pulse_stdlib::string_utils::pad_end_native);
+
+        // ====================================================================
+        // PHASE 1.3: TYPE PREDICATE FUNCTIONS
+        // ====================================================================
+        self.define_native("is_int", pulse_stdlib::utils::is_int_native);
+        self.define_native("is_float", pulse_stdlib::utils::is_float_native);
+        self.define_native("is_string", pulse_stdlib::utils::is_string_native);
+        self.define_native("is_bool", pulse_stdlib::utils::is_bool_native);
+        self.define_native("is_list", pulse_stdlib::utils::is_list_native);
+        self.define_native("is_map", pulse_stdlib::utils::is_map_native);
+        self.define_native("is_nil", pulse_stdlib::utils::is_nil_native);
+
+        // ====================================================================
+        // PHASE 1.3: MAP FUNCTIONS
+        // ====================================================================
+        self.define_native("map_keys", pulse_stdlib::utils::map_keys_native);
+        self.define_native("map_values", pulse_stdlib::utils::map_values_native);
+        self.define_native("map_entries", pulse_stdlib::utils::map_entries_native);
+        self.define_native("map_has_key", pulse_stdlib::utils::map_has_key_native);
+        self.define_native("map_delete", pulse_stdlib::utils::map_delete_native);
+        self.define_native("map_merge", pulse_stdlib::utils::map_merge_native);
+
+        // ====================================================================
+        // PHASE 1.3: COLLECTION UTILITY FUNCTIONS
+        // ====================================================================
+        self.define_native("enumerate_list", pulse_stdlib::utils::enumerate_list_native);
+        self.define_native("zip_lists", pulse_stdlib::utils::zip_lists_native);
+        self.define_native("unique_list", pulse_stdlib::utils::unique_list_native);
+        self.define_native("count_list", pulse_stdlib::utils::count_list_native);
+
+        // ====================================================================
+        // PHASE 1.3: CONVERSION FUNCTIONS
+        // ====================================================================
+        self.define_native("parse_int", pulse_stdlib::utils::parse_int_native);
+        self.define_native("parse_float", pulse_stdlib::utils::parse_float_native);
+
+        // ====================================================================
+        // PHASE 1.3: MATH FUNCTIONS
+        // ====================================================================
+        self.define_native("log2", pulse_stdlib::utils::log2_native);
+        self.define_native("min", pulse_stdlib::utils::min_native);
+        self.define_native("max", pulse_stdlib::utils::max_native);
+
+        // ====================================================================
+        // PHASE 1.3: STRING FUNCTIONS
+        // ====================================================================
+        self.define_native("char_code", pulse_stdlib::utils::char_code_native);
+        self.define_native("from_char_code", pulse_stdlib::utils::from_char_code_native);
+
+        // ====================================================================
+        // PHASE 1.3: HEAP / PRIORITY QUEUE
+        // ====================================================================
+        self.define_native("create_heap", pulse_stdlib::utils::create_heap_native);
+        self.define_native("heap_push", pulse_stdlib::utils::heap_push_native);
+        self.define_native("heap_pop", pulse_stdlib::utils::heap_pop_native);
+        self.define_native("heap_peek", pulse_stdlib::utils::heap_peek_native);
+        self.define_native("heap_size", pulse_stdlib::utils::heap_size_native);
     }
 
-    pub fn new_spawn(chunk: Arc<Chunk>, pid: ActorId, start_ip: usize, shared_heap: Option<Arc<SharedHeap>>) -> Self {
+    pub fn new_spawn(
+        closure_const: Constant,
+        captured_upvalues: Vec<Constant>,
+        pid: ActorId,
+        shared_heap: Option<Arc<SharedHeap>>,
+        inherited_globals: std::collections::HashMap<String, Constant>,
+        arguments: Vec<Constant>,
+    ) -> Self {
         let mut heap = Heap::new();
-        
-        let script_func = Function {
-            arity: 0,
-            chunk: chunk.clone(),
-            name: "spawned".to_string(), 
-            upvalue_count: 0,
-            module_path: None,
+
+        let (function, _) = match closure_const {
+            Constant::Closure(f, uv) => (*f, uv),
+            _ => panic!("Expected Closure constant for new_spawn"),
         };
-        let _ = heap.alloc(Object::Function(script_func.clone())); 
-        
-        let closure = Closure {
-            function: script_func,
-            upvalues: Vec::new(),
+
+        // Create a new closure WITHOUT the old upvalue handles - they point to the wrong heap
+        // The captured_upvalues will be properly added as new upvalues below
+        let closure_without_upvalues = Closure {
+            function,
+            upvalues: Vec::new(), // Start with empty upvalues
         };
-        let closure_handle = heap.alloc(Object::Closure(closure));
-        
-        let frame = CallFrame {
+
+        let mut new_upvalues = Vec::new();
+        // Upvalues will be processed after VM struct is built, for constant_to_value access
+
+        let closure_handle = heap.alloc(Object::Closure(closure_without_upvalues));
+
+        let frames = vec![CallFrame {
             closure: closure_handle,
-            ip: start_ip,
+            ip: 0,
             stack_start: 0,
             is_module: false,
             module_path: None,
             prev_globals: None,
-        };
-        
-        // Define natives... (duplicate logic? Move to helper?)
-        let mut stack = Vec::new();
-        stack.reserve(2048); // Reserve space for performance
-        
+        }];
+
         let mut vm = Self {
             pid,
-            stack,
-            frames: vec![frame],
+            stack: Vec::with_capacity(2048),
+            frames,
             globals: HashMap::new(),
             builtins: HashMap::new(),
             global_cache: HashMap::new(),
@@ -563,22 +669,49 @@ impl VM {
             loaded_modules: HashMap::new(),
             exception_frames: Vec::new(),
             debug_ctx: None,
+            // Spawned actors start with NO capabilities - must be granted explicitly
+            security_context: SecurityContext::new(),
+            resource_tracker: ResourceTracker::new(ResourceLimits::default()),
         };
-        
-        // Inherit global functions from the chunk
-        let chunk_for_globals = chunk.clone();
-        for constant in &chunk_for_globals.constants {
-            if let Constant::Function(f) = constant {
-                let closure = Closure {
-                    function: *f.clone(),
-                    upvalues: Vec::new(),
-                };
-                let handle = vm.heap.alloc(Object::Closure(closure));
-                vm.globals.insert(f.name.clone(), Value::Obj(handle));
-            }
+
+        for val_const in captured_upvalues {
+            let val = vm.constant_to_value(&val_const);
+            let uv = Object::Upvalue(pulse_core::object::Upvalue {
+                location: None,
+                closed: Some(val),
+            });
+            new_upvalues.push(vm.heap.alloc_object(uv));
+        }
+
+        if let Some(Object::Closure(c)) = vm.heap.get_mut(closure_handle) {
+            c.upvalues = new_upvalues;
+        }
+
+        for (k, c) in inherited_globals {
+            let v = vm.constant_to_value(&c);
+            vm.globals.insert(k, v);
         }
 
         vm.push(Value::Obj(closure_handle));
+
+        if !arguments.is_empty() {
+            // First argument is the closure, which we've ALREADY pushed as closure_handle.
+            // We just need to push the REST of the arguments.
+            for arg in arguments.iter().skip(1) {
+                let v = vm.constant_to_value(arg);
+                vm.push(v);
+            }
+
+            // The function expects to find the closure at stack_start + 0, args at + 1, + 2, etc.
+            // We pushed closure_handle at stack[0], and the remaining arguments after it.
+            // So `stack_start` should be 0. We don't need a second CallFrame!
+            // Wait, let's just make the existing frame correct instead of pushing a second one.
+            // We already initialized `frames[0]` with `stack_start = 0`.
+            // So we don't need to push a new frame.
+
+            // Just update `ip` or leave it. Frame 0 is correctly aimed at `closure_handle` with stack_start 0!
+        }
+
         vm.register_all_natives();
         vm
     }
@@ -598,7 +731,7 @@ impl VM {
             upvalues: Vec::new(),
         };
         let closure_handle = self.heap.alloc(Object::Closure(closure));
-        
+
         let frame = CallFrame {
             closure: closure_handle,
             ip: 0,
@@ -607,49 +740,141 @@ impl VM {
             module_path: None,
             prev_globals: None,
         };
-        
+
         self.push(Value::Obj(closure_handle));
         self.frames.push(frame);
-        
+
         self.run(usize::MAX).await
     }
 
-
-
     pub fn get_current_chunk(&self) -> PulseResult<Arc<Chunk>> {
-         let frame = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?;
-         let closure = self.heap.get(frame.closure).ok_or(PulseError::InternalError("Closure not found".into()))?;
-         match closure {
-             Object::Closure(c) => Ok(c.function.chunk.clone()),
-             _ => Err(PulseError::InternalError("Frame closure invalid".into())),
-         }
+        let frame = self
+            .frames
+            .last()
+            .ok_or(PulseError::InternalError("No frame".into()))?;
+        let closure = self
+            .heap
+            .get(frame.closure)
+            .ok_or(PulseError::InternalError("Closure not found".into()))?;
+        match closure {
+            Object::Closure(c) => Ok(c.function.chunk.clone()),
+            _ => Err(PulseError::InternalError("Frame closure invalid".into())),
+        }
     }
     pub fn get_current_chunk_const(&self, idx: usize) -> PulseResult<Constant> {
         let chunk = self.get_current_chunk()?;
         if idx >= chunk.constants.len() {
-             return Err(PulseError::InternalError(format!("Constant index out of bounds: {} >= {}. Last op might have had bad operand.", idx, chunk.constants.len())));
+            return Err(PulseError::InternalError(format!(
+                "Constant index out of bounds: {} >= {}. Last op might have had bad operand.",
+                idx,
+                chunk.constants.len()
+            )));
         }
         Ok(chunk.constants[idx].clone())
     }
 
-
-
     pub fn define_native(&mut self, name: &str, func: pulse_core::value::SyncNativeFn) {
-        let native = NativeFn { 
-            name: name.to_string(), 
-            func: pulse_core::value::NativeFunctionKind::Sync(func) 
+        let native = NativeFn {
+            name: name.to_string(),
+            func: pulse_core::value::NativeFunctionKind::Sync(func),
         };
         let handle = self.heap.alloc(Object::NativeFn(native));
         self.builtins.insert(name.to_string(), Value::Obj(handle));
     }
 
     pub fn define_native_async(&mut self, name: &str, func: pulse_core::value::AsyncNativeFn) {
-        let native = NativeFn { 
-            name: name.to_string(), 
-            func: pulse_core::value::NativeFunctionKind::Async(func) 
+        let native = NativeFn {
+            name: name.to_string(),
+            func: pulse_core::value::NativeFunctionKind::Async(func),
         };
         let handle = self.heap.alloc(Object::NativeFn(native));
         self.builtins.insert(name.to_string(), Value::Obj(handle));
+    }
+
+    // ====================================================================
+    // CAPABILITY-BASED SECURITY API
+    // ====================================================================
+
+    /// Grant a single capability to this VM
+    pub fn with_capability(&mut self, cap: Capability) -> &mut Self {
+        self.security_context.grant(cap);
+        self
+    }
+
+    /// Grant multiple capabilities to this VM
+    pub fn with_capabilities(&mut self, caps: Vec<Capability>) -> &mut Self {
+        for cap in caps {
+            self.security_context.grant(cap);
+        }
+        self
+    }
+
+    /// Revoke a capability from this VM
+    pub fn revoke_capability(&mut self, cap: Capability) -> &mut Self {
+        self.security_context.revoke(cap);
+        self
+    }
+
+    /// Check if this VM has a specific capability
+    pub fn has_capability(&self, cap: Capability) -> bool {
+        self.security_context.has_capability(cap)
+    }
+
+    /// Check capability and return error if denied
+    pub fn check_capability(&self, cap: Capability) -> PulseResult<()> {
+        self.security_context.check_capability(cap)
+    }
+
+    // ====================================================================
+    // RESOURCE LIMITS API
+    // ====================================================================
+
+    /// Set resource limits for this VM
+    pub fn with_resource_limits(&mut self, limits: ResourceLimits) -> &mut Self {
+        self.resource_tracker = ResourceTracker::new(limits);
+        self
+    }
+
+    /// Check memory limit against current heap size
+    pub fn check_memory_limit(&self) -> PulseResult<()> {
+        let heap_size = self.heap.size();
+        self.resource_tracker.check_memory(heap_size)
+    }
+
+    /// Check CPU time limit
+    pub fn check_cpu_time_limit(&self) -> PulseResult<()> {
+        self.resource_tracker.check_cpu_time()
+    }
+
+    /// Check file descriptor limit
+    pub fn check_file_descriptor_limit(&self) -> PulseResult<()> {
+        self.resource_tracker.check_file_descriptor()
+    }
+
+    fn extract_closure_upvalues(&self, closure_val: &Value) -> Result<Vec<Constant>, PulseError> {
+        if let Value::Obj(h) = closure_val {
+            if let Some(Object::Closure(c)) = self.heap.get(*h) {
+                return self.extract_closure_upvalues_from_obj(c);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    fn extract_closure_upvalues_from_obj(&self, c: &Closure) -> Result<Vec<Constant>, PulseError> {
+        let mut captured = Vec::new();
+        for &uv_h in &c.upvalues {
+            if let Some(Object::Upvalue(uv)) = self.heap.get(uv_h) {
+                let val = if let Some(loc) = uv.location {
+                    self.stack[loc]
+                } else {
+                    uv.closed.expect("Closed upvalue must have a value")
+                };
+                captured.push(self.value_to_constant(&val, 0)?);
+            } else {
+                captured.push(Constant::Unit);
+            }
+        }
+        Ok(captured)
     }
 
     pub async fn run(&mut self, mut steps: usize) -> VMStatus {
@@ -657,18 +882,29 @@ impl VM {
             // Check bounds? read_byte will panic if out of bounds, or result in error?
             // Better to check.
             let (current_ip, current_line, frame_depth) = {
-
-                 let frame = if let Some(f) = self.frames.last() { f } else { return VMStatus::Error(PulseError::InternalError("No frame".into())); };
-                 let closure = if let Some(c) = self.heap.get(frame.closure) { c } else { return VMStatus::Error(PulseError::InternalError("Closure not found".into())); };
-                 let chunk = match closure {
-                     Object::Closure(c) => &c.function.chunk,
-                     _ => return VMStatus::Error(PulseError::InternalError("Frame closure invalid".into())),
-                 };
-                 if frame.ip >= chunk.code.len() {
-                     return VMStatus::Halted; // Or Return from script?
-                 }
-                 let line = chunk.lines.get(frame.ip).copied().unwrap_or(0);
-                 (frame.ip, line, self.frames.len())
+                let frame = if let Some(f) = self.frames.last() {
+                    f
+                } else {
+                    return VMStatus::Error(PulseError::InternalError("No frame".into()));
+                };
+                let closure = if let Some(c) = self.heap.get(frame.closure) {
+                    c
+                } else {
+                    return VMStatus::Error(PulseError::InternalError("Closure not found".into()));
+                };
+                let chunk = match closure {
+                    Object::Closure(c) => &c.function.chunk,
+                    _ => {
+                        return VMStatus::Error(PulseError::InternalError(
+                            "Frame closure invalid".into(),
+                        ))
+                    }
+                };
+                if frame.ip >= chunk.code.len() {
+                    return VMStatus::Halted; // Or Return from script?
+                }
+                let line = chunk.lines.get(frame.ip).copied().unwrap_or(0);
+                (frame.ip, line, self.frames.len())
             };
 
             // Debug: check breakpoints and step mode
@@ -684,10 +920,9 @@ impl VM {
             let op_code = self.read_byte();
             let op = Op::from(op_code);
             // println!("Op: {:?}", op); // Tracing disabled for performance
-            
 
             // println!("Op: {:?}", op); // Tracing disabled for performance
-            
+
             match self.execute_op(op).await {
                 Ok(status) => {
                     if status != VMStatus::Running {
@@ -697,13 +932,152 @@ impl VM {
                 Err(e) => return VMStatus::Error(e),
             }
         }
-        VMStatus::Running 
+        VMStatus::Running
     }
 
+    /// Recursively deep-copies a Value from the actor's heap into a detached Constant
+    pub fn value_to_constant(&self, val: &Value, depth: usize) -> PulseResult<Constant> {
+        if depth > 100 {
+            return Err(PulseError::RuntimeError(
+                "Message serialization too deep or cyclical".into(),
+            ));
+        }
+        match val {
+            Value::Bool(b) => Ok(Constant::Bool(*b)),
+            Value::Int(i) => Ok(Constant::Int(*i)),
+            Value::Float(f) => Ok(Constant::Float(*f)),
+            Value::Unit => Ok(Constant::Unit),
+            Value::Pid(pid) => Ok(Constant::Pid(*pid)),
+            Value::Obj(handle) => {
+                if let Some(obj) = self.heap.get(*handle) {
+                    match obj {
+                        Object::String(s) => Ok(Constant::String(s.clone())),
+                        Object::List(l) => {
+                            let mut const_list = Vec::with_capacity(l.len());
+                            for item in l {
+                                const_list.push(self.value_to_constant(item, depth + 1)?);
+                            }
+                            Ok(Constant::List(const_list))
+                        }
+                        Object::Map(m) => {
+                            let mut const_map = std::collections::HashMap::with_capacity(m.len());
+                            for (k, v) in m {
+                                const_map.insert(k.clone(), self.value_to_constant(v, depth + 1)?);
+                            }
+                            Ok(Constant::Map(const_map))
+                        }
+                        Object::Socket(s) => Ok(Constant::Socket(s.clone())),
+                        Object::Listener(l) => Ok(Constant::Listener(l.clone())),
+                        Object::WebSocket(w) => Ok(Constant::WebSocket(w.clone())),
+                        Object::SharedBuffer(sm) => Ok(Constant::SharedMemory(sm.clone())),
+                        Object::Function(f) => Ok(Constant::Function(Box::new(f.clone()))),
+                        Object::Closure(c) => {
+                            let upvals = self.extract_closure_upvalues_from_obj(c)?;
+                            Ok(Constant::Closure(Box::new(c.function.clone()), upvals))
+                        }
+                        Object::NativeFn(n) => Ok(Constant::NativeFn(n.clone())),
+                        Object::Module(m) => {
+                            let mut const_map = std::collections::HashMap::with_capacity(m.len());
+                            for (k, v) in m {
+                                const_map.insert(k.clone(), self.value_to_constant(v, depth + 1)?);
+                            }
+                            Ok(Constant::Module(const_map))
+                        }
+                        _ => Err(PulseError::RuntimeError(
+                            "Cannot send this complex object type yet".into(),
+                        )),
+                    }
+                } else {
+                    Err(PulseError::RuntimeError("Cannot send freed object".into()))
+                }
+            }
+        }
+    }
+
+    /// Recursively deep-copies a detached Constant into a Value allocated on this VM's heap
+    pub fn constant_to_value(&mut self, c: &Constant) -> Value {
+        match c {
+            Constant::Bool(b) => Value::Bool(*b),
+            Constant::Int(i) => Value::Int(*i),
+            Constant::Float(f) => Value::Float(*f),
+            Constant::Unit => Value::Unit,
+            Constant::String(s) => {
+                let h = self.heap.alloc(Object::String(s.clone()));
+                Value::Obj(h)
+            }
+            Constant::Function(f) => {
+                let h = self.heap.alloc(Object::Function(*f.clone()));
+                Value::Obj(h)
+            }
+            Constant::NativeFn(n) => {
+                let h = self.heap.alloc(Object::NativeFn(n.clone()));
+                Value::Obj(h)
+            }
+            Constant::Closure(f, upvals) => {
+                let mut new_upvalues = Vec::with_capacity(upvals.len());
+                for uv_const in upvals {
+                    let val = self.constant_to_value(uv_const);
+                    let uv_obj = Object::Upvalue(pulse_core::object::Upvalue {
+                        location: None,
+                        closed: Some(val),
+                    });
+                    new_upvalues.push(self.heap.alloc_object(uv_obj));
+                }
+                let closure = Closure {
+                    function: *f.clone(),
+                    upvalues: new_upvalues,
+                };
+                let h = self.heap.alloc(Object::Closure(closure));
+                Value::Obj(h)
+            }
+            Constant::Module(m) => {
+                let mut new_map = std::collections::HashMap::with_capacity(m.len());
+                for (k, v) in m {
+                    new_map.insert(k.clone(), self.constant_to_value(v));
+                }
+                let h = self.heap.alloc(Object::Module(new_map));
+                Value::Obj(h)
+            }
+            Constant::SharedMemory(sm) => {
+                let h = self.heap.alloc(Object::SharedBuffer(sm.clone()));
+                Value::Obj(h)
+            }
+            Constant::Socket(s) => {
+                let h = self.heap.alloc(Object::Socket(s.clone()));
+                Value::Obj(h)
+            }
+            Constant::Listener(l) => {
+                let h = self.heap.alloc(Object::Listener(l.clone()));
+                Value::Obj(h)
+            }
+            Constant::WebSocket(w) => {
+                let h = self.heap.alloc(Object::WebSocket(w.clone()));
+                Value::Obj(h)
+            }
+            Constant::List(l) => {
+                let mut new_list = Vec::with_capacity(l.len());
+                for item in l {
+                    new_list.push(self.constant_to_value(item));
+                }
+                let h = self.heap.alloc(Object::List(new_list));
+                Value::Obj(h)
+            }
+            Constant::Map(m) => {
+                let mut new_map = std::collections::HashMap::with_capacity(m.len());
+                for (k, v) in m {
+                    new_map.insert(k.clone(), self.constant_to_value(v));
+                }
+                let h = self.heap.alloc(Object::Map(new_map));
+                Value::Obj(h)
+            }
+            Constant::Pid(pid) => Value::Pid(*pid),
+        }
+    }
 
     async fn execute_op(&mut self, op: Op) -> PulseResult<VMStatus> {
         macro_rules! op_match {
             ($op:expr) => {
+                #[allow(clippy::collapsible_match)]
                 match $op {
                     Op::Halt => return Ok(VMStatus::Halted),
 
@@ -830,6 +1204,7 @@ impl VM {
                                     Object::SharedBuffer(_) => "<shared buffer>".to_string(),
                                     Object::Listener(_) => "<listener>".to_string(),
                                     Object::Regex(_) => "<regex>".to_string(),
+                                    Object::WebSocket(_) => "<websocket>".to_string(),
                                 }
                             }
                         };
@@ -848,7 +1223,10 @@ impl VM {
                         let list_val = self.pop()?;
 
                         let start_index = match index_val {
-                            Value::Int(i) => i as usize,
+                            Value::Int(i) => {
+                                if i < 0 { return Err(PulseError::RuntimeError("Negative slice index".into())); }
+                                i as usize
+                            },
                             _ => return Err(PulseError::TypeMismatch{expected: "int index".into(), got: index_val.type_name()}),
                         };
 
@@ -877,7 +1255,7 @@ impl VM {
                     Op::Eq => {
                         let b = self.pop()?;
                         let a = self.pop()?;
-                        
+
                         let is_equal = match (&a, &b) {
                             (Value::Obj(h1), Value::Obj(h2)) => {
                                 if h1 == h2 {
@@ -894,7 +1272,7 @@ impl VM {
                             },
                             _ => a == b,
                         };
-                        
+
                         self.push(Value::Bool(is_equal));
                         return Ok(VMStatus::Running);
                     }
@@ -902,7 +1280,7 @@ impl VM {
                     Op::Neq => {
                         let b = self.pop()?;
                         let a = self.pop()?;
-                        
+
                         let is_equal = match (&a, &b) {
                             (Value::Obj(h1), Value::Obj(h2)) => {
                                 if h1 == h2 {
@@ -980,25 +1358,8 @@ impl VM {
                             Constant::Int(i) => Value::Int(i),
                             Constant::Float(f) => Value::Float(f),
                             Constant::Unit => Value::Unit,
-                            Constant::String(s) => {
-                                let handle = self.heap.alloc(Object::String(s));
-                                Value::Obj(handle)
-                            },
-                            Constant::Function(func) => {
-                                let handle = self.heap.alloc(Object::Function(*func.clone()));
-                                Value::Obj(handle)
-                            },
-                            Constant::Socket(s) => {
-                                let handle = self.heap.alloc(Object::Socket(s.clone()));
-                                Value::Obj(handle)
-                            },
-                            Constant::SharedMemory(sm) => {
-                                let handle = self.heap.alloc(Object::SharedBuffer(sm.clone()));
-                                Value::Obj(handle)
-                            },
-                            Constant::Listener(l) => {
-                                let handle = self.heap.alloc(Object::Listener(l.clone()));
-                                Value::Obj(handle)
+                            Constant::String(_) | Constant::Function(_) | Constant::Socket(_) | Constant::WebSocket(_) | Constant::SharedMemory(_) | Constant::Listener(_) | Constant::List(_) | Constant::Map(_) | Constant::NativeFn(_) | Constant::Closure(..) | Constant::Module(_) | Constant::Pid(_) => {
+                                self.constant_to_value(&constant)
                             }
                         };
                         self.push(val);
@@ -1074,9 +1435,18 @@ impl VM {
                                   None => return Err(PulseError::RuntimeError("Integer overflow".into())),
                                 }
                             },
-                            (Value::Float(v1), Value::Float(v2)) => self.push(Value::Float(v1 / v2)),
-                            (Value::Int(v1), Value::Float(v2)) => self.push(Value::Float(v1 as f64 / v2)),
-                            (Value::Float(v1), Value::Int(v2)) => self.push(Value::Float(v1 / v2 as f64)),
+                            (Value::Float(v1), Value::Float(v2)) => {
+                                if v2 == 0.0 { return Err(PulseError::RuntimeError("Float division by zero".into())); }
+                                self.push(Value::Float(v1 / v2))
+                            },
+                            (Value::Int(v1), Value::Float(v2)) => {
+                                if v2 == 0.0 { return Err(PulseError::RuntimeError("Float division by zero".into())); }
+                                self.push(Value::Float(v1 as f64 / v2))
+                            },
+                            (Value::Float(v1), Value::Int(v2)) => {
+                                if v2 == 0 { return Err(PulseError::RuntimeError("Division by zero".into())); }
+                                self.push(Value::Float(v1 / v2 as f64))
+                            },
                             (v1, v2) => return Err(PulseError::TypeMismatch{expected: "numbers".into(), got: format!("{:?} / {:?}", v1.type_name(), v2.type_name())}),
                         }
                         return Ok(VMStatus::Running);
@@ -1107,6 +1477,191 @@ impl VM {
                         return Ok(VMStatus::Running);
                     }
 
+                    Op::BitAnd => {
+                        let b = self.pop()?;
+                        let a = self.pop()?;
+                        match (a, b) {
+                            (Value::Int(v1), Value::Int(v2)) => self.push(Value::Int(v1 & v2)),
+                            (v1, v2) => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "int".into(),
+                                    got: format!("{} & {}", v1.type_name(), v2.type_name()),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::BitOr => {
+                        let b = self.pop()?;
+                        let a = self.pop()?;
+                        match (a, b) {
+                            (Value::Int(v1), Value::Int(v2)) => self.push(Value::Int(v1 | v2)),
+                            (v1, v2) => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "int".into(),
+                                    got: format!("{} | {}", v1.type_name(), v2.type_name()),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::BitXor => {
+                        let b = self.pop()?;
+                        let a = self.pop()?;
+                        match (a, b) {
+                            (Value::Int(v1), Value::Int(v2)) => self.push(Value::Int(v1 ^ v2)),
+                            (v1, v2) => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "int".into(),
+                                    got: format!("{} ^ {}", v1.type_name(), v2.type_name()),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::BitNot => {
+                        let a = self.pop()?;
+                        match a {
+                            Value::Int(v) => self.push(Value::Int(!v)),
+                            v => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "int".into(),
+                                    got: v.type_name(),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::Shl => {
+                        let shift = self.pop()?;
+                        let value = self.pop()?;
+                        match (value, shift) {
+                            (Value::Int(v), Value::Int(s)) => {
+                                if !(0..64).contains(&s) {
+                                    return Err(PulseError::RuntimeError(
+                                        "Shift amount must be between 0 and 63".into(),
+                                    ));
+                                }
+                                match v.checked_shl(s as u32) {
+                                    Some(res) => self.push(Value::Int(res)),
+                                    None => {
+                                        return Err(PulseError::RuntimeError(
+                                            "Shift left overflow".into(),
+                                        ))
+                                    }
+                                }
+                            }
+                            (v1, v2) => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "int << int".into(),
+                                    got: format!("{} << {}", v1.type_name(), v2.type_name()),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::Shr => {
+                        let shift = self.pop()?;
+                        let value = self.pop()?;
+                        match (value, shift) {
+                            (Value::Int(v), Value::Int(s)) => {
+                                if !(0..64).contains(&s) {
+                                    return Err(PulseError::RuntimeError(
+                                        "Shift amount must be between 0 and 63".into(),
+                                    ));
+                                }
+                                match v.checked_shr(s as u32) {
+                                    Some(res) => self.push(Value::Int(res)),
+                                    None => {
+                                        return Err(PulseError::RuntimeError(
+                                            "Shift right overflow".into(),
+                                        ))
+                                    }
+                                }
+                            }
+                            (v1, v2) => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "int >> int".into(),
+                                    got: format!("{} >> {}", v1.type_name(), v2.type_name()),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::Pow => {
+                        let exponent = self.pop()?;
+                        let base = self.pop()?;
+                        match (base, exponent) {
+                            (Value::Int(b), Value::Int(e)) => {
+                                if e >= 0 {
+                                    if let Some(result) = b.checked_pow(e as u32) {
+                                        self.push(Value::Int(result));
+                                    } else {
+                                        return Err(PulseError::RuntimeError(
+                                            "Integer overflow in pow".into(),
+                                        ));
+                                    }
+                                } else {
+                                    self.push(Value::Float((b as f64).powf(e as f64)));
+                                }
+                            }
+                            (Value::Float(b), Value::Float(e)) => {
+                                self.push(Value::Float(b.powf(e)));
+                            }
+                            (Value::Int(b), Value::Float(e)) => {
+                                self.push(Value::Float((b as f64).powf(e)));
+                            }
+                            (Value::Float(b), Value::Int(e)) => {
+                                self.push(Value::Float(b.powf(e as f64)));
+                            }
+                            (v1, v2) => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "number ** number".into(),
+                                    got: format!("{} ** {}", v1.type_name(), v2.type_name()),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
+                    Op::Append => {
+                        let value = self.pop()?;
+                        let target = self.pop()?;
+                        match target {
+                            Value::Obj(handle) => {
+                                let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError(
+                                    "Invalid list handle".into(),
+                                ))?;
+
+                                match obj {
+                                    Object::List(list) => {
+                                        list.push(value);
+                                        self.push(Value::Unit);
+                                    }
+                                    _ => {
+                                        return Err(PulseError::TypeMismatch {
+                                            expected: "list".into(),
+                                            got: "other object".into(),
+                                        })
+                                    }
+                                }
+                            }
+                            other => {
+                                return Err(PulseError::TypeMismatch {
+                                    expected: "list".into(),
+                                    got: other.type_name(),
+                                })
+                            }
+                        }
+                        return Ok(VMStatus::Running);
+                    }
+
                     Op::Jump => {
                         let offset = self.read_u16();
                         let frame = self.frames.last_mut().ok_or(PulseError::InternalError("No frame".into()))?;
@@ -1116,7 +1671,7 @@ impl VM {
                           let closure = if let Some(Object::Closure(c)) = self.heap.get(closure_handle) { c } else { return Err(PulseError::InternalError("Frame closure invalid".into())); };
                           closure.function.chunk.code.len()
                         };
-                        
+
                         if new_ip > chunk_len {
                             return Err(PulseError::RuntimeError("Jump out of bounds".into()));
                         }
@@ -1164,12 +1719,12 @@ impl VM {
 
 
                                      self.stack.truncate(args_start - 1);
-                                     
+
                                      let result = match native.func {
                                          pulse_core::value::NativeFunctionKind::Sync(f) => f(self, &args)?,
                                          pulse_core::value::NativeFunctionKind::Async(f) => f(self, &args).await?,
                                      };
-                                     
+
                                      self.push(result);
                                      return Ok(VMStatus::Running);
                                  } else if obj_type == 2 { // Closure
@@ -1198,11 +1753,11 @@ impl VM {
                                      };
                                      let instance_handle = self.heap.alloc(Object::Instance(instance));
                                      let instance_val = Value::Obj(instance_handle);
-                                     
+
                                      // Replace class on stack with instance
                                      let stack_idx = self.stack.len() - arg_count - 1;
                                      self.stack[stack_idx] = instance_val;
-                                     
+
                                      // Check for init method
                                      if let Some(init_val) = class.methods.get("init") {
                                          match init_val {
@@ -1234,12 +1789,12 @@ impl VM {
                                      }
                                      return Ok(VMStatus::Running);
                                  } else if obj_type == 4 { // BoundMethod
-                                     eprintln!("Calling BoundMethod");
+
                                      let bound = if let Some(Object::BoundMethod(b)) = self.heap.get(handle) { b.clone() } else { return Err(PulseError::InternalError("Expected BoundMethod".into())); };
                                      let stack_idx = self.stack.len() - arg_count - 1;
                                      self.stack[stack_idx] = bound.receiver; // Set 'this'
-                                     eprintln!("BoundMethod set 'this', arg_count: {}", arg_count);
-                                     
+
+
                                      // Call the method (function/closure)
                                      // Note: We need to wrap function in closure if it's just a function?
                                      // But object.rs definition has method: Function.
@@ -1248,33 +1803,33 @@ impl VM {
                                      // Or assume it's just Function logic.
                                      // Actually, Classes usually store Closures as methods (captured upvalues?).
                                      // If Class methods are Closures. Then BoundMethod should store Closure!
-                                     
+
                                      // Rethinking BoundMethod in object.rs:
                                      // I defined `pub method: Function`.
                                      // But `Class` stores `Value` in `methods` map.
                                      // If `Value` is `Obj(Closure)`, then `BoundMethod` should probably hold `Closure` or `ObjHandle`.
-                                     
+
                                      // Let's assume for now BoundMethod holds `method: Function`.
                                      // But `Class` methods are `Value`.
                                      // I should update object.rs later if needed. For now assuming I can get Function from it.
-                                     
+
                                      let arity = bound.method.arity;
                                      if arg_count != arity {
                                          return Err(PulseError::RuntimeError(format!("Expected {} args, got {}", arity, arg_count)));
                                      }
-                                     
+
                                      // We need a handle for the closure to put in CallFrame.
                                      // If BoundMethod doesn't have a handle to a Closure, we must create one?
                                      // This is inefficient.
                                      // Ideally BoundMethod stores Handle to Closure.
-                                     
+
                                      // TEMPORARY FIX: Create a closure on the fly.
                                      let closure = Closure {
                                          function: bound.method.clone(),
                                          upvalues: Vec::new(), // Methods usually don't capture upvalues from outside class?
                                      };
                                      let closure_handle = self.heap.alloc(Object::Closure(closure));
-                                     
+
                                      let frame = CallFrame {
                                           closure: closure_handle,
                                           ip: 0,
@@ -1288,7 +1843,7 @@ impl VM {
                                      }
                                      self.frames.push(frame);
                                      return Ok(VMStatus::Running);
-                                     
+
                                  } else {
                                      Err(PulseError::TypeMismatch{expected: "function".into(), got: "other object".into()})
                                  }
@@ -1313,7 +1868,7 @@ impl VM {
 
                             // Restore previous globals
                             // Restore previous globals if they exist.
-                            // If prev_globals is None (e.g. for "include" style imports), 
+                            // If prev_globals is None (e.g. for "include" style imports),
                             // we keep the modified globals (namespace pollution), which is desired.
                             if let Some(prev) = frame.prev_globals {
                                 self.globals = prev;
@@ -1352,6 +1907,9 @@ impl VM {
                                 // Capture from current closure's upvalues
                                 let current_closure_handle = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.closure;
                                 if let Some(Object::Closure(c)) = self.heap.get(current_closure_handle) {
+                                     if (index as usize) >= c.upvalues.len() {
+                                         return Err(PulseError::InternalError(format!("Upvalue index {} out of bounds (len {})", index, c.upvalues.len())));
+                                     }
                                      upvalues.push(c.upvalues[index as usize]);
                                 }
                             }
@@ -1370,14 +1928,17 @@ impl VM {
                         let slot = self.read_byte();
                         let closure_handle = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.closure;
                         let val = if let Some(Object::Closure(c)) = self.heap.get(closure_handle) {
+                            if (slot as usize) >= c.upvalues.len() {
+                                return Err(PulseError::InternalError(format!("Upvalue index {} out of bounds (len {})", slot, c.upvalues.len())));
+                            }
                             let uv_handle = c.upvalues[slot as usize];
                             if let Some(Object::Upvalue(uv)) = self.heap.get(uv_handle) {
                                 if let Some(loc) = uv.location {
                                     self.stack[loc].clone()
                                 } else {
-                                    uv.closed.as_ref().expect("Closed upvalue missing value").clone()
+                                    uv.closed.as_ref().ok_or_else(|| PulseError::InternalError("Closed upvalue missing value".into()))?.clone()
                                 }
-                            } else { return Err(PulseError::RuntimeError("Invalid upvalue".into())); }
+                            } else { return Err(PulseError::RuntimeError(format!("Invalid upvalue: expected Upvalue at index {}, found {:?}", uv_handle.0, self.heap.get(uv_handle)))); }
                         } else { return Err(PulseError::RuntimeError("No closure in frame".into())); };
 
                         self.push(val);
@@ -1389,6 +1950,9 @@ impl VM {
                         let val = self.peek(0).clone();
                         let closure_handle = self.frames.last().ok_or(PulseError::InternalError("No frame".into()))?.closure;
                         if let Some(Object::Closure(c)) = self.heap.get(closure_handle) {
+                            if (slot as usize) >= c.upvalues.len() {
+                                return Err(PulseError::InternalError(format!("Upvalue index {} out of bounds (len {})", slot, c.upvalues.len())));
+                            }
                             let uv_handle = c.upvalues[slot as usize];
                             if let Some(Object::Upvalue(uv)) = self.heap.get_mut(uv_handle) {
                                 if let Some(loc) = uv.location {
@@ -1396,7 +1960,7 @@ impl VM {
                                 } else {
                                     uv.closed = Some(val);
                                 }
-                            } else { return Err(PulseError::RuntimeError("Invalid upvalue".into())); }
+                            } else { return Err(PulseError::RuntimeError(format!("Invalid upvalue: expected Upvalue at index {}, found {:?}", uv_handle.0, self.heap.get(uv_handle)))); }
                         } else { return Err(PulseError::RuntimeError("No closure in frame".into())); };
                         return Ok(VMStatus::Running);
                     }
@@ -1425,9 +1989,10 @@ impl VM {
                         let val = self.peek(0).clone();
                         let frame_start = self.frames.last().map(|f| f.stack_start).unwrap_or(0);
                         let idx = frame_start + slot as usize;
-                        if idx < self.stack.len() {
-                            self.stack[idx] = val;
+                        if idx >= self.stack.len() {
+                            return Err(PulseError::StackUnderflow);
                         }
+                        self.stack[idx] = val;
                         return Ok(VMStatus::Running);
                     }
 
@@ -1501,14 +2066,14 @@ impl VM {
                     Op::PrintMulti => {
                         // Count how many values to print (read from next byte)
                         let count = self.read_byte() as usize;
-                        
+
                         // Collect values in reverse order (since stack is LIFO)
                         let mut values = Vec::with_capacity(count);
                         for _ in 0..count {
                             values.push(self.pop()?);
                         }
                         values.reverse(); // Reverse to get correct order
-                        
+
                         // Print all values separated by spaces
                         for (i, val) in values.iter().enumerate() {
                             if i > 0 {
@@ -1523,7 +2088,10 @@ impl VM {
                     Op::Negate => {
                         let val = self.pop()?;
                         match val {
-                            Value::Int(n) => self.push(Value::Int(-n)),
+                            Value::Int(n) => match n.checked_neg() {
+                                Some(neg) => self.push(Value::Int(neg)),
+                                None => return Err(PulseError::RuntimeError("Integer overflow in negation".into())),
+                            },
                             Value::Float(n) => self.push(Value::Float(-n)),
                             _ => return Err(PulseError::TypeMismatch{expected: "number".into(), got: "other".into()}),
                         }
@@ -1538,7 +2106,7 @@ impl VM {
 
                     Op::Loop => {
                         let offset = self.read_u16();
-                        let frame = self.frames.last_mut().unwrap();
+                        let frame = self.frames.last_mut().ok_or(PulseError::InternalError("No frame for loop".into()))?;
                          match frame.ip.checked_sub(offset as usize) {
                             Some(new_ip) => frame.ip = new_ip,
                             None => return Err(PulseError::RuntimeError("Loop jump underflow".into())),
@@ -1553,42 +2121,16 @@ impl VM {
                     }
 
                     Op::Send => {
-                        let target_val = self.pop()?;
                         let msg = self.pop()?;
+                        let target_val = self.pop()?;
 
                         let target = match target_val {
                             Value::Pid(pid) => pid,
                             _ => return Err(PulseError::TypeMismatch{expected: "pid".into(), got: target_val.type_name()}),
                         };
 
-                        // Convert msg (Value) to Constant (owned) for safe transfer
-                        let msg_const = match msg {
-                            Value::Bool(b) => Constant::Bool(b),
-                            Value::Int(i) => Constant::Int(i),
-                            Value::Float(f) => Constant::Float(f),
-                            Value::Unit => Constant::Unit,
-                            Value::Pid(_) => return Err(PulseError::RuntimeError("Cannot send PIDs yet".into())),
-                            Value::Obj(handle) => {
-                                if let Some(obj) = self.heap.get(handle) {
-                                    match obj {
-                                        Object::String(s) => Constant::String(s.clone()),
-                                        Object::NativeFn(_) => return Err(PulseError::RuntimeError("Cannot send native functions".into())),
-                                        Object::List(_) | Object::Map(_) | Object::Class(_) | Object::Instance(_) | Object::BoundMethod(_) | Object::Set(_) | Object::Queue(_) | Object::SharedMemory(_) => return Err(PulseError::RuntimeError("Cannot send complex objects yet (TODO)".into())),
-                                        Object::Function(_) | Object::Closure(_) => return Err(PulseError::RuntimeError("Cannot send functions yet (TODO)".into())),
-                                        Object::Upvalue(_) => return Err(PulseError::RuntimeError("Cannot send upvalues".into())),
-                                        Object::Module(_) => return Err(PulseError::RuntimeError("Cannot send modules".into())),
-
-                                        Object::Socket(s) => Constant::Socket(s.clone()),
-                                        Object::Listener(l) => Constant::Listener(l.clone()),
-                                        Object::SharedBuffer(sm) => Constant::SharedMemory(sm.clone()),
-                                        Object::AtomicInt(_ai) => return Err(PulseError::RuntimeError("Cannot serialize AtomicInt".into())),
-                                        Object::Regex(_) => return Err(PulseError::RuntimeError("Cannot serialize Regex".into())),
-                                    }
-                                } else {
-                                    return Err(PulseError::RuntimeError("Cannot send freed object".into()));
-                                }
-                            },
-                        };
+                        // Convert msg (Value) to Constant (owned) for safe transfer using deep copy
+                        let msg_const = self.value_to_constant(&msg, 0)?;
 
                         return Ok(VMStatus::Send { target, msg: msg_const });
                     }
@@ -1599,13 +2141,56 @@ impl VM {
                     }
 
                     Op::Spawn => {
-                        let offset = self.read_u16();
-                        return Ok(VMStatus::Spawn(offset as usize));
+                        let closure_val = self.pop()?;
+                        let closure_const = self.value_to_constant(&closure_val, 0)?;
+                        let captured_upvalues = self.extract_closure_upvalues(&closure_val)?;
+
+                        let mut globals = std::collections::HashMap::new();
+                        for (k, v) in &self.globals {
+                            if let Ok(c) = self.value_to_constant(v, 0) {
+                                globals.insert(k.clone(), c);
+                            }
+                        }
+                        return Ok(VMStatus::Spawn(closure_const, captured_upvalues, globals));
+                    }
+
+                    Op::SpawnCall => {
+                        let arity = self.read_byte() as usize;
+                        let mut args = Vec::with_capacity(arity + 1);
+                        for _ in 0..(arity + 1) {
+                            args.push(self.pop()?);
+                        }
+                        args.reverse();
+
+                        let mut arg_consts = Vec::with_capacity(args.len());
+                        for a in &args {
+                            arg_consts.push(self.value_to_constant(a, 0)?);
+                        }
+
+                        let callable_val = &args[0];
+                        let captured_upvalues = self.extract_closure_upvalues(callable_val)?;
+
+                        let mut globals = std::collections::HashMap::new();
+                        for (k, v) in &self.globals {
+                            if let Ok(c) = self.value_to_constant(v, 0) {
+                                globals.insert(k.clone(), c);
+                            }
+                        }
+                        return Ok(VMStatus::SpawnCall(arg_consts, captured_upvalues, globals));
                     }
 
                     Op::SpawnLink => {
-                        let offset = self.read_u16();
-                        return Ok(VMStatus::SpawnLink(offset as usize));
+                        let closure_val = self.pop()?;
+                        let closure_const = self.value_to_constant(&closure_val, 0)?;
+                        let captured_upvalues = self.extract_closure_upvalues(&closure_val)?;
+
+                        let mut globals = std::collections::HashMap::new();
+                        for (k, v) in &self.globals {
+                            if let Ok(c) = self.value_to_constant(v, 0) {
+                                globals.insert(k.clone(), c);
+                            }
+                        }
+                        return Ok(VMStatus::SpawnLink(closure_const, captured_upvalues, globals));
                     }
 
                     Op::Link => {
@@ -1767,7 +2352,7 @@ impl VM {
                                                         return Ok(VMStatus::Running);
                                                     }
                                                 }
-                                            } 
+                                            }
                                             // Method/Field not found
                                             // Method/Field not found
                                             return Err(PulseError::RuntimeError(format!("Method/Field '{}' not found in instance", key)));
@@ -1909,10 +2494,10 @@ impl VM {
                             Constant::String(s) => s.clone(),
                             _ => return Err(PulseError::RuntimeError("Method name must be string".into())),
                         };
-                        
+
                         let superclass_val = self.pop()?;
                         let receiver = self.pop()?;
-                        
+
                         match superclass_val {
                             Value::Obj(handle) => {
                                 if let Some(Object::Class(class)) = self.heap.get(handle) {
@@ -1948,10 +2533,10 @@ impl VM {
                             Constant::String(s) => s.clone(),
                             _ => return Err(PulseError::RuntimeError("Method name must be string".into())),
                         };
-                        
+
                         let closure_val = self.pop()?;
                         let class_val = self.peek(0); // Peek class
-                        
+
                         match class_val {
                             Value::Obj(handle) => {
                                 // We need mutable access to the class
@@ -1971,13 +2556,13 @@ impl VM {
                     Op::CreateSharedMemory => {
                         // Pop the initial value for the shared memory
                         let initial_value = self.pop()?;
-                        
+
                         // Create a shared memory object
                         let shared_mem = pulse_core::object::SharedMemory {
                             value: initial_value,
                             locked: false,
                         };
-                        
+
                         // Use shared heap if available, otherwise fall back to local heap
                         // This enables zero-copy access across actors
                         if let Some(ref shared_heap) = self.shared_heap {
@@ -1995,7 +2580,7 @@ impl VM {
                     Op::ReadSharedMemory => {
                         // Pop the shared memory reference
                         let shared_mem_val = self.pop()?;
-                        
+
                         // Try to read from shared heap first (zero-copy path)
                         if let Value::Obj(handle) = shared_mem_val {
                             if let Some(shared_handle_idx) = handle.to_shared_handle() {
@@ -2008,13 +2593,13 @@ impl VM {
                                 }
                             }
                         }
-                        
+
                         // Fallback: read from local heap (slower path for backward compatibility)
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
                         };
-                        
+
                         // Read the value from shared memory
                         let obj = self.heap.get(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
                         if let pulse_core::object::Object::SharedMemory(shared_mem) = obj {
@@ -2029,7 +2614,7 @@ impl VM {
                         // Pop the value to write and the shared memory reference
                         let value_to_write = self.pop()?;
                         let shared_mem_val = self.pop()?;
-                        
+
                         // Try to write to shared heap first (zero-copy path)
                         if let Value::Obj(handle) = shared_mem_val {
                             if let Some(shared_handle_idx) = handle.to_shared_handle() {
@@ -2042,13 +2627,13 @@ impl VM {
                                 }
                             }
                         }
-                        
+
                         // Fallback: write to local heap
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
                         };
-                        
+
                         // Write the value to shared memory
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
                         if let pulse_core::object::Object::SharedMemory(ref mut shared_mem) = obj {
@@ -2056,7 +2641,7 @@ impl VM {
                         } else {
                             return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
                         }
-                        
+
                         // Push the written value as the result
                         self.push(value_to_write);
                         return Ok(VMStatus::Running);
@@ -2065,7 +2650,7 @@ impl VM {
                     Op::LockSharedMemory => {
                         // Pop the shared memory reference
                         let shared_mem_val = self.pop()?;
-                        
+
                         // Try to lock in shared heap first
                         if let Value::Obj(handle) = shared_mem_val {
                             if let Some(shared_handle_idx) = handle.to_shared_handle() {
@@ -2076,13 +2661,13 @@ impl VM {
                                 }
                             }
                         }
-                        
+
                         // Fallback to local heap
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
                         };
-                        
+
                         // Attempt to lock the shared memory
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
                         if let pulse_core::object::Object::SharedMemory(ref mut shared_mem) = obj {
@@ -2095,14 +2680,14 @@ impl VM {
                         } else {
                             return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
                         }
-                        
+
                         return Ok(VMStatus::Running);
                     }
 
                     Op::UnlockSharedMemory => {
                         // Pop the shared memory reference
                         let shared_mem_val = self.pop()?;
-                        
+
                         // Try to unlock in shared heap first
                         if let Value::Obj(handle) = shared_mem_val {
                             if let Some(shared_handle_idx) = handle.to_shared_handle() {
@@ -2113,13 +2698,13 @@ impl VM {
                                 }
                             }
                         }
-                        
+
                         // Fallback to local heap
                         let handle = match shared_mem_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "shared memory reference".into(), got: shared_mem_val.type_name()}),
                         };
-                        
+
                         // Unlock the shared memory
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid shared memory handle".into()))?;
                         if let pulse_core::object::Object::SharedMemory(ref mut shared_mem) = obj {
@@ -2127,7 +2712,7 @@ impl VM {
                         } else {
                             return Err(PulseError::TypeMismatch{expected: "shared memory".into(), got: "other object".into()});
                         }
-                        
+
                         // Push success indicator
                         self.push(Value::Bool(true));
                         return Ok(VMStatus::Running);
@@ -2141,7 +2726,7 @@ impl VM {
                             Value::Int(i) => i,
                             _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: initial_val.type_name()}),
                         };
-                        
+
                         // Create atomic int
                         let atomic_int = pulse_core::object::AtomicInt::new(initial);
                         let handle = self.heap.alloc(pulse_core::object::Object::AtomicInt(atomic_int));
@@ -2156,7 +2741,7 @@ impl VM {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
                         };
-                        
+
                         let obj = self.heap.get(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
                         if let pulse_core::object::Object::AtomicInt(atomic_int) = obj {
                             let value = atomic_int.load(std::sync::atomic::Ordering::SeqCst);
@@ -2171,17 +2756,17 @@ impl VM {
                         // Pop the value to store and the atomic int reference
                         let value_to_store = self.pop()?;
                         let atomic_val = self.pop()?;
-                        
+
                         let value = match value_to_store {
                             Value::Int(i) => i,
                             _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: value_to_store.type_name()}),
                         };
-                        
+
                         let handle = match atomic_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
                         };
-                        
+
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
                         if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
                             // Store returns (), so we need to load first to get old value
@@ -2198,17 +2783,17 @@ impl VM {
                         // Pop the value to add and the atomic int reference
                         let add_val = self.pop()?;
                         let atomic_val = self.pop()?;
-                        
+
                         let add = match add_val {
                             Value::Int(i) => i,
                             _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: add_val.type_name()}),
                         };
-                        
+
                         let handle = match atomic_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
                         };
-                        
+
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
                         if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
                             let old_value = atomic_int.fetch_add(add, std::sync::atomic::Ordering::SeqCst);
@@ -2223,17 +2808,17 @@ impl VM {
                         // Pop the value to subtract and the atomic int reference
                         let sub_val = self.pop()?;
                         let atomic_val = self.pop()?;
-                        
+
                         let sub = match sub_val {
                             Value::Int(i) => i,
                             _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: sub_val.type_name()}),
                         };
-                        
+
                         let handle = match atomic_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
                         };
-                        
+
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
                         if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
                             let old_value = atomic_int.fetch_sub(sub, std::sync::atomic::Ordering::SeqCst);
@@ -2249,22 +2834,22 @@ impl VM {
                         let new_val = self.pop()?;
                         let expected_val = self.pop()?;
                         let atomic_val = self.pop()?;
-                        
+
                         let new = match new_val {
                             Value::Int(i) => i,
                             _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: new_val.type_name()}),
                         };
-                        
+
                         let expected = match expected_val {
                             Value::Int(i) => i,
                             _ => return Err(PulseError::TypeMismatch{expected: "int".into(), got: expected_val.type_name()}),
                         };
-                        
+
                         let handle = match atomic_val {
                             Value::Obj(h) => h,
                             _ => return Err(PulseError::TypeMismatch{expected: "atomic int".into(), got: atomic_val.type_name()}),
                         };
-                        
+
                         let obj = self.heap.get_mut(handle).ok_or(PulseError::RuntimeError("Invalid atomic handle".into()))?;
                         if let pulse_core::object::Object::AtomicInt(ref atomic_int) = obj {
                             let result = atomic_int.compare_exchange(expected, new, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst);
@@ -2340,13 +2925,15 @@ impl VM {
                 }
             }
         }
-        
+
         // 2. Create new open upvalue
-        let handle = self.heap.alloc(Object::Upvalue(pulse_core::object::Upvalue {
-            location: Some(local_idx),
-            closed: None,
-        }));
-        
+        let handle = self
+            .heap
+            .alloc(Object::Upvalue(pulse_core::object::Upvalue {
+                location: Some(local_idx),
+                closed: None,
+            }));
+
         // 3. Keep it in open_upvalues list
         self.open_upvalues.push(handle);
         handle
@@ -2357,15 +2944,17 @@ impl VM {
         while i < self.open_upvalues.len() {
             let handle = self.open_upvalues[i];
             let should_close = if let Some(Object::Upvalue(uv)) = self.heap.get(handle) {
-                uv.location.map_or(false, |loc| loc >= last_idx)
-            } else { false };
+                uv.location.is_some_and(|loc| loc >= last_idx)
+            } else {
+                false
+            };
 
             if should_close {
                 self.open_upvalues.remove(i);
                 // Move value from stack to upvalue object
                 if let Some(Object::Upvalue(uv)) = self.heap.get_mut(handle) {
                     let loc = uv.location.expect("Upvalue missing location");
-                    let value = self.stack[loc].clone();
+                    let value = self.stack[loc];
                     uv.closed = Some(value);
                     uv.location = None;
                 }
@@ -2382,47 +2971,71 @@ impl VM {
             while self.frames.len() > exception_frame.frame_depth {
                 self.frames.pop();
             }
-            
+
             // Unwind stack
             while self.stack.len() > exception_frame.stack_depth {
                 self.stack.pop();
             }
-            
+
             // Push exception value onto stack for catch block
             self.push(exception_val);
-            
+
             // Jump to handler
             if let Some(frame) = self.frames.last_mut() {
                 frame.ip = exception_frame.handler_ip;
             }
-            
+
             Ok(())
         } else {
             // No handler, propagate error
-            Err(PulseError::RuntimeError(format!("Uncaught exception")))
+            Err(PulseError::RuntimeError("Uncaught exception".to_string()))
         }
     }
 
     pub fn push(&mut self, value: Value) {
+        // Stack overflow protection
+        if self.stack.len() >= MAX_STACK_DEPTH {
+            panic!(
+                "Stack overflow: exceeded maximum stack depth of {}",
+                MAX_STACK_DEPTH
+            );
+        }
         self.stack.push(value);
+    }
+
+    /// Check if GC should be triggered and run it if needed
+    pub fn maybe_collect_garbage(&mut self) {
+        let (bytes_allocated, next_gc) = self.heap.get_allocation_stats();
+        if bytes_allocated > next_gc {
+            self.collect_garbage();
+            // Update GC threshold after collection
+            let (new_bytes, _) = self.heap.get_allocation_stats();
+            let new_threshold = std::cmp::max(GC_HEAP_THRESHOLD, new_bytes * 2);
+            self.heap.set_next_gc(new_threshold);
+        }
     }
 
     pub fn pop(&mut self) -> PulseResult<Value> {
         self.stack.pop().ok_or(PulseError::StackUnderflow)
     }
 
-
     fn peek(&self, distance: usize) -> &Value {
         &self.stack[self.stack.len() - 1 - distance]
     }
     fn get_string(&self, handle: ObjHandle) -> PulseResult<String> {
-        let obj = self.heap.get(handle).ok_or(PulseError::RuntimeError("Invalid handle".into()))?;
+        let obj = self
+            .heap
+            .get(handle)
+            .ok_or(PulseError::RuntimeError("Invalid handle".into()))?;
         match obj {
             Object::String(s) => Ok(s.clone()),
-            _ => Err(PulseError::TypeMismatch{expected: "string".into(), got: "object".into()}),
+            _ => Err(PulseError::TypeMismatch {
+                expected: "string".into(),
+                got: "object".into(),
+            }),
         }
     }
-    
+
     pub fn print_value(&self, val: &Value) {
         match val {
             Value::Obj(handle) => {
@@ -2433,20 +3046,24 @@ impl VM {
                         Object::List(vec) => {
                             print!("[");
                             for (i, val) in vec.iter().enumerate() {
-                                if i > 0 { print!(", "); }
+                                if i > 0 {
+                                    print!(", ");
+                                }
                                 self.print_value(val);
                             }
                             print!("]");
-                        },
+                        }
                         Object::Map(map) => {
                             print!("{{");
                             for (i, (k, v)) in map.iter().enumerate() {
-                                if i > 0 { print!(", "); }
+                                if i > 0 {
+                                    print!(", ");
+                                }
                                 print!("{}: ", k);
                                 self.print_value(v);
                             }
                             print!("}}");
-                        },
+                        }
 
                         Object::Function(f) => print!("<fn {}>", f.name),
                         Object::SharedBuffer(_) => print!("<shared buffer>"),
@@ -2459,15 +3076,18 @@ impl VM {
                         Object::Set(s) => print!("<set len={}>", s.len()),
                         Object::Queue(q) => print!("<queue len={}>", q.len()),
                         Object::SharedMemory(sm) => print!("<shared memory locked={}>", sm.locked),
-                        Object::AtomicInt(ai) => print!("<atomic {}>", ai.load(std::sync::atomic::Ordering::SeqCst)),
+                        Object::AtomicInt(ai) => {
+                            print!("<atomic {}>", ai.load(std::sync::atomic::Ordering::SeqCst))
+                        }
                         Object::Socket(_) => print!("<socket>"),
                         Object::Listener(_) => print!("<listener>"),
                         Object::Regex(_) => print!("<regex>"),
+                        Object::WebSocket(_) => print!("<websocket>"),
                     }
                 } else {
                     print!("<freed object>");
                 }
-            },
+            }
             Value::Int(i) => print!("{}", i),
             Value::Float(f) => print!("{}", f),
             Value::Bool(b) => print!("{}", b),
@@ -2479,10 +3099,10 @@ impl VM {
     pub fn collect_garbage(&mut self) {
         // 1. Mark Roots
         self.mark_roots();
-        
+
         // 2. Trace (Tri-color marking)
         self.heap.trace();
-        
+
         // 3. Sweep
         self.heap.sweep();
     }
@@ -2494,7 +3114,7 @@ impl VM {
                 self.heap.mark_object(*handle);
             }
         }
-        
+
         // Globals
         for val in self.globals.values() {
             if let Value::Obj(handle) = val {
@@ -2508,7 +3128,7 @@ impl VM {
                 self.heap.mark_object(*handle);
             }
         }
-        
+
         // Call Frames (closures being executed)
         for frame in &self.frames {
             self.heap.mark_object(frame.closure);
@@ -2527,11 +3147,11 @@ impl VM {
             let closure = self.heap.get(frame.closure).unwrap();
             if let Object::Closure(c) = closure {
                 if let Some(base) = &c.function.module_path {
-                   let base_path = std::path::Path::new(base);
-                   if let Some(parent) = base_path.parent() {
-                       let resolved = parent.join(path);
-                       return Ok(resolved.to_string_lossy().to_string());
-                   }
+                    let base_path = std::path::Path::new(base);
+                    if let Some(parent) = base_path.parent() {
+                        let resolved = parent.join(path);
+                        return Ok(resolved.to_string_lossy().to_string());
+                    }
                 }
             }
         }
@@ -2616,6 +3236,7 @@ impl VM {
                         Object::Listener(_) => "Listener".to_string(),
                         Object::SharedBuffer(_) => "SharedBuffer".to_string(),
                         Object::Regex(_) => "Regex".to_string(),
+                        Object::WebSocket(_) => "WebSocket".to_string(),
                     }
                 } else {
                     "<invalid handle>".to_string()
@@ -2624,10 +3245,12 @@ impl VM {
         }
     }
 
-
     /// List all breakpoints
     pub fn list_breakpoints(&self) -> Vec<String> {
-        self.debug_ctx.as_ref().map(|c| c.list_breakpoints()).unwrap_or_default()
+        self.debug_ctx
+            .as_ref()
+            .map(|c| c.list_breakpoints())
+            .unwrap_or_default()
     }
 }
 
@@ -2636,12 +3259,12 @@ impl HeapInterface for VM {
         // Trigger GC if needed
         // Simple heuristic: if heap size > threshold
         let handle = self.heap.alloc(obj);
-        
+
         let (bytes_allocated, next_gc) = self.heap.get_allocation_stats();
         if bytes_allocated > next_gc {
             self.collect_garbage();
         }
-        
+
         handle
     }
 
@@ -2659,88 +3282,80 @@ impl HeapInterface for VM {
         // Stack
         // We can't iterate self.stack while mutating self.heap easily if we are not careful.
         // But fields are disjoint.
-        
+
         // Mark stack
         for val in &self.stack {
             if let Value::Obj(h) = val {
-                 self.heap.mark_object(*h);
+                self.heap.mark_object(*h);
             }
         }
-        
+
         // Mark globals
         for val in self.globals.values() {
             if let Value::Obj(h) = val {
-                 self.heap.mark_object(*h);
+                self.heap.mark_object(*h);
             }
         }
-        
+
         // Mark Frames (Closures)
         for frame in &self.frames {
             self.heap.mark_object(frame.closure);
-             if let Some(_path) = &frame.module_path {
-                 // Strings are objects? No, module_path is Option<String>.
-                 // If it was ObjHandle, we'd mark it. String is owned here.
-             }
-             if let Some(globals) = &frame.prev_globals {
+            if let Some(_path) = &frame.module_path {
+                // Strings are objects? No, module_path is Option<String>.
+                // If it was ObjHandle, we'd mark it. String is owned here.
+            }
+            if let Some(globals) = &frame.prev_globals {
                 for val in globals.values() {
                     if let Value::Obj(h) = val {
                         self.heap.mark_object(*h);
                     }
                 }
-             }
+            }
         }
-        
+
         // Mark Open Upvalues
         for handle in &self.open_upvalues {
             self.heap.mark_object(*handle);
         }
-        
+
         // Mark Loaded Modules
         for handle in self.loaded_modules.values() {
             self.heap.mark_object(*handle);
         }
-        
+
         // Mark Global Cache
         for val in self.global_cache.values() {
             if let Value::Obj(h) = val {
-                 self.heap.mark_object(*h);
+                self.heap.mark_object(*h);
             }
         }
-        
-        // Builtins? 
+
+        // Builtins?
         for val in self.builtins.values() {
-             if let Value::Obj(h) = val {
-                 self.heap.mark_object(*h);
+            if let Value::Obj(h) = val {
+                self.heap.mark_object(*h);
             }
         }
 
         // 2. Trace
         self.heap.trace();
-        
+
         // 3. Sweep
         let _freed = self.heap.sweep();
-        
+
         // 4. Update Stats
         let (allocated, _) = self.heap.get_allocation_stats();
         let next_gc = std::cmp::max(allocated * 2, 1024 * 1024);
         self.heap.set_next_gc(next_gc);
     }
-    
+
     fn get_allocation_stats(&self) -> (usize, usize) {
         self.heap.get_allocation_stats()
     }
-    
+
     fn set_next_gc(&mut self, size: usize) {
         self.heap.set_next_gc(size);
     }
 }
 
 // Helper to print value with just HeapInterface
-
-
-
-
-
-
-
-

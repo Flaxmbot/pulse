@@ -7,9 +7,9 @@ async fn test_cluster_creation() {
     let node_id = pulse_runtime::cluster::NodeId::new();
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let state = pulse_runtime::cluster::ClusterState::new(node_id.clone(), addr);
-    
+
     tracing::info!("Created cluster state with node ID: {}", node_id.0);
-    
+
     // Should have 1 member initially
     assert_eq!(state.member_count(), 1);
 }
@@ -26,7 +26,7 @@ async fn test_cluster_members() {
     let node_id = pulse_runtime::cluster::NodeId::new();
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let state = pulse_runtime::cluster::ClusterState::new(node_id, addr);
-    
+
     // Get members - should just be ourselves
     let members = state.alive_nodes();
     assert_eq!(members.len(), 1);
