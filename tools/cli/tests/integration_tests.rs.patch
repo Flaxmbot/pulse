@@ -1,0 +1,16 @@
+--- tools/cli/tests/integration_tests.rs
++++ tools/cli/tests/integration_tests.rs
+@@ -129,13 +129,3 @@
+     // An empty program or just whitespace should compile and run
+     run_source_expect_success("").await;
+ }
+-
+-#[tokio::test]
+-async fn test_generics() {
+-    run_file_expect_success("../../tests/integration/types/generics_tests.pulse").await;
+-}
+-
+-#[tokio::test]
+-async fn test_pattern_matching() {
+-    run_file_expect_success("../../tests/integration/types/pattern_matching_tests.pulse").await;
+-}

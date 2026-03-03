@@ -1,0 +1,39 @@
+// chat_server.pulse
+// A simple broadcast chat server demonstrating TCP networking and actors in Pulse
+
+let server_pid = spawn {
+    let clients = [];
+
+    while (true) {
+        let msg = receive;
+
+        // Simple message matching pattern using arrays for now
+        // [type, data1, data2]
+
+        let msg_type = msg[0];
+
+        if (msg_type == "new_client") {
+            let client_sock = msg[1];
+            push(clients, client_sock);
+            print("New client connected. Total clients: " + to_string(len(clients)));
+
+        } else if (msg_type == "broadcast") {
+            let text = msg[1];
+            let sender = msg[2];
+
+            // Broadcast to all other clients
+            let i = 0;
+            while (i < len(clients)) {
+                let target = clients[i];
+                if (target != sender) {
+                    tcp_write(target, text);
+                }
+                i = i + 1;
+            }
+        }
+    }
+};
+
+print("Starting server on 127.0.0.1:9000...");
+// This would ideally use a tcp_listen() native which accepts a callback or sends to a pid
+// For now, we mock the loop that would accept clients.

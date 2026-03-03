@@ -1,0 +1,45 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -512,6 +512,18 @@
+             Type::Fn(vec![Type::String], Box::new(Type::Custom("Regex".into()))),
+         );
+         self.functions.insert(
++            "tcp_connect".to_string(),
++            Type::Fn(vec![Type::String], Box::new(Type::Any)),
++        );
++        self.functions.insert(
++            "tcp_write".to_string(),
++            Type::Fn(vec![Type::Any, Type::String], Box::new(Type::Bool)),
++        );
++        self.functions.insert(
++            "tcp_read".to_string(),
++            Type::Fn(vec![Type::Any], Box::new(Type::String)),
++        );
++        self.functions.insert(
++            "websocket_connect".to_string(),
++            Type::Fn(vec![Type::String], Box::new(Type::Any)),
++        );
++        self.functions.insert(
++            "websocket_send".to_string(),
++            Type::Fn(vec![Type::Any, Type::String], Box::new(Type::Bool)),
++        );
++        self.functions.insert(
++            "websocket_recv".to_string(),
++            Type::Fn(vec![Type::Any], Box::new(Type::String)),
++        );
++        self.functions.insert(
++            "bincode_serialize".to_string(),
++            Type::Fn(vec![Type::Any], Box::new(Type::List(Box::new(Type::Int)))),
++        );
++        self.functions.insert(
++            "bincode_deserialize".to_string(),
++            Type::Fn(vec![Type::List(Box::new(Type::Int))], Box::new(Type::Any)),
++        );
++        self.functions.insert(
++            "sha256".to_string(),
++            Type::Fn(vec![Type::String], Box::new(Type::String)),
++        );
++        self.functions.insert(
+             "regex_match".to_string(),
+             Type::Fn(
+                 vec![Type::Custom("Regex".into()), Type::String],

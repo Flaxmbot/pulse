@@ -53,3 +53,5 @@ mod tests {
         assert_eq!(version(), "2.0.0-core");
     }
 }
+pub mod websocket; pub mod tcp;
+pub mod crypto;

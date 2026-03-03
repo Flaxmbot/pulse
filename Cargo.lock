@@ -1609,6 +1609,7 @@ name = "pulse_stdlib"
 version = "0.1.2"
 dependencies = [
  "async-trait",
+ "bincode",
  "chrono",
  "csv",
  "dns-lookup",
@@ -1624,6 +1625,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde_json",
  "tokio",

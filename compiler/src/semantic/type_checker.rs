@@ -314,6 +314,44 @@ impl TypeContext {
             "str".to_string(),
             (vec![Type::Any], Type::String, EffectSet::pure()),
         );
+
+        // Crypto & Networking
+        self.functions.insert(
+            "tcp_connect".to_string(),
+            (vec![Type::String], Type::Any, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "tcp_write".to_string(),
+            (vec![Type::Any, Type::String], Type::Bool, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "tcp_read".to_string(),
+            (vec![Type::Any], Type::String, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "websocket_connect".to_string(),
+            (vec![Type::String], Type::Any, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "websocket_send".to_string(),
+            (vec![Type::Any, Type::String], Type::Bool, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "websocket_recv".to_string(),
+            (vec![Type::Any], Type::Any, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "bincode_serialize".to_string(),
+            (vec![Type::Any], Type::List(Box::new(Type::Int)), EffectSet::pure()),
+        );
+        self.functions.insert(
+            "bincode_deserialize".to_string(),
+            (vec![Type::List(Box::new(Type::Int))], Type::Any, EffectSet::pure()),
+        );
+        self.functions.insert(
+            "sha256".to_string(),
+            (vec![Type::String], Type::String, EffectSet::pure()),
+        );
         self.functions.insert(
             "to_string".to_string(),
             (vec![Type::Any], Type::String, EffectSet::pure()),
