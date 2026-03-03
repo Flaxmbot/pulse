@@ -116,7 +116,7 @@ fn test_chunk_serialize() {
     let result = bincode::serialize(&chunk);
     assert!(result.is_ok(), "Should serialize: {:?}", result.err());
 
-    let serialized = result.unwrap();
+    let serialized = result.expect("Expected a value");
     assert!(!serialized.is_empty(), "Should have serialized data");
 
     // Note: Full round-trip deserialization requires SerializableConstant wrapper
@@ -140,7 +140,7 @@ fn test_message_envelope_serialize() {
     let result = envelope.to_bytes();
     assert!(result.is_ok(), "Should serialize: {:?}", result.err());
 
-    let serialized = result.unwrap();
+    let serialized = result.expect("Expected a value");
     assert!(!serialized.is_empty(), "Should have serialized data");
 
     // Note: Full round-trip deserialization requires SerializableConstant wrapper

@@ -306,7 +306,7 @@ mod tests {
         let list = vec![Value::Int(3), Value::Int(1), Value::Int(2)];
         let handle = heap.alloc_object(Object::List(list));
 
-        let result = list_sort_native(&mut heap, &[Value::Obj(handle)]).unwrap();
+        let result = list_sort_native(&mut heap, &[Value::Obj(handle)]).expect("Expected a value");
 
         if let Value::Obj(result_handle) = result {
             if let Some(Object::List(sorted)) = heap.get_object(result_handle) {
@@ -329,7 +329,7 @@ mod tests {
         let list = vec![Value::Int(1), Value::Int(2), Value::Int(3)];
         let handle = heap.alloc_object(Object::List(list));
 
-        let result = list_reverse_native(&mut heap, &[Value::Obj(handle)]).unwrap();
+        let result = list_reverse_native(&mut heap, &[Value::Obj(handle)]).expect("Expected a value");
 
         if let Value::Obj(result_handle) = result {
             if let Some(Object::List(reversed)) = heap.get_object(result_handle) {
@@ -352,7 +352,7 @@ mod tests {
         let handle = heap.alloc_object(Object::Map(map));
 
         // Test keys
-        let keys_result = map_keys_native(&mut heap, &[Value::Obj(handle)]).unwrap();
+        let keys_result = map_keys_native(&mut heap, &[Value::Obj(handle)]).expect("Expected a value");
         if let Value::Obj(keys_handle) = keys_result {
             if let Some(Object::List(keys)) = heap.get_object(keys_handle) {
                 assert_eq!(keys.len(), 2);
@@ -360,7 +360,7 @@ mod tests {
         }
 
         // Test values
-        let values_result = map_values_native(&mut heap, &[Value::Obj(handle)]).unwrap();
+        let values_result = map_values_native(&mut heap, &[Value::Obj(handle)]).expect("Expected a value");
         if let Value::Obj(values_handle) = values_result {
             if let Some(Object::List(values)) = heap.get_object(values_handle) {
                 assert_eq!(values.len(), 2);

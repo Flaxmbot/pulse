@@ -48,8 +48,8 @@ fn test_memory_fence_visibility() {
         }
     });
 
-    writer.join().unwrap();
-    reader.join().unwrap();
+    writer.join().expect("Expected a value");
+    reader.join().expect("Expected a value");
 }
 
 #[test]
@@ -83,8 +83,8 @@ fn test_acquire_release_fence() {
         assert_eq!(value, 100);
     });
 
-    writer.join().unwrap();
-    reader.join().unwrap();
+    writer.join().expect("Expected a value");
+    reader.join().expect("Expected a value");
 }
 
 #[test]
@@ -140,6 +140,6 @@ fn test_fence_with_shared_memory() {
         }
     });
 
-    writer.join().unwrap();
-    reader.join().unwrap();
+    writer.join().expect("Expected a value");
+    reader.join().expect("Expected a value");
 }

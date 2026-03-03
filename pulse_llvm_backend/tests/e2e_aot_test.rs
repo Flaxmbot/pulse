@@ -16,7 +16,7 @@ fn test_e2e_simple_assignment() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
     let func = backend.compile_chunk(&chunk);
     assert!(func.is_ok(), "AOT compile failed: {:?}", func.err());
@@ -31,7 +31,7 @@ fn test_e2e_arithmetic_expression() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
     let func = backend.compile_chunk(&chunk);
     assert!(func.is_ok(), "AOT compile failed: {:?}", func.err());
@@ -43,7 +43,7 @@ fn test_e2e_print_statement() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
     let func = backend.compile_chunk(&chunk);
     assert!(func.is_ok(), "AOT compile failed: {:?}", func.err());
@@ -55,10 +55,10 @@ fn test_e2e_object_file_output() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
-    let _ = backend.compile_chunk(&chunk).unwrap();
-    let _ = backend.generate_main_entry().unwrap();
+    let _ = backend.compile_chunk(&chunk).expect("Expected a value");
+    let _ = backend.generate_main_entry().expect("Expected a value");
 
     let tmp = std::env::temp_dir().join("pulse_e2e_test.o");
     let result = backend.emit_object_file(&tmp);
@@ -70,7 +70,7 @@ fn test_e2e_object_file_output() {
     assert!(tmp.exists(), "Object file not created");
 
     // Verify file is non-empty
-    let metadata = std::fs::metadata(&tmp).unwrap();
+    let metadata = std::fs::metadata(&tmp).expect("Expected a value");
     assert!(metadata.len() > 0, "Object file is empty");
 
     // Cleanup
@@ -83,10 +83,10 @@ fn test_e2e_ir_output() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
-    let _ = backend.compile_chunk(&chunk).unwrap();
-    let _ = backend.generate_main_entry().unwrap();
+    let _ = backend.compile_chunk(&chunk).expect("Expected a value");
+    let _ = backend.generate_main_entry().expect("Expected a value");
 
     let tmp = std::env::temp_dir().join("pulse_e2e_test.ll");
     let result = backend.emit_ir(&tmp);
@@ -94,7 +94,7 @@ fn test_e2e_ir_output() {
     assert!(tmp.exists(), "IR file not created");
 
     // Read and verify IR contains expected elements
-    let ir_content = std::fs::read_to_string(&tmp).unwrap();
+    let ir_content = std::fs::read_to_string(&tmp).expect("Expected a value");
     assert!(
         ir_content.contains("pulse_main"),
         "IR missing pulse_main function"
@@ -110,7 +110,7 @@ fn test_e2e_string_constant() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
     let func = backend.compile_chunk(&chunk);
     assert!(
@@ -126,7 +126,7 @@ fn test_e2e_boolean_logic() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
     let func = backend.compile_chunk(&chunk);
     assert!(
@@ -142,7 +142,7 @@ fn test_e2e_comparison_ops() {
     let chunk = compile_source(source);
 
     let context = Context::create();
-    let mut backend = LLVMBackend::new(&context).unwrap();
+    let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
     let func = backend.compile_chunk(&chunk);
     assert!(

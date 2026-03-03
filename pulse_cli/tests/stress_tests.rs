@@ -26,7 +26,7 @@ async fn test_stack_overflow() {
     let path = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
     println!("Testing path: {:?}", path);
 
-    let result = run_file_async(path.to_str().unwrap()).await;
+    let result = run_file_async(path.to_str().expect("Expected a value")).await;
     match result {
         Ok(VMStatus::Error(PulseError::StackOverflow)) => (), // Success
         Ok(status) => panic!("Expected StackOverflow, got {:?}", status),
@@ -43,7 +43,7 @@ async fn test_actor_limit() {
     println!("Testing path: {:?}", path);
 
     // This test expects to run without crashing.
-    let result = run_file_async(path.to_str().unwrap()).await;
+    let result = run_file_async(path.to_str().expect("Expected a value")).await;
 
     match result {
         Ok(VMStatus::Halted) => (),
@@ -71,7 +71,7 @@ async fn test_integer_overflow() {
     path.push("../tests/overflow_test.pulse");
 
     let path = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-    let result = run_file_async(path.to_str().unwrap()).await;
+    let result = run_file_async(path.to_str().expect("Expected a value")).await;
     match result {
         Ok(VMStatus::Error(PulseError::RuntimeError(msg))) => {
             assert!(

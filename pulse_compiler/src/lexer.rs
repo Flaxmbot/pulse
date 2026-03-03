@@ -227,7 +227,7 @@ impl<'a> Lexer<'a> {
                                 }
                             } else {
                                 if is_doc {
-                                    doc.push(self.current.unwrap());
+                                    doc.push(self.current.clone().expect("Expected a value"));
                                 }
                                 self.advance();
                             }

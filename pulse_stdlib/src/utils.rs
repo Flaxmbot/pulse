@@ -2350,7 +2350,7 @@ pub fn heap_pop_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
                 }
                 let len = list.len();
                 list.swap(0, len - 1);
-                let min_val = list.pop().unwrap();
+                let min_val = list.pop().expect("Expected a value");
                 // Sift down
                 let mut i = 0;
                 let len = list.len();

@@ -164,14 +164,14 @@ impl<'ctx> LLVMBackend<'ctx> {
     }
 
     fn emit_global_cstr(&self, value: &str, name: &str) -> IntValue<'ctx> {
-        let global = self.builder.build_global_string_ptr(value, name).unwrap();
+        let global = self.builder.build_global_string_ptr(value, name).expect("Expected a value");
         self.builder
             .build_ptr_to_int(
                 global.as_pointer_value(),
                 self.context.i64_type(),
                 "str_ptr_int",
             )
-            .unwrap()
+            .expect("Expected a value")
     }
 
     // ============ Local Variable Helpers ============
@@ -181,17 +181,17 @@ impl<'ctx> LLVMBackend<'ctx> {
             let tag_ptr = self
                 .builder
                 .build_alloca(self.context.i64_type(), &format!("local_tag_{}", slot))
-                .unwrap();
+                .expect("Expected a value");
             let val_ptr = self
                 .builder
                 .build_alloca(self.context.i64_type(), &format!("local_val_{}", slot))
-                .unwrap();
+                .expect("Expected a value");
             self.builder
                 .build_store(tag_ptr, self.context.i64_type().const_int(TAG_UNIT, false))
-                .unwrap();
+                .expect("Expected a value");
             self.builder
                 .build_store(val_ptr, self.context.i64_type().const_zero())
-                .unwrap();
+                .expect("Expected a value");
             self.local_vars.insert(slot, (tag_ptr, val_ptr));
         }
     }
@@ -199,8 +199,8 @@ impl<'ctx> LLVMBackend<'ctx> {
     fn store_local(&mut self, slot: usize, tag: IntValue<'ctx>, val: IntValue<'ctx>) {
         self.ensure_local(slot);
         let (tag_ptr, val_ptr) = self.local_vars[&slot];
-        self.builder.build_store(tag_ptr, tag).unwrap();
-        self.builder.build_store(val_ptr, val).unwrap();
+        self.builder.build_store(tag_ptr, tag).expect("Expected a value");
+        self.builder.build_store(val_ptr, val).expect("Expected a value");
     }
 
     fn load_local(&mut self, slot: usize) -> (IntValue<'ctx>, IntValue<'ctx>) {
@@ -209,12 +209,12 @@ impl<'ctx> LLVMBackend<'ctx> {
         let tag = self
             .builder
             .build_load(self.context.i64_type(), tag_ptr, "load_tag")
-            .unwrap()
+            .expect("Expected a value")
             .into_int_value();
         let val = self
             .builder
             .build_load(self.context.i64_type(), val_ptr, "load_val")
-            .unwrap()
+            .expect("Expected a value")
             .into_int_value();
         (tag, val)
     }
@@ -226,17 +226,17 @@ impl<'ctx> LLVMBackend<'ctx> {
             let tag_ptr = self
                 .builder
                 .build_alloca(self.context.i64_type(), &format!("global_tag_{}", name))
-                .unwrap();
+                .expect("Expected a value");
             let val_ptr = self
                 .builder
                 .build_alloca(self.context.i64_type(), &format!("global_val_{}", name))
-                .unwrap();
+                .expect("Expected a value");
             self.builder
                 .build_store(tag_ptr, self.context.i64_type().const_int(TAG_UNIT, false))
-                .unwrap();
+                .expect("Expected a value");
             self.builder
                 .build_store(val_ptr, self.context.i64_type().const_zero())
-                .unwrap();
+                .expect("Expected a value");
             self.global_vars
                 .insert(name.to_string(), (tag_ptr, val_ptr));
         }
@@ -316,7 +316,7 @@ impl<'ctx> LLVMBackend<'ctx> {
         }
 
         // Default return if not already terminated
-        let current_block = self.builder.get_insert_block().unwrap();
+        let current_block = self.builder.get_insert_block().expect("Expected a value");
         if current_block.get_terminator().is_none() {
             let _ = self
                 .builder
@@ -351,7 +351,7 @@ impl<'ctx> LLVMBackend<'ctx> {
         let exit_code = self
             .builder
             .build_int_truncate(result.into_int_value(), i32_type, "exit_code")
-            .unwrap();
+            .expect("Expected a value");
 
         let _ = self.builder.build_return(Some(&exit_code));
         Ok(main_fn)
@@ -381,7 +381,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                             let global_str = self
                                 .builder
                                 .build_global_string_ptr(s, "str_const")
-                                .unwrap();
+                                .expect("Expected a value");
                             let ptr_as_int = self
                                 .builder
                                 .build_ptr_to_int(
@@ -389,7 +389,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                                     self.context.i64_type(),
                                     "str_ptr_int",
                                 )
-                                .unwrap();
+                                .expect("Expected a value");
                             (
                                 self.context.i64_type().const_int(TAG_OBJ, false),
                                 ptr_as_int,
@@ -420,37 +420,37 @@ impl<'ctx> LLVMBackend<'ctx> {
             // ============ Arithmetic ============
             Op::Add => {
                 if let (Some((_, rv)), Some((lt, lv))) = (self.pop_value(), self.pop_value()) {
-                    let result = self.builder.build_int_add(lv, rv, "add").unwrap();
+                    let result = self.builder.build_int_add(lv, rv, "add").expect("Expected a value");
                     self.push_value(lt, result);
                 }
             }
             Op::Sub => {
                 if let (Some((_, rv)), Some((lt, lv))) = (self.pop_value(), self.pop_value()) {
-                    let result = self.builder.build_int_sub(lv, rv, "sub").unwrap();
+                    let result = self.builder.build_int_sub(lv, rv, "sub").expect("Expected a value");
                     self.push_value(lt, result);
                 }
             }
             Op::Mul => {
                 if let (Some((_, rv)), Some((lt, lv))) = (self.pop_value(), self.pop_value()) {
-                    let result = self.builder.build_int_mul(lv, rv, "mul").unwrap();
+                    let result = self.builder.build_int_mul(lv, rv, "mul").expect("Expected a value");
                     self.push_value(lt, result);
                 }
             }
             Op::Div => {
                 if let (Some((_, rv)), Some((lt, lv))) = (self.pop_value(), self.pop_value()) {
-                    let result = self.builder.build_int_signed_div(lv, rv, "div").unwrap();
+                    let result = self.builder.build_int_signed_div(lv, rv, "div").expect("Expected a value");
                     self.push_value(lt, result);
                 }
             }
             Op::Mod => {
                 if let (Some((_, rv)), Some((lt, lv))) = (self.pop_value(), self.pop_value()) {
-                    let result = self.builder.build_int_signed_rem(lv, rv, "mod").unwrap();
+                    let result = self.builder.build_int_signed_rem(lv, rv, "mod").expect("Expected a value");
                     self.push_value(lt, result);
                 }
             }
             Op::Negate => {
                 if let Some((tag, val)) = self.pop_value() {
-                    let result = self.builder.build_int_neg(val, "neg").unwrap();
+                    let result = self.builder.build_int_neg(val, "neg").expect("Expected a value");
                     self.push_value(tag, result);
                 }
             }
@@ -465,11 +465,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                             self.context.i64_type().const_zero(),
                             "is_zero",
                         )
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_int_z_extend(is_zero, self.context.i64_type(), "not_result")
-                        .unwrap();
+                        .expect("Expected a value");
                     let (tag, _) = self.tag_bool(true);
                     self.push_value(tag, result);
                 }
@@ -481,11 +481,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                     let cmp = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, lv, rv, "eq")
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_int_z_extend(cmp, self.context.i64_type(), "eq_ext")
-                        .unwrap();
+                        .expect("Expected a value");
                     let (tag, _) = self.tag_bool(true);
                     self.push_value(tag, result);
                 }
@@ -495,11 +495,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                     let cmp = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::NE, lv, rv, "neq")
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_int_z_extend(cmp, self.context.i64_type(), "neq_ext")
-                        .unwrap();
+                        .expect("Expected a value");
                     let (tag, _) = self.tag_bool(true);
                     self.push_value(tag, result);
                 }
@@ -509,11 +509,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                     let cmp = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::SGT, lv, rv, "gt")
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_int_z_extend(cmp, self.context.i64_type(), "gt_ext")
-                        .unwrap();
+                        .expect("Expected a value");
                     let (tag, _) = self.tag_bool(true);
                     self.push_value(tag, result);
                 }
@@ -523,11 +523,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                     let cmp = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::SLT, lv, rv, "lt")
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_int_z_extend(cmp, self.context.i64_type(), "lt_ext")
-                        .unwrap();
+                        .expect("Expected a value");
                     let (tag, _) = self.tag_bool(true);
                     self.push_value(tag, result);
                 }
@@ -545,11 +545,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                             self.context.i64_type().const_zero(),
                             "lf",
                         )
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_select(left_falsy, lv, rv, "and_result")
-                        .unwrap()
+                        .expect("Expected a value")
                         .into_int_value();
                     self.push_value(lt, result);
                 }
@@ -565,11 +565,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                             self.context.i64_type().const_zero(),
                             "lt_",
                         )
-                        .unwrap();
+                        .expect("Expected a value");
                     let result = self
                         .builder
                         .build_select(left_truthy, lv, rv, "or_result")
-                        .unwrap()
+                        .expect("Expected a value")
                         .into_int_value();
                     self.push_value(lt, result);
                 }
@@ -600,8 +600,8 @@ impl<'ctx> LLVMBackend<'ctx> {
                 if let Some((tag, val)) = self.pop_value() {
                     self.ensure_global(&name);
                     let (tag_ptr, val_ptr) = self.global_vars[&name];
-                    self.builder.build_store(tag_ptr, tag).unwrap();
-                    self.builder.build_store(val_ptr, val).unwrap();
+                    self.builder.build_store(tag_ptr, tag).expect("Expected a value");
+                    self.builder.build_store(val_ptr, val).expect("Expected a value");
                 }
             }
             Op::GetGlobal => {
@@ -617,12 +617,12 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let tag = self
                     .builder
                     .build_load(self.context.i64_type(), tag_ptr, "gtag")
-                    .unwrap()
+                    .expect("Expected a value")
                     .into_int_value();
                 let val = self
                     .builder
                     .build_load(self.context.i64_type(), val_ptr, "gval")
-                    .unwrap()
+                    .expect("Expected a value")
                     .into_int_value();
                 self.push_value(tag, val);
             }
@@ -637,8 +637,8 @@ impl<'ctx> LLVMBackend<'ctx> {
                 if let Some((tag, val)) = self.pop_value() {
                     self.ensure_global(&name);
                     let (tag_ptr, val_ptr) = self.global_vars[&name];
-                    self.builder.build_store(tag_ptr, tag).unwrap();
-                    self.builder.build_store(val_ptr, val).unwrap();
+                    self.builder.build_store(tag_ptr, tag).expect("Expected a value");
+                    self.builder.build_store(val_ptr, val).expect("Expected a value");
                 }
             }
 
@@ -701,7 +701,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                 if let Some((tag, val)) = self.pop_value() {
                     self.emit_tagged_print(tag, val);
                     if let Some(nl_fn) = self.module.get_function("pulse_print_newline") {
-                        let _ = self.builder.build_call(nl_fn, &[], "").unwrap();
+                        let _ = self.builder.build_call(nl_fn, &[], "").expect("Expected a value");
                     }
                 }
             }
@@ -721,7 +721,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                 }
                 // Print newline
                 if let Some(nl_fn) = self.module.get_function("pulse_print_newline") {
-                    let _ = self.builder.build_call(nl_fn, &[], "").unwrap();
+                    let _ = self.builder.build_call(nl_fn, &[], "").expect("Expected a value");
                 }
             }
 
@@ -1238,19 +1238,19 @@ impl<'ctx> LLVMBackend<'ctx> {
                 i64_type.const_int(TAG_INT, false),
                 "is_int",
             )
-            .unwrap();
+            .expect("Expected a value");
         self.builder
             .build_conditional_branch(is_int, int_block, float_check_block)
-            .unwrap();
+            .expect("Expected a value");
 
         self.builder.position_at_end(int_block);
         if let Some(print_fn) = self.module.get_function("pulse_print_int") {
             let _ = self
                 .builder
                 .build_call(print_fn, &[val.into()], "")
-                .unwrap();
+                .expect("Expected a value");
         }
-        self.builder.build_unconditional_branch(done_block).unwrap();
+        self.builder.build_unconditional_branch(done_block).expect("Expected a value");
 
         self.builder.position_at_end(float_check_block);
         let is_float = self
@@ -1261,19 +1261,19 @@ impl<'ctx> LLVMBackend<'ctx> {
                 i64_type.const_int(TAG_FLOAT, false),
                 "is_float",
             )
-            .unwrap();
+            .expect("Expected a value");
         self.builder
             .build_conditional_branch(is_float, float_block, bool_check_block)
-            .unwrap();
+            .expect("Expected a value");
 
         self.builder.position_at_end(float_block);
         if let Some(print_fn) = self.module.get_function("pulse_print_float") {
             let _ = self
                 .builder
                 .build_call(print_fn, &[val.into()], "")
-                .unwrap();
+                .expect("Expected a value");
         }
-        self.builder.build_unconditional_branch(done_block).unwrap();
+        self.builder.build_unconditional_branch(done_block).expect("Expected a value");
 
         self.builder.position_at_end(bool_check_block);
         let is_bool = self
@@ -1284,19 +1284,19 @@ impl<'ctx> LLVMBackend<'ctx> {
                 i64_type.const_int(TAG_BOOL, false),
                 "is_bool",
             )
-            .unwrap();
+            .expect("Expected a value");
         self.builder
             .build_conditional_branch(is_bool, bool_block, obj_check_block)
-            .unwrap();
+            .expect("Expected a value");
 
         self.builder.position_at_end(bool_block);
         if let Some(print_fn) = self.module.get_function("pulse_print_bool") {
             let _ = self
                 .builder
                 .build_call(print_fn, &[val.into()], "")
-                .unwrap();
+                .expect("Expected a value");
         }
-        self.builder.build_unconditional_branch(done_block).unwrap();
+        self.builder.build_unconditional_branch(done_block).expect("Expected a value");
 
         self.builder.position_at_end(obj_check_block);
         let is_obj = self
@@ -1307,32 +1307,32 @@ impl<'ctx> LLVMBackend<'ctx> {
                 i64_type.const_int(TAG_OBJ, false),
                 "is_obj",
             )
-            .unwrap();
+            .expect("Expected a value");
         self.builder
             .build_conditional_branch(is_obj, obj_block, default_block)
-            .unwrap();
+            .expect("Expected a value");
 
         self.builder.position_at_end(obj_block);
         if let Some(print_fn) = self.module.get_function("pulse_print_cstr") {
             let ptr = self
                 .builder
                 .build_int_to_ptr(val, ptr_type, "str_ptr")
-                .unwrap();
+                .expect("Expected a value");
             let _ = self
                 .builder
                 .build_call(print_fn, &[ptr.into()], "")
-                .unwrap();
+                .expect("Expected a value");
         }
-        self.builder.build_unconditional_branch(done_block).unwrap();
+        self.builder.build_unconditional_branch(done_block).expect("Expected a value");
 
         self.builder.position_at_end(default_block);
         if let Some(print_fn) = self.module.get_function("pulse_print_int") {
             let _ = self
                 .builder
                 .build_call(print_fn, &[val.into()], "")
-                .unwrap();
+                .expect("Expected a value");
         }
-        self.builder.build_unconditional_branch(done_block).unwrap();
+        self.builder.build_unconditional_branch(done_block).expect("Expected a value");
 
         self.builder.position_at_end(done_block);
     }
@@ -1416,7 +1416,7 @@ mod tests {
     #[test]
     fn test_aot_empty_chunk() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let chunk = Chunk::new();
         let result = backend.compile_chunk(&chunk);
         assert!(result.is_ok());
@@ -1425,7 +1425,7 @@ mod tests {
     #[test]
     fn test_aot_const_u16() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let idx = le_u16(0);
         let chunk = build_chunk(
             vec![
@@ -1444,7 +1444,7 @@ mod tests {
     #[test]
     fn test_aot_arithmetic() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let c1 = le_u16(1);
         let chunk = build_chunk(
@@ -1468,7 +1468,7 @@ mod tests {
     #[test]
     fn test_aot_globals() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let g0 = le_u16(0);
         let chunk = build_chunk(
@@ -1494,7 +1494,7 @@ mod tests {
     #[test]
     fn test_aot_comparison() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let c1 = le_u16(1);
         let chunk = build_chunk(
@@ -1518,7 +1518,7 @@ mod tests {
     #[test]
     fn test_aot_print() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let chunk = build_chunk(
             vec![
@@ -1537,9 +1537,9 @@ mod tests {
     #[test]
     fn test_aot_main_entry() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let chunk = build_chunk(vec![Op::Halt as u8], vec![]);
-        let _ = backend.compile_chunk(&chunk).unwrap();
+        let _ = backend.compile_chunk(&chunk).expect("Expected a value");
         let main_fn = backend.generate_main_entry();
         assert!(main_fn.is_ok(), "Main entry failed: {:?}", main_fn.err());
     }
@@ -1547,7 +1547,7 @@ mod tests {
     #[test]
     fn test_aot_object_file_emission() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let chunk = build_chunk(
             vec![
@@ -1559,8 +1559,8 @@ mod tests {
             ],
             vec![Constant::Int(0)],
         );
-        let _ = backend.compile_chunk(&chunk).unwrap();
-        let _ = backend.generate_main_entry().unwrap();
+        let _ = backend.compile_chunk(&chunk).expect("Expected a value");
+        let _ = backend.generate_main_entry().expect("Expected a value");
 
         // Emit to temp file
         let tmp = std::env::temp_dir().join("pulse_aot_test.o");
@@ -1578,7 +1578,7 @@ mod tests {
     #[test]
     fn test_aot_jump_forward() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let offset = le_u16(2);
         let chunk = build_chunk(
@@ -1603,7 +1603,7 @@ mod tests {
     #[test]
     fn test_aot_list_map_shared_ops() {
         let context = Context::create();
-        let mut backend = LLVMBackend::new(&context).unwrap();
+        let mut backend = LLVMBackend::new(&context).expect("Expected a value");
 
         let c0 = le_u16(0); // int 1
         let c1 = le_u16(1); // int 2

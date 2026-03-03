@@ -1124,7 +1124,7 @@ impl<'a> Compiler<'a> {
         self.state()
             .loops
             .last_mut()
-            .unwrap()
+            .expect("Expected a value")
             .break_jumps
             .push(jump);
         Ok(())

@@ -5,7 +5,7 @@
 async fn test_cluster_creation() {
     // Test that we can create a cluster state
     let node_id = pulse_runtime::cluster::NodeId::new();
-    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("Expected a value");
     let state = pulse_runtime::cluster::ClusterState::new(node_id.clone(), addr);
 
     tracing::info!("Created cluster state with node ID: {}", node_id.0);
@@ -24,7 +24,7 @@ async fn test_cluster_node_id() {
 #[tokio::test]
 async fn test_cluster_members() {
     let node_id = pulse_runtime::cluster::NodeId::new();
-    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("Expected a value");
     let state = pulse_runtime::cluster::ClusterState::new(node_id, addr);
 
     // Get members - should just be ourselves

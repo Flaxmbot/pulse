@@ -69,7 +69,7 @@ pub extern "C" fn pulse_println(val: i64) {
 pub extern "C" fn pulse_clock() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("Expected a value")
         .as_secs_f64()
 }
 

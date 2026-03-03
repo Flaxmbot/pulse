@@ -42,7 +42,7 @@ mod tests {
 
         assert!(matches!(status, VMStatus::Halted));
 
-        let result = vm.pop().unwrap();
+        let result = vm.pop().expect("Expected a value");
         assert_eq!(result, Value::Int(42));
     }
 }

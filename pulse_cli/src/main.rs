@@ -533,7 +533,7 @@ fn run_demo() {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .expect("Expected a value");
             rt.block_on(async { run_file(file.clone()).await })
         });
 
@@ -585,7 +585,7 @@ fn run_tests(path: Option<PathBuf>) -> Result<(), String> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .expect("Expected a value");
             rt.block_on(async { run_file(file.clone()).await })
         });
 
@@ -1007,7 +1007,7 @@ fn run_benchmarks(
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .expect("Expected a value");
             rt.block_on(async { run_file(bench_path.clone()).await })
         });
 

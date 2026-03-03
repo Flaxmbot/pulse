@@ -65,7 +65,7 @@ pub unsafe extern "C" fn pulse_jit_print_i64(tag: i64, val: i64) {
         TAG_UNIT => print!("()"),
         _ => print!("<val:{}, tag:{}>", val, tag),
     }
-    // std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    // std::io::Write::flush(&mut std::io::stdout()).expect("Expected a value");
 }
 
 /// JIT profiling info for hot loop detection
@@ -218,12 +218,12 @@ impl<'ctx> JITCompiler<'ctx> {
 
     /// Get compilation statistics
     pub fn get_stats(&self) -> JITStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().expect("Expected a value").clone()
     }
 
     /// Reset statistics
     pub fn reset_stats(&self) {
-        *self.stats.lock().unwrap() = JITStats::default();
+        *self.stats.lock().expect("Expected a value") = JITStats::default();
     }
 
     /// Initialize the VM stack
@@ -239,7 +239,7 @@ impl<'ctx> JITCompiler<'ctx> {
         );
 
         let stack_type = value_type.array_type(stack_size);
-        let stack_ptr = self.builder.build_alloca(stack_type, "vm_stack").unwrap();
+        let stack_ptr = self.builder.build_alloca(stack_type, "vm_stack").expect("Expected a value");
         self.stack_ptr = Some(stack_ptr);
         self.stack_top = 0;
         self.max_stack_size = 0;
@@ -267,7 +267,7 @@ impl<'ctx> JITCompiler<'ctx> {
             let stack_element_ptr = unsafe {
                 self.builder
                     .build_gep(array_type, stack_ptr, &[zero, idx], "stack_element_ptr")
-                    .unwrap()
+                    .expect("Expected a value")
             };
 
             // Store tag
@@ -285,8 +285,8 @@ impl<'ctx> JITCompiler<'ctx> {
                     0,
                     "tag_ptr",
                 )
-                .unwrap();
-            self.builder.build_store(tag_ptr, tag).unwrap();
+                .expect("Expected a value");
+            self.builder.build_store(tag_ptr, tag).expect("Expected a value");
 
             // Store payload
             let val_ptr = self
@@ -303,8 +303,8 @@ impl<'ctx> JITCompiler<'ctx> {
                     1,
                     "val_ptr",
                 )
-                .unwrap();
-            self.builder.build_store(val_ptr, val).unwrap();
+                .expect("Expected a value");
+            self.builder.build_store(val_ptr, val).expect("Expected a value");
 
             self.stack_top += 1;
             if self.stack_top > self.max_stack_size {
@@ -337,7 +337,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 let stack_element_ptr = unsafe {
                     self.builder
                         .build_gep(array_type, stack_ptr, &[zero, idx], "stack_element_ptr")
-                        .unwrap()
+                        .expect("Expected a value")
                 };
 
                 let tag_ptr = self
@@ -354,11 +354,11 @@ impl<'ctx> JITCompiler<'ctx> {
                         0,
                         "tag_ptr_pop",
                     )
-                    .unwrap();
+                    .expect("Expected a value");
                 let tag = self
                     .builder
                     .build_load(self.context.i64_type(), tag_ptr, "popped_tag")
-                    .unwrap()
+                    .expect("Expected a value")
                     .into_int_value();
 
                 let val_ptr = self
@@ -375,11 +375,11 @@ impl<'ctx> JITCompiler<'ctx> {
                         1,
                         "val_ptr_pop",
                     )
-                    .unwrap();
+                    .expect("Expected a value");
                 let val = self
                     .builder
                     .build_load(self.context.i64_type(), val_ptr, "popped_val")
-                    .unwrap()
+                    .expect("Expected a value")
                     .into_int_value();
 
                 Some((tag, val))
@@ -414,7 +414,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 let stack_element_ptr = unsafe {
                     self.builder
                         .build_gep(array_type, stack_ptr, &[zero, idx], "stack_peek_ptr")
-                        .unwrap()
+                        .expect("Expected a value")
                 };
 
                 let tag_ptr = self
@@ -431,11 +431,11 @@ impl<'ctx> JITCompiler<'ctx> {
                         0,
                         "tag_ptr_peek",
                     )
-                    .unwrap();
+                    .expect("Expected a value");
                 let tag = self
                     .builder
                     .build_load(self.context.i64_type(), tag_ptr, "peek_tag")
-                    .unwrap()
+                    .expect("Expected a value")
                     .into_int_value();
 
                 let val_ptr = self
@@ -452,11 +452,11 @@ impl<'ctx> JITCompiler<'ctx> {
                         1,
                         "val_ptr_peek",
                     )
-                    .unwrap();
+                    .expect("Expected a value");
                 let val = self
                     .builder
                     .build_load(self.context.i64_type(), val_ptr, "peek_val")
-                    .unwrap()
+                    .expect("Expected a value")
                     .into_int_value();
 
                 Some((tag, val))
@@ -508,17 +508,17 @@ impl<'ctx> JITCompiler<'ctx> {
         while ip < optimized_chunk.code.len() {
             let op = Op::from(optimized_chunk.code[ip]);
             self.compile_instruction(op, &optimized_chunk, &mut ip, &mut ctx)?;
-            self.stats.lock().unwrap().instructions_compiled += 1;
+            self.stats.lock().expect("Expected a value").instructions_compiled += 1;
         }
 
-        let current_block = self.builder.get_insert_block().unwrap();
+        let current_block = self.builder.get_insert_block().expect("Expected a value");
         if current_block.get_terminator().is_none() {
             let _ = self
                 .builder
                 .build_return(Some(&self.context.i64_type().const_int(0, false)));
         }
 
-        self.stats.lock().unwrap().functions_compiled += 1;
+        self.stats.lock().expect("Expected a value").functions_compiled += 1;
 
         Ok(function)
     }
@@ -575,17 +575,17 @@ impl<'ctx> JITCompiler<'ctx> {
         while ip < optimized_chunk.code.len() {
             let op = Op::from(optimized_chunk.code[ip]);
             self.compile_instruction(op, &optimized_chunk, &mut ip, &mut ctx)?;
-            self.stats.lock().unwrap().instructions_compiled += 1;
+            self.stats.lock().expect("Expected a value").instructions_compiled += 1;
         }
 
-        let current_block = self.builder.get_insert_block().unwrap();
+        let current_block = self.builder.get_insert_block().expect("Expected a value");
         if current_block.get_terminator().is_none() {
             let _ = self
                 .builder
                 .build_return(Some(&self.context.i64_type().const_int(0, false)));
         }
 
-        self.stats.lock().unwrap().functions_compiled += 1;
+        self.stats.lock().expect("Expected a value").functions_compiled += 1;
 
         Ok(function)
     }
@@ -682,7 +682,7 @@ impl<'ctx> JITCompiler<'ctx> {
                     ),
                     &format!("local_{}", slot),
                 )
-                .unwrap();
+                .expect("Expected a value");
             ctx.local_vars.insert(slot, slot_ptr);
         }
     }
@@ -708,11 +708,11 @@ impl<'ctx> JITCompiler<'ctx> {
                     0,
                     "local_tag_ptr",
                 )
-                .unwrap();
+                .expect("Expected a value");
             let tag = self
                 .builder
                 .build_load(self.context.i64_type(), tag_ptr, "load_local_tag")
-                .unwrap()
+                .expect("Expected a value")
                 .into_int_value();
 
             let val_ptr = self
@@ -729,11 +729,11 @@ impl<'ctx> JITCompiler<'ctx> {
                     1,
                     "local_val_ptr",
                 )
-                .unwrap();
+                .expect("Expected a value");
             let val = self
                 .builder
                 .build_load(self.context.i64_type(), val_ptr, "load_local_val")
-                .unwrap()
+                .expect("Expected a value")
                 .into_int_value();
 
             Some((tag, val))
@@ -765,8 +765,8 @@ impl<'ctx> JITCompiler<'ctx> {
                     0,
                     "store_local_tag_ptr",
                 )
-                .unwrap();
-            self.builder.build_store(tag_ptr, tag).unwrap();
+                .expect("Expected a value");
+            self.builder.build_store(tag_ptr, tag).expect("Expected a value");
 
             let val_ptr = self
                 .builder
@@ -782,8 +782,8 @@ impl<'ctx> JITCompiler<'ctx> {
                     1,
                     "store_local_val_ptr",
                 )
-                .unwrap();
-            self.builder.build_store(val_ptr, val).unwrap();
+                .expect("Expected a value");
+            self.builder.build_store(val_ptr, val).expect("Expected a value");
         }
     }
 
@@ -794,17 +794,17 @@ impl<'ctx> JITCompiler<'ctx> {
         let list_ptr = self
             .builder
             .build_alloca(self.context.i64_type(), "list_heap_ptr")
-            .unwrap();
+            .expect("Expected a value");
 
         // Store the count as list metadata
         let count_val = self.context.i64_type().const_int(count as u64, false);
-        self.builder.build_store(list_ptr, count_val).unwrap();
+        self.builder.build_store(list_ptr, count_val).expect("Expected a value");
 
         // Return pointer to list
         let result = self
             .builder
             .build_ptr_to_int(list_ptr, self.context.i64_type(), "list_ptr_to_int")
-            .unwrap();
+            .expect("Expected a value");
 
         self.tag_obj(result.get_zero_extended_constant().unwrap_or(0))
     }
@@ -838,16 +838,16 @@ impl<'ctx> JITCompiler<'ctx> {
         let actor_id_ptr = self
             .builder
             .build_alloca(self.context.i64_type(), "actor_id")
-            .unwrap();
+            .expect("Expected a value");
         let actor_id = self
             .context
             .i64_type()
             .const_int(Self::rand_simple(), false);
-        self.builder.build_store(actor_id_ptr, actor_id).unwrap();
+        self.builder.build_store(actor_id_ptr, actor_id).expect("Expected a value");
         let result = self
             .builder
             .build_ptr_to_int(actor_id_ptr, self.context.i64_type(), "id_ptr")
-            .unwrap();
+            .expect("Expected a value");
 
         // Return as PID
         (self.context.i64_type().const_int(TAG_PID, false), result)
@@ -863,21 +863,21 @@ impl<'ctx> JITCompiler<'ctx> {
         let closure_ptr = self
             .builder
             .build_alloca(self.context.i64_type(), "closure")
-            .unwrap();
+            .expect("Expected a value");
         self.builder
             .build_store(closure_ptr, self.context.i64_type().const_zero())
-            .unwrap();
+            .expect("Expected a value");
         let result = self
             .builder
             .build_ptr_to_int(closure_ptr, self.context.i64_type(), "closure_ptr")
-            .unwrap();
+            .expect("Expected a value");
         self.tag_obj(result.get_zero_extended_constant().unwrap_or(0))
     }
 
     /// Simple random number generator for actor IDs
     fn rand_simple() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let duration = SystemTime::now().duration_since(UNIX_EPOCH).expect("Expected a value");
         (duration.as_nanos() % 0xFFFFFFFF) as u64
     }
 
@@ -942,7 +942,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 self.context.i64_type().const_int(TAG_FLOAT, false),
                 "is_float",
             )
-            .unwrap()
+            .expect("Expected a value")
     }
 
     /// Check if a tagged value is an int
@@ -954,7 +954,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 self.context.i64_type().const_int(TAG_INT, false),
                 "is_int",
             )
-            .unwrap()
+            .expect("Expected a value")
     }
 
     /// Check if a tagged value is an object
@@ -966,7 +966,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 self.context.i64_type().const_int(TAG_OBJ, false),
                 "is_obj",
             )
-            .unwrap()
+            .expect("Expected a value")
     }
 
     /// Extract float bits from payload
@@ -977,7 +977,7 @@ impl<'ctx> JITCompiler<'ctx> {
         // Actually build_bit_cast works for register values if sizes match.
         self.builder
             .build_bit_cast(val, self.context.f64_type(), "bits_to_float")
-            .unwrap()
+            .expect("Expected a value")
             .into_float_value()
     }
 
@@ -990,7 +990,7 @@ impl<'ctx> JITCompiler<'ctx> {
     fn float_to_bits(&self, val: FloatValue<'ctx>) -> IntValue<'ctx> {
         self.builder
             .build_bit_cast(val, self.context.i64_type(), "float_to_bits")
-            .unwrap()
+            .expect("Expected a value")
             .into_int_value()
     }
 
@@ -1028,7 +1028,7 @@ impl<'ctx> JITCompiler<'ctx> {
                 "Hot loop detected at IP {} ({} iterations)",
                 ip, profile.iteration_count
             );
-            self.stats.lock().unwrap().hot_loops_detected += 1;
+            self.stats.lock().expect("Expected a value").hot_loops_detected += 1;
         }
     }
 
@@ -1150,42 +1150,42 @@ impl<'ctx> JITCompiler<'ctx> {
                     let a_val_zero = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, val_a, zero, "a_zero")
-                        .unwrap();
+                        .expect("Expected a value");
                     let a_is_false = self
                         .builder
                         .build_and(a_is_bool, a_val_zero, "a_false")
-                        .unwrap();
+                        .expect("Expected a value");
                     let a_is_falsy = self
                         .builder
                         .build_or(a_is_unit, a_is_false, "a_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     let b_is_unit = self.is_unit(tag_b);
                     let b_is_bool = self.is_bool(tag_b);
                     let b_val_zero = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, val_b, zero, "b_zero")
-                        .unwrap();
+                        .expect("Expected a value");
                     let b_is_false = self
                         .builder
                         .build_and(b_is_bool, b_val_zero, "b_false")
-                        .unwrap();
+                        .expect("Expected a value");
                     let b_is_falsy = self
                         .builder
                         .build_or(b_is_unit, b_is_false, "b_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // AND: both must be truthy
                     let either_falsy = self
                         .builder
                         .build_or(a_is_falsy, b_is_falsy, "either_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
                     // Result: if either_falsy then false(0) else true(1)
-                    let result = self.builder.build_not(either_falsy, "and_res").unwrap();
+                    let result = self.builder.build_not(either_falsy, "and_res").expect("Expected a value");
                     let result_i64 = self
                         .builder
                         .build_int_cast(result, self.context.i64_type(), "and_i64")
-                        .unwrap();
+                        .expect("Expected a value");
                     let tag_bool = self.context.i64_type().const_int(TAG_BOOL, false);
                     self.push_value(tag_bool, result_i64);
                 }
@@ -1201,41 +1201,41 @@ impl<'ctx> JITCompiler<'ctx> {
                     let a_val_zero = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, val_a, zero, "a_zero")
-                        .unwrap();
+                        .expect("Expected a value");
                     let a_is_false = self
                         .builder
                         .build_and(a_is_bool, a_val_zero, "a_false")
-                        .unwrap();
+                        .expect("Expected a value");
                     let a_is_falsy = self
                         .builder
                         .build_or(a_is_unit, a_is_false, "a_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     let b_is_unit = self.is_unit(tag_b);
                     let b_is_bool = self.is_bool(tag_b);
                     let b_val_zero = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, val_b, zero, "b_zero")
-                        .unwrap();
+                        .expect("Expected a value");
                     let b_is_false = self
                         .builder
                         .build_and(b_is_bool, b_val_zero, "b_false")
-                        .unwrap();
+                        .expect("Expected a value");
                     let b_is_falsy = self
                         .builder
                         .build_or(b_is_unit, b_is_false, "b_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // OR: at least one must be truthy
                     let both_falsy = self
                         .builder
                         .build_and(a_is_falsy, b_is_falsy, "both_falsy")
-                        .unwrap();
-                    let result = self.builder.build_not(both_falsy, "or_res").unwrap();
+                        .expect("Expected a value");
+                    let result = self.builder.build_not(both_falsy, "or_res").expect("Expected a value");
                     let result_i64 = self
                         .builder
                         .build_int_cast(result, self.context.i64_type(), "or_i64")
-                        .unwrap();
+                        .expect("Expected a value");
                     let tag_bool = self.context.i64_type().const_int(TAG_BOOL, false);
                     self.push_value(tag_bool, result_i64);
                 }
@@ -1246,45 +1246,45 @@ impl<'ctx> JITCompiler<'ctx> {
                     let is_float = self.is_float(tag);
 
                     // Branch for float vs int logic
-                    let current_block = self.builder.get_insert_block().unwrap();
-                    let parent_fn = current_block.get_parent().unwrap();
+                    let current_block = self.builder.get_insert_block().expect("Expected a value");
+                    let parent_fn = current_block.get_parent().expect("Expected a value");
                     let float_block = self.context.append_basic_block(parent_fn, "neg_float");
                     let int_block = self.context.append_basic_block(parent_fn, "neg_int");
                     let continue_block = self.context.append_basic_block(parent_fn, "neg_cont");
 
                     self.builder
                         .build_conditional_branch(is_float, float_block, int_block)
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // Float
                     self.builder.position_at_end(float_block);
                     // We know it is float, so just bitcast
                     let fval = self.untag_float(val);
-                    let res_f = self.builder.build_float_neg(fval, "fneg").unwrap();
+                    let res_f = self.builder.build_float_neg(fval, "fneg").expect("Expected a value");
                     let (float_tag, float_val) = self.tag_float_bits(res_f);
                     self.builder
                         .build_unconditional_branch(continue_block)
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // Int
                     self.builder.position_at_end(int_block);
-                    let res_i = self.builder.build_int_neg(val, "neg").unwrap();
+                    let res_i = self.builder.build_int_neg(val, "neg").expect("Expected a value");
                     let (int_tag, int_val_res) = self.tag_int_bits(res_i);
                     self.builder
                         .build_unconditional_branch(continue_block)
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // Phi
                     self.builder.position_at_end(continue_block);
                     let phi_tag = self
                         .builder
                         .build_phi(self.context.i64_type(), "neg_tag")
-                        .unwrap();
+                        .expect("Expected a value");
                     phi_tag.add_incoming(&[(&float_tag, float_block), (&int_tag, int_block)]);
                     let phi_val = self
                         .builder
                         .build_phi(self.context.i64_type(), "neg_val")
-                        .unwrap();
+                        .expect("Expected a value");
                     phi_val.add_incoming(&[(&float_val, float_block), (&int_val_res, int_block)]);
 
                     self.push_value(
@@ -1314,16 +1314,16 @@ impl<'ctx> JITCompiler<'ctx> {
                     let val_is_zero = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, val, zero, "val_is_zero")
-                        .unwrap();
+                        .expect("Expected a value");
                     let is_false = self
                         .builder
                         .build_and(is_bool, val_is_zero, "is_false")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     let is_falsy = self
                         .builder
                         .build_or(is_unit, is_false, "is_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // Result is boolean tag
                     // If falsy -> true (1). If truthy -> false (0).
@@ -1331,7 +1331,7 @@ impl<'ctx> JITCompiler<'ctx> {
                     let result = self
                         .builder
                         .build_int_cast(is_falsy, self.context.i64_type(), "bool_res")
-                        .unwrap();
+                        .expect("Expected a value");
                     let tag_bool = self.context.i64_type().const_int(TAG_BOOL, false);
                     self.push_value(tag_bool, result);
                 }
@@ -1365,9 +1365,9 @@ impl<'ctx> JITCompiler<'ctx> {
                     let current_fn = self
                         .builder
                         .get_insert_block()
-                        .unwrap()
+                        .expect("Expected a value")
                         .get_parent()
-                        .unwrap();
+                        .expect("Expected a value");
                     let continue_block = self.context.append_basic_block(current_fn, "cont");
                     let jump_block = self.context.append_basic_block(current_fn, "jump");
 
@@ -1378,19 +1378,19 @@ impl<'ctx> JITCompiler<'ctx> {
                     let val_is_zero = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, val, zero, "val_is_zero")
-                        .unwrap();
+                        .expect("Expected a value");
                     let is_false = self
                         .builder
                         .build_and(is_bool, val_is_zero, "is_false")
-                        .unwrap();
+                        .expect("Expected a value");
                     let is_falsy = self
                         .builder
                         .build_or(is_unit, is_false, "is_falsy")
-                        .unwrap();
+                        .expect("Expected a value");
 
                     self.builder
                         .build_conditional_branch(is_falsy, jump_block, continue_block)
-                        .unwrap();
+                        .expect("Expected a value");
 
                     // Jump block — skip ahead by offset
                     self.builder.position_at_end(jump_block);
@@ -1472,13 +1472,13 @@ impl<'ctx> JITCompiler<'ctx> {
                         let tag_ptr = self
                             .builder
                             .build_struct_gep(struct_ty, *ptr, 0, "def_g_tag")
-                            .unwrap();
-                        self.builder.build_store(tag_ptr, tag).unwrap();
+                            .expect("Expected a value");
+                        self.builder.build_store(tag_ptr, tag).expect("Expected a value");
                         let val_ptr = self
                             .builder
                             .build_struct_gep(struct_ty, *ptr, 1, "def_g_val")
-                            .unwrap();
-                        self.builder.build_store(val_ptr, val).unwrap();
+                            .expect("Expected a value");
+                        self.builder.build_store(val_ptr, val).expect("Expected a value");
                     } else {
                         let struct_ty = self.context.struct_type(
                             &[
@@ -1490,17 +1490,17 @@ impl<'ctx> JITCompiler<'ctx> {
                         let ptr = self
                             .builder
                             .build_alloca(struct_ty, &format!("global_{}", name_idx))
-                            .unwrap();
+                            .expect("Expected a value");
                         let tag_ptr = self
                             .builder
                             .build_struct_gep(struct_ty, ptr, 0, "def_g_tag")
-                            .unwrap();
-                        self.builder.build_store(tag_ptr, tag).unwrap();
+                            .expect("Expected a value");
+                        self.builder.build_store(tag_ptr, tag).expect("Expected a value");
                         let val_ptr = self
                             .builder
                             .build_struct_gep(struct_ty, ptr, 1, "def_g_val")
-                            .unwrap();
-                        self.builder.build_store(val_ptr, val).unwrap();
+                            .expect("Expected a value");
+                        self.builder.build_store(val_ptr, val).expect("Expected a value");
                         _ctx.global_vars.insert(name_idx, ptr);
                     }
                 }
@@ -1525,10 +1525,10 @@ impl<'ctx> JITCompiler<'ctx> {
                             self.context.i64_type(),
                             self.builder
                                 .build_struct_gep(struct_ty, *ptr, 0, "get_g_tag")
-                                .unwrap(),
+                                .expect("Expected a value"),
                             "load_g_tag",
                         )
-                        .unwrap()
+                        .expect("Expected a value")
                         .into_int_value();
                     let val = self
                         .builder
@@ -1536,10 +1536,10 @@ impl<'ctx> JITCompiler<'ctx> {
                             self.context.i64_type(),
                             self.builder
                                 .build_struct_gep(struct_ty, *ptr, 1, "get_g_val")
-                                .unwrap(),
+                                .expect("Expected a value"),
                             "load_g_val",
                         )
-                        .unwrap()
+                        .expect("Expected a value")
                         .into_int_value();
                     self.push_value(tag, val);
                 } else {
@@ -1567,13 +1567,13 @@ impl<'ctx> JITCompiler<'ctx> {
                     let tag_ptr = self
                         .builder
                         .build_struct_gep(struct_ty, *ptr, 0, "set_g_tag")
-                        .unwrap();
-                    self.builder.build_store(tag_ptr, tag).unwrap();
+                        .expect("Expected a value");
+                    self.builder.build_store(tag_ptr, tag).expect("Expected a value");
                     let val_ptr = self
                         .builder
                         .build_struct_gep(struct_ty, *ptr, 1, "set_g_val")
-                        .unwrap();
-                    self.builder.build_store(val_ptr, val).unwrap();
+                        .expect("Expected a value");
+                    self.builder.build_store(val_ptr, val).expect("Expected a value");
                 }
             }
 
@@ -1597,7 +1597,7 @@ impl<'ctx> JITCompiler<'ctx> {
                         });
                     self.builder
                         .build_call(print_fn, &[_tag.into(), val.into()], "print_call")
-                        .unwrap();
+                        .expect("Expected a value");
                 }
             }
             Op::PrintMulti => {
@@ -1628,7 +1628,7 @@ impl<'ctx> JITCompiler<'ctx> {
                         });
                     self.builder
                         .build_call(print_fn, &[tag.into(), val.into()], "print_call")
-                        .unwrap();
+                        .expect("Expected a value");
                 }
             }
 
@@ -1695,11 +1695,11 @@ impl<'ctx> JITCompiler<'ctx> {
                     let is_list_bool = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::NE, is_list, zero, "is_list_bool")
-                        .unwrap();
+                        .expect("Expected a value");
                     let val_res = self
                         .builder
                         .build_int_cast(is_list_bool, self.context.i64_type(), "bool_to_int")
-                        .unwrap();
+                        .expect("Expected a value");
                     let tag_res = self.context.i64_type().const_int(TAG_BOOL, false);
                     self.push_value(tag_res, val_res);
                 } else {
@@ -1715,11 +1715,11 @@ impl<'ctx> JITCompiler<'ctx> {
                     let is_map_bool = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::NE, is_map, zero, "is_map_bool")
-                        .unwrap();
+                        .expect("Expected a value");
                     let val_res = self
                         .builder
                         .build_int_cast(is_map_bool, self.context.i64_type(), "bool_to_int")
-                        .unwrap();
+                        .expect("Expected a value");
                     let tag_res = self.context.i64_type().const_int(TAG_BOOL, false);
                     self.push_value(tag_res, val_res);
                 } else {
@@ -1975,18 +1975,18 @@ impl<'ctx> JITCompiler<'ctx> {
             let any_float = self
                 .builder
                 .build_or(left_is_float, right_is_float, "any_float")
-                .unwrap();
+                .expect("Expected a value");
 
             // Blocks
-            let current_block = self.builder.get_insert_block().unwrap();
-            let parent_fn = current_block.get_parent().unwrap();
+            let current_block = self.builder.get_insert_block().expect("Expected a value");
+            let parent_fn = current_block.get_parent().expect("Expected a value");
             let float_block = self.context.append_basic_block(parent_fn, "op_float");
             let int_block = self.context.append_basic_block(parent_fn, "op_int");
             let continue_block = self.context.append_basic_block(parent_fn, "op_cont");
 
             self.builder
                 .build_conditional_branch(any_float, float_block, int_block)
-                .unwrap();
+                .expect("Expected a value");
 
             // Float Block
             self.builder.position_at_end(float_block);
@@ -1997,7 +1997,7 @@ impl<'ctx> JITCompiler<'ctx> {
             let (float_tag, float_val) = self.tag_float_bits(res_float);
             self.builder
                 .build_unconditional_branch(continue_block)
-                .unwrap();
+                .expect("Expected a value");
 
             // Int Block
             self.builder.position_at_end(int_block);
@@ -2006,7 +2006,7 @@ impl<'ctx> JITCompiler<'ctx> {
             let (int_tag, int_val_res) = self.tag_int_bits(res_int);
             self.builder
                 .build_unconditional_branch(continue_block)
-                .unwrap();
+                .expect("Expected a value");
 
             // Continue Block
             self.builder.position_at_end(continue_block);
@@ -2014,13 +2014,13 @@ impl<'ctx> JITCompiler<'ctx> {
             let phi_tag = self
                 .builder
                 .build_phi(self.context.i64_type(), "res_tag")
-                .unwrap();
+                .expect("Expected a value");
             phi_tag.add_incoming(&[(&float_tag, float_block), (&int_tag, int_block)]);
 
             let phi_val = self
                 .builder
                 .build_phi(self.context.i64_type(), "res_val")
-                .unwrap();
+                .expect("Expected a value");
             phi_val.add_incoming(&[(&float_val, float_block), (&int_val_res, int_block)]);
 
             self.push_value(
@@ -2039,19 +2039,19 @@ impl<'ctx> JITCompiler<'ctx> {
         let as_float_bits = self
             .builder
             .build_bit_cast(val, self.context.f64_type(), "bits_to_float")
-            .unwrap()
+            .expect("Expected a value")
             .into_float_value();
 
         // Path 2: It is int, convert to float
         let as_int_conv = self
             .builder
             .build_signed_int_to_float(val, self.context.f64_type(), "sitofp")
-            .unwrap();
+            .expect("Expected a value");
 
         // Select
         self.builder
             .build_select(is_float, as_float_bits, as_int_conv, "val_f")
-            .unwrap()
+            .expect("Expected a value")
             .into_float_value()
     }
 
@@ -2061,7 +2061,7 @@ impl<'ctx> JITCompiler<'ctx> {
         let bits = self
             .builder
             .build_bit_cast(val, self.context.i64_type(), "float_to_bits")
-            .unwrap()
+            .expect("Expected a value")
             .into_int_value();
         (tag, bits)
     }
@@ -2087,18 +2087,18 @@ impl<'ctx> JITCompiler<'ctx> {
             let any_float = self
                 .builder
                 .build_or(left_is_float, right_is_float, "any_float")
-                .unwrap();
+                .expect("Expected a value");
 
             // Blocks
-            let current_block = self.builder.get_insert_block().unwrap();
-            let parent_fn = current_block.get_parent().unwrap();
+            let current_block = self.builder.get_insert_block().expect("Expected a value");
+            let parent_fn = current_block.get_parent().expect("Expected a value");
             let float_block = self.context.append_basic_block(parent_fn, "cmp_float");
             let int_block = self.context.append_basic_block(parent_fn, "cmp_int");
             let continue_block = self.context.append_basic_block(parent_fn, "cmp_cont");
 
             self.builder
                 .build_conditional_branch(any_float, float_block, int_block)
-                .unwrap();
+                .expect("Expected a value");
 
             // Float Block
             self.builder.position_at_end(float_block);
@@ -2107,40 +2107,40 @@ impl<'ctx> JITCompiler<'ctx> {
             let cmp_f = self
                 .builder
                 .build_float_compare(float_pred, float_l, float_r, name)
-                .unwrap();
+                .expect("Expected a value");
             // Convert i1 to i64 (0 or 1)
             let one = self.context.i64_type().const_int(1, false);
             let zero = self.context.i64_type().const_int(0, false);
             let res_f = self
                 .builder
                 .build_select(cmp_f, one, zero, "bool_res_f")
-                .unwrap()
+                .expect("Expected a value")
                 .into_int_value();
             self.builder
                 .build_unconditional_branch(continue_block)
-                .unwrap();
+                .expect("Expected a value");
 
             // Int Block
             self.builder.position_at_end(int_block);
             let cmp_i = self
                 .builder
                 .build_int_compare(int_pred, val_l, val_r, name)
-                .unwrap();
+                .expect("Expected a value");
             let res_i = self
                 .builder
                 .build_select(cmp_i, one, zero, "bool_res_i")
-                .unwrap()
+                .expect("Expected a value")
                 .into_int_value();
             self.builder
                 .build_unconditional_branch(continue_block)
-                .unwrap();
+                .expect("Expected a value");
 
             // Continue
             self.builder.position_at_end(continue_block);
             let phi_val = self
                 .builder
                 .build_phi(self.context.i64_type(), "cmp_res")
-                .unwrap();
+                .expect("Expected a value");
             phi_val.add_incoming(&[(&res_f, float_block), (&res_i, int_block)]);
 
             // Result is boolean tag
@@ -2181,7 +2181,7 @@ impl<'ctx> JITCompiler<'ctx> {
                         self.context.i64_type(),
                         "str_ptr",
                     )
-                    .unwrap();
+                    .expect("Expected a value");
                 Ok(self.tag_obj(ptr.get_zero_extended_constant().unwrap_or(0)))
             }
             Constant::Unit => Ok(self.tag_unit()),
@@ -2200,7 +2200,7 @@ impl<'ctx> JITCompiler<'ctx> {
 
     fn optimize_chunk(&self, chunk: &Chunk) -> JITResult<Chunk> {
         let mut optimized = chunk.clone();
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().expect("Expected a value");
 
         if self.enable_constant_folding {
             let mut ip = 0;
@@ -2277,14 +2277,14 @@ impl<'ctx> JITCompiler<'ctx> {
         let tag_bool = self.context.i64_type().const_int(TAG_BOOL, false);
         self.builder
             .build_int_compare(inkwell::IntPredicate::EQ, tag, tag_bool, "is_bool")
-            .unwrap()
+            .expect("Expected a value")
     }
 
     fn is_unit(&self, tag: IntValue<'ctx>) -> IntValue<'ctx> {
         let tag_unit = self.context.i64_type().const_int(TAG_UNIT, false);
         self.builder
             .build_int_compare(inkwell::IntPredicate::EQ, tag, tag_unit, "is_unit")
-            .unwrap()
+            .expect("Expected a value")
     }
 
     // Also is_int if used? (Warning said `is_int` method similar name exists?)
@@ -2325,7 +2325,7 @@ mod tests {
     #[test]
     fn test_module_creation() {
         let context = Context::create();
-        let jit = JITCompiler::new(&context).unwrap();
+        let jit = JITCompiler::new(&context).expect("Expected a value");
         let module = jit.get_module();
         assert!(!module.get_name().is_empty());
     }
@@ -2333,7 +2333,7 @@ mod tests {
     #[test]
     fn test_empty_chunk() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let chunk = pulse_core::Chunk::new();
         let result = jit.compile_chunk(&chunk);
         assert!(result.is_ok());
@@ -2342,7 +2342,7 @@ mod tests {
     #[test]
     fn test_stats_initialization() {
         let context = Context::create();
-        let jit = JITCompiler::new(&context).unwrap();
+        let jit = JITCompiler::new(&context).expect("Expected a value");
         let stats = jit.get_stats();
         assert_eq!(stats.instructions_compiled, 0);
     }
@@ -2350,7 +2350,7 @@ mod tests {
     #[test]
     fn test_multiple_functions() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
 
         for _ in 0..5 {
             let chunk = pulse_core::Chunk::new();
@@ -2379,7 +2379,7 @@ mod tests {
     #[test]
     fn test_const_push() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let idx = le_u16(0);
         let chunk = build_chunk(
             vec![
@@ -2402,7 +2402,7 @@ mod tests {
     #[test]
     fn test_local_vars() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let idx = le_u16(0);
         let chunk = build_chunk(
             vec![
@@ -2429,7 +2429,7 @@ mod tests {
     #[test]
     fn test_arithmetic_ops() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let c1 = le_u16(1);
         let chunk = build_chunk(
@@ -2457,7 +2457,7 @@ mod tests {
     #[test]
     fn test_comparison_ops() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let c1 = le_u16(1);
         let chunk = build_chunk(
@@ -2493,7 +2493,7 @@ mod tests {
     #[test]
     fn test_logic_ops() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let c1 = le_u16(1);
         let chunk = build_chunk(
@@ -2517,7 +2517,7 @@ mod tests {
     #[test]
     fn test_global_vars() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let c0 = le_u16(0); // constant index
         let g0 = le_u16(0); // global name index
         let chunk = build_chunk(
@@ -2547,7 +2547,7 @@ mod tests {
     #[test]
     fn test_jump_forward() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let offset = le_u16(2); // skip 2 bytes ahead
         let chunk = build_chunk(
@@ -2576,7 +2576,7 @@ mod tests {
     #[test]
     fn test_loop_backjump() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         // Test that Loop opcode reads u16 and advances IP correctly
         // Rather than creating an actual loop (which would infinite-loop compile),
         // just verify the bytecode layout compiles
@@ -2605,7 +2605,7 @@ mod tests {
     #[test]
     fn test_float_addition_no_print() {
         let context = Context::create();
-        let mut jit = JITCompiler::new(&context).unwrap();
+        let mut jit = JITCompiler::new(&context).expect("Expected a value");
         let c0 = le_u16(0);
         let c1 = le_u16(1);
         let chunk = build_chunk(
@@ -2623,7 +2623,7 @@ mod tests {
         );
         let result = jit.compile_chunk(&chunk);
         assert!(result.is_ok());
-        let function = result.unwrap();
+        let function = result.expect("Expected a value");
         let val = jit.execute_function(function);
         assert!(val.is_ok());
     }

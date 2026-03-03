@@ -22,7 +22,7 @@ fn test_jit_initialization() {
 #[test]
 fn test_module_creation() {
     let context = Context::create();
-    let jit = JITCompiler::new(&context).unwrap();
+    let jit = JITCompiler::new(&context).expect("Expected a value");
     let module = jit.get_module();
     assert!(!module.get_name().is_empty());
 }
@@ -30,7 +30,7 @@ fn test_module_creation() {
 #[test]
 fn test_empty_chunk() {
     let context = Context::create();
-    let mut jit = JITCompiler::new(&context).unwrap();
+    let mut jit = JITCompiler::new(&context).expect("Expected a value");
     let chunk = pulse_core::Chunk::new();
     let result = jit.compile_chunk(&chunk);
     assert!(result.is_ok());
@@ -39,7 +39,7 @@ fn test_empty_chunk() {
 #[test]
 fn test_stats_initialization() {
     let context = Context::create();
-    let jit = JITCompiler::new(&context).unwrap();
+    let jit = JITCompiler::new(&context).expect("Expected a value");
     let stats = jit.get_stats();
     assert_eq!(stats.instructions_compiled, 0);
 }
@@ -47,7 +47,7 @@ fn test_stats_initialization() {
 #[test]
 fn test_multiple_functions() {
     let context = Context::create();
-    let mut jit = JITCompiler::new(&context).unwrap();
+    let mut jit = JITCompiler::new(&context).expect("Expected a value");
 
     for _ in 0..5 {
         let chunk = pulse_core::Chunk::new();

@@ -254,7 +254,7 @@ mod tests {
 
         let result = heap.get(handle);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().value, Value::Int(42));
+        assert_eq!(result.expect("Expected a value").value, Value::Int(42));
     }
 
     #[test]
@@ -273,7 +273,7 @@ mod tests {
         // Read the modified value
         let result = heap.get(handle);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().value, Value::Int(100));
+        assert_eq!(result.expect("Expected a value").value, Value::Int(100));
     }
 
     #[test]

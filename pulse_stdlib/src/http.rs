@@ -67,7 +67,7 @@ pub fn http_get_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
     let body_id = uuid::Uuid::new_v4().to_string();
     RESPONSE_BODIES
         .lock()
-        .unwrap()
+        .expect("Expected a value")
         .insert(body_id.clone(), body);
 
     let mut result = HashMap::new();
@@ -137,7 +137,7 @@ pub fn http_post_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRe
     let body_id = uuid::Uuid::new_v4().to_string();
     RESPONSE_BODIES
         .lock()
-        .unwrap()
+        .expect("Expected a value")
         .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
@@ -206,7 +206,7 @@ pub fn http_put_native(heap: &mut dyn HeapInterface, args: &[Value]) -> PulseRes
     let body_id = uuid::Uuid::new_v4().to_string();
     RESPONSE_BODIES
         .lock()
-        .unwrap()
+        .expect("Expected a value")
         .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
@@ -274,7 +274,7 @@ pub fn http_delete_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pulse
     let body_id = uuid::Uuid::new_v4().to_string();
     RESPONSE_BODIES
         .lock()
-        .unwrap()
+        .expect("Expected a value")
         .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();
@@ -306,7 +306,7 @@ pub fn http_get_body_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Pul
 
     let body_id = extract_string(heap, &args[0])?;
 
-    let bodies = RESPONSE_BODIES.lock().unwrap();
+    let bodies = RESPONSE_BODIES.lock().expect("Expected a value");
     let body = bodies.get(&body_id).cloned().unwrap_or_default();
 
     Ok(Value::Obj(heap.alloc_object(Object::String(body))))
@@ -379,7 +379,7 @@ pub fn http_request_native(heap: &mut dyn HeapInterface, args: &[Value]) -> Puls
     let body_id = uuid::Uuid::new_v4().to_string();
     RESPONSE_BODIES
         .lock()
-        .unwrap()
+        .expect("Expected a value")
         .insert(body_id.clone(), resp_body);
 
     let mut result = HashMap::new();

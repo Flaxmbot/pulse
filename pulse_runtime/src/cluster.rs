@@ -216,7 +216,7 @@ impl Cluster {
     /// Create a new cluster (standalone node)
     pub async fn new(port: u16) -> std::io::Result<Self> {
         let node_id = NodeId::new();
-        let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+        let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().expect("Expected a value");
 
         let state = Arc::new(RwLock::new(ClusterState::new(node_id, addr)));
 
@@ -538,7 +538,7 @@ mod tests {
         // Create cluster on random port - this tests basic state management
         // Note: UDP broadcast may not work in all test environments
         let node_id = NodeId::new();
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("Expected a value");
         let state = ClusterState::new(node_id.clone(), addr);
 
         // Should have 1 member

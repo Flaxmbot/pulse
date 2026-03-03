@@ -321,7 +321,7 @@ fn parse_time_parsed(time_str: &str, format: &str) -> PulseResult<NaiveDateTime>
     if format == "%Y-%m-%d" {
         let date = NaiveDate::parse_from_str(time_str, "%Y-%m-%d")
             .map_err(|e| PulseError::RuntimeError(format!("Failed to parse date: {}", e)))?;
-        return Ok(date.and_hms_opt(0, 0, 0).unwrap());
+        return Ok(date.and_hms_opt(0, 0, 0).expect("Expected a value"));
     }
     if format == "%H:%M:%S" {
         let time = chrono::NaiveTime::parse_from_str(time_str, "%H:%M:%S")
@@ -329,7 +329,7 @@ fn parse_time_parsed(time_str: &str, format: &str) -> PulseResult<NaiveDateTime>
         let today = chrono::Local::now().date_naive();
         return Ok(today
             .and_hms_opt(time.hour(), time.minute(), time.second())
-            .unwrap());
+            .expect("Expected a value"));
     }
 
     Err(PulseError::RuntimeError(format!(
