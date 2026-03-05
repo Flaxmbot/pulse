@@ -1,0 +1,26 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -1010,7 +1010,13 @@
+                 if has_parens {
+                     self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
+                 }
+-                Ok(Expr::Literal(Constant::Unit))
++
++                // Reconstruct print as a method/function call ast node or specific PrintExpr,
++                // but wait, does AST have a Print expression node?
++                // If not, we might need to map it to a Call(Variable("print"), args)
++                // Let's assume there is no Print expression node and we must use Stmt::Print or desugar it to a Call.
++                // Actually, wait, let's map it to Expr::Call(Box::new(Expr::Variable("print".to_string())), exprs)
++                Ok(Expr::Call(Box::new(Expr::Variable("print".to_string())), exprs))
+             }
+             Token::Println => {
+                 let mut exprs = Vec::new();
+@@ -1030,7 +1036,7 @@
+                 if has_parens {
+                     self.consume(Token::RightParen, "Expect ')' after println arguments.")?;
+                 }
+-                Ok(Expr::Literal(Constant::Unit))
++                Ok(Expr::Call(Box::new(Expr::Variable("println".to_string())), exprs))
+             }
+             Token::Super => {
+                 self.consume(Token::Dot, "Expect '.' after 'super'.")?;

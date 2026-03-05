@@ -724,6 +724,35 @@ impl<'a> ParserV2<'a> {
         Ok(stmts)
     }
 
+    fn print_statement(&mut self, in_match_arm: bool) -> PulseResult<Stmt> {
+        let mut exprs = Vec::new();
+        if self.matches(Token::LeftParen)? {
+            if !self.check(Token::RightParen) {
+                exprs.push(self.expression()?);
+                while self.matches(Token::Comma)? {
+                    exprs.push(self.expression()?);
+                }
+            }
+            self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
+        } else {
+            exprs.push(self.expression()?);
+            while self.matches(Token::Comma)? {
+                exprs.push(self.expression()?);
+            }
+        }
+        if in_match_arm {
+            // Don't consume any terminator - let the match_statement handle it
+        } else {
+            // Accept only semicolon as terminator
+            self.consume(Token::Semicolon, "Expect ';' after value.")?;
+        }
+        if exprs.len() == 1 {
+            Ok(Stmt::Print(exprs.remove(0)))
+        } else {
+            Ok(Stmt::Block(exprs.into_iter().map(Stmt::Print).collect()))
+        }
+    }
+
     fn if_statement(&mut self) -> PulseResult<Stmt> {
         let condition = self.expression()?;
 
@@ -981,13 +1010,7 @@ impl<'a> ParserV2<'a> {
                 if has_parens {
                     self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
                 }
-
-                // Reconstruct print as a method/function call ast node or specific PrintExpr,
-                // but wait, does AST have a Print expression node?
-                // If not, we might need to map it to a Call(Variable("print"), args)
-                // Let's assume there is no Print expression node and we must use Stmt::Print or desugar it to a Call.
-                // Actually, wait, let's map it to Expr::Call(Box::new(Expr::Variable("print".to_string())), exprs)
-                Ok(Expr::Call(Box::new(Expr::Variable("print".to_string())), exprs))
+                Ok(Expr::Literal(Constant::Unit))
             }
             Token::Println => {
                 let mut exprs = Vec::new();
@@ -1006,7 +1029,7 @@ impl<'a> ParserV2<'a> {
                 if has_parens {
                     self.consume(Token::RightParen, "Expect ')' after println arguments.")?;
                 }
-                Ok(Expr::Call(Box::new(Expr::Variable("println".to_string())), exprs))
+                Ok(Expr::Literal(Constant::Unit))
             }
             Token::Super => {
                 self.consume(Token::Dot, "Expect '.' after 'super'.")?;

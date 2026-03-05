@@ -1,0 +1,13 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -1295,7 +1295,9 @@
+             } else {
+                 // Expression body
+                 self.expression()?;
+-                if self.matches(Token::Comma)? {}
++            }
++            if self.matches(Token::Comma)? {
++                // Optional comma after arm body
+             }
+
+             // End Scope manually to preserve Result

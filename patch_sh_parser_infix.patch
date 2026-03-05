@@ -1,0 +1,14 @@
+--- self-hosted/parser.pulse
++++ self-hosted/parser.pulse
+@@ -134,6 +134,12 @@
+     if (token_type == "LESS_EQUAL") return "binary";
+     if (token_type == "AND") return "logical";
+     if (token_type == "OR") return "logical";
++    if (token_type == "EQUAL") return "assignment";
++    if (token_type == "PLUS_EQUAL") return "assignment";
++    if (token_type == "MINUS_EQUAL") return "assignment";
++    if (token_type == "STAR_EQUAL") return "assignment";
++    if (token_type == "SLASH_EQUAL") return "assignment";
++    if (token_type == "PERCENT_EQUAL") return "assignment";
+     return nil;
+ }

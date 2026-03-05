@@ -1,0 +1,11 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -2717,6 +2717,5 @@
+     fn compile_error(&self, message: impl Into<String>) -> PulseError {
+         let parser = self.parser.borrow();
+-        let line = parser.line();
+-        let token = format!("{:?}", parser.current);
+-        PulseError::CompileError(format!("{} Near token {}.", message.into(), token), line)
++        // parser.error will include line, column, and a snippet context.
++        parser.error(message)
+     }

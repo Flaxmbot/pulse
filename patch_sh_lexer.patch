@@ -1,0 +1,80 @@
+--- self-hosted/lexer.pulse
++++ self-hosted/lexer.pulse
+@@ -51,6 +51,12 @@
+     "SEND": "SEND",
+     "IMPORT": "IMPORT",
+     "ARROW": "ARROW",
++    "PLUS_EQUAL": "PLUS_EQUAL",
++    "MINUS_EQUAL": "MINUS_EQUAL",
++    "STAR_EQUAL": "STAR_EQUAL",
++    "SLASH_EQUAL": "SLASH_EQUAL",
++    "PERCENT_EQUAL": "PERCENT_EQUAL",
++    "DOT_DOT": "DOT_DOT",
+     "NEWLINE": "NEWLINE",
+     "EOF": "EOF",
+     "ERROR": "ERROR"
+@@ -68,6 +74,7 @@
+     "let": "LET",
+     "if": "IF",
+     "else": "ELSE",
++    "elif": "ELSE",
+     "while": "WHILE",
+     "for": "FOR",
+     "in": "IN",
+@@ -128,6 +135,10 @@
+                 return _make_token(lexer, TOKEN_TYPES["GREATER_EQUAL"], ">=");
+             }
+             return _make_token(lexer, TOKEN_TYPES["GREATER"], ">");
+         }
+
+         if (c == "+") {
+             advance(lexer);
++            if (lexer["current"] == "=") {
++                advance(lexer);
++                return _make_token(lexer, TOKEN_TYPES["PLUS_EQUAL"], "+=");
++            }
+             return _make_token(lexer, TOKEN_TYPES["PLUS"], "+");
+         }
+
+         if (c == "-") {
+             advance(lexer);
++            if (lexer["current"] == "=") {
++                advance(lexer);
++                return _make_token(lexer, TOKEN_TYPES["MINUS_EQUAL"], "-=");
++            }
+             return _make_token(lexer, TOKEN_TYPES["MINUS"], "-");
+         }
+
+         if (c == "*") {
+             advance(lexer);
++            if (lexer["current"] == "=") {
++                advance(lexer);
++                return _make_token(lexer, TOKEN_TYPES["STAR_EQUAL"], "*=");
++            }
+             return _make_token(lexer, TOKEN_TYPES["STAR"], "*");
+         }
+
+         if (c == "/") {
+             advance(lexer);
++            if (lexer["current"] == "=") {
++                advance(lexer);
++                return _make_token(lexer, TOKEN_TYPES["SLASH_EQUAL"], "/=");
++            }
+             if (lexer["current"] == "/") {
+                 // Single-line comment
+                 while (lexer["current"] != "\n" and lexer["current"] != "") {
+@@ -155,6 +176,14 @@
+             advance(lexer);
+             return _make_token(lexer, TOKEN_TYPES["PERCENT"], "%");
+         }
++
++        if (c == ".") {
++            advance(lexer);
++            if (lexer["current"] == ".") {
++                advance(lexer);
++                return _make_token(lexer, TOKEN_TYPES["DOT_DOT"], "..");
++            }
++            return _make_token(lexer, TOKEN_TYPES["DOT"], ".");
++        }
+
+         if (c == "(") {

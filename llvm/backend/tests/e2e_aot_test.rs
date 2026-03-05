@@ -39,7 +39,7 @@ fn test_e2e_arithmetic_expression() {
 
 #[test]
 fn test_e2e_print_statement() {
-    let source = "println(42);\n";
+    let source = "print(42);\n";
     let chunk = compile_source(source);
 
     let context = Context::create();
@@ -51,7 +51,7 @@ fn test_e2e_print_statement() {
 
 #[test]
 fn test_e2e_object_file_output() {
-    let source = "let x = 1 + 2;\nprintln(x);\n";
+    let source = "let x = 1 + 2;\nprint(x);\n";
     let chunk = compile_source(source);
 
     let context = Context::create();
@@ -79,7 +79,7 @@ fn test_e2e_object_file_output() {
 
 #[test]
 fn test_e2e_ir_output() {
-    let source = "let x = 42;\nprintln(x);\n";
+    let source = "let x = 42;\nprint(x);\n";
     let chunk = compile_source(source);
 
     let context = Context::create();
@@ -106,7 +106,7 @@ fn test_e2e_ir_output() {
 
 #[test]
 fn test_e2e_string_constant() {
-    let source = "let name = \"Pulse\";\nprintln(name);\n";
+    let source = "let name = \"Pulse\";\nprint(name);\n";
     let chunk = compile_source(source);
 
     let context = Context::create();

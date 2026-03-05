@@ -140,12 +140,6 @@ fn get_infix_fn(token_type) {
     if (token_type == "LESS_EQUAL") return "binary";
     if (token_type == "AND") return "logical";
     if (token_type == "OR") return "logical";
-    if (token_type == "EQUAL") return "assignment";
-    if (token_type == "PLUS_EQUAL") return "assignment";
-    if (token_type == "MINUS_EQUAL") return "assignment";
-    if (token_type == "STAR_EQUAL") return "assignment";
-    if (token_type == "SLASH_EQUAL") return "assignment";
-    if (token_type == "PERCENT_EQUAL") return "assignment";
     return nil;
 }
 
@@ -159,17 +153,17 @@ fn parse_precedence(p, precedence) {
         error(p, "Expect expression.");
         return nil;
     }
-    
+
     let can_assign = precedence <= PREC_ASSIGNMENT;
     let left_expr = call_prefix(p, prefix_fn, can_assign);
-    
+
     while (precedence <= get_precedence(p["current"]["type"])) {
         advance(p);
         let infix_type = p["previous"]["type"];
         let infix_fn = get_infix_fn(infix_type);
         left_expr = call_infix(p, infix_fn, left_expr, can_assign);
     }
-    
+
     return left_expr;
 }
 
@@ -194,7 +188,6 @@ fn call_infix(p, fn_name, left, can_assign) {
     if (fn_name == "call") return parse_call(p, left);
     if (fn_name == "index") return parse_index(p, left);
     if (fn_name == "dot") return parse_dot(p, left, can_assign);
-    if (fn_name == "assignment") return parse_assignment(p, left);
     return nil;
 }
 
@@ -203,7 +196,7 @@ fn parse_literal(p) {
     let line = token["line"];
     let lexeme = token["lexeme"];
     let token_type = token["type"];
-    
+
     if (token_type == "INT") return a_mod["literal_expr"](to_int(lexeme), line);
     if (token_type == "FLOAT") return a_mod["literal_expr"](to_float(lexeme), line);
     if (token_type == "STRING") return a_mod["literal_expr"](lexeme, line);
@@ -294,7 +287,7 @@ fn parse_lambda(p) {
         }
     }
     consume(p, "RIGHT_PAREN", "Expect ')' after parameters.");
-    
+
     let body = nil;
     if (matches(p, "ARROW")) {
         body = expression(p);
@@ -302,7 +295,7 @@ fn parse_lambda(p) {
         consume(p, "LEFT_BRACE", "Expect '{' before function body.");
         body = parse_block(p);
     }
-    
+
     return a_mod["lambda_expr"](params, body, line);
 }
 
@@ -335,30 +328,6 @@ fn parse_dot(p, left, can_assign) {
         return a_mod["set_expr"](left, name, value, line);
     }
     return a_mod["get_expr"](left, name, line);
-}
-
-fn parse_assignment(p, left) {
-    let line = p["previous"]["line"];
-    let operator = p["previous"]["type"];
-    let value = expression(p);
-
-    let is_compound = false;
-    let op_str = "";
-    if (operator == "PLUS_EQUAL") { is_compound = true; op_str = "+"; }
-    else if (operator == "MINUS_EQUAL") { is_compound = true; op_str = "-"; }
-    else if (operator == "STAR_EQUAL") { is_compound = true; op_str = "*"; }
-    else if (operator == "SLASH_EQUAL") { is_compound = true; op_str = "/"; }
-    else if (operator == "PERCENT_EQUAL") { is_compound = true; op_str = "%"; }
-
-    if (is_compound) {
-        value = a_mod["binary_expr"](left, op_str, value, line);
-    }
-
-    if (left["kind"] == "variable") return a_mod["assignment_expr"](left["name"], value, line);
-    if (left["kind"] == "get") return a_mod["set_expr"](left["object"], left["name"], value, line);
-    if (left["kind"] == "index") return a_mod["index_set_expr"](left["object"], left["index"], value, line);
-    error(p, "Invalid assignment target.");
-    return nil;
 }
 
 // --- Statement Parsing ---
@@ -559,4 +528,3 @@ let parser_mod = {
 };
 
 return parser_mod;
-

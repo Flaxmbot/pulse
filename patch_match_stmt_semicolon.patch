@@ -1,0 +1,10 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -689,6 +689,7 @@
+         } else if self.matches(Token::Match)? {
+             self.match_expression(false)?;
+             self.emit_byte(Op::Pop as u8);
++            if self.matches(Token::Semicolon)? {}
+         } else {
+             self.expression_statement()?;
+         }

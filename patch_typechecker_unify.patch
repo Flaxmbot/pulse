@@ -1,0 +1,11 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -731,9 +731,6 @@
+             (Type::Atomic, Type::Atomic) => Ok(()),
+             (Type::Any, _) | (_, Type::Any) => Ok(()), // Any unifies with anything
+
+-            // Disable strict unifications for now
+-            (_, _) => Ok(()),
+-
+             // Type variables
+             (Type::Var(v), t) | (t, Type::Var(v)) => self.var_bind(v, t, location),

@@ -696,14 +696,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn send_statement(&mut self) -> PulseResult<()> {
-        // send target, msg; OR send(target, msg)
-        let has_paren = self.matches(Token::LeftParen)?;
+        // send target, msg;
         self.expression()?; // target
         self.consume(Token::Comma, "Expect ',' after 'send' target.")?;
         self.expression()?; // msg
-        if has_paren {
-            self.consume(Token::RightParen, "Expect ')' after send message.")?;
-        }
         self.consume(Token::Semicolon, "Expect ';' after send statement.")?;
 
         self.emit_byte(Op::Send as u8);
@@ -2702,8 +2698,9 @@ impl<'a> Compiler<'a> {
 
     fn compile_error(&self, message: impl Into<String>) -> PulseError {
         let parser = self.parser.borrow();
-        // parser.error will include line, column, and a snippet context.
-        parser.error(message)
+        let line = parser.line();
+        let token = format!("{:?}", parser.current);
+        PulseError::CompileError(format!("{} Near token {}.", message.into(), token), line)
     }
 
     // --- Jump Helpers ---

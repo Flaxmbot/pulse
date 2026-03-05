@@ -1,0 +1,17 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -1349,6 +1349,7 @@
+
+                 match callee_ty {
+                     Type::Fn(params, ret) => {
+                         if params.len() != arg_types.len() {
+                             return Err(TypeError::WrongArgumentCount {
+                                 expected: params.len(),
+@@ -1362,6 +1363,7 @@
+                         }
+                         Ok(*ret)
+                     }
++                    Type::Any => Ok(self.fresh_var()),
+                     Type::Var(_) => {
+                         // Fresh function type - infer from args
+                         let ret_ty = self.fresh_var();

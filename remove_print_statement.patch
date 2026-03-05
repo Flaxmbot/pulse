@@ -1,0 +1,35 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -724,31 +724,6 @@
+         Ok(stmts)
+     }
+
+-    fn print_statement(&mut self, in_match_arm: bool) -> PulseResult<Stmt> {
+-        let mut exprs = Vec::new();
+-        if self.matches(Token::LeftParen)? {
+-            if !self.check(Token::RightParen) {
+-                exprs.push(self.expression()?);
+-                while self.matches(Token::Comma)? {
+-                    exprs.push(self.expression()?);
+-                }
+-            }
+-            self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
+-        } else {
+-            if !self.check(Token::Semicolon) && !self.check(Token::RightBrace) && !self.check(Token::Comma) {
+-                exprs.push(self.expression()?);
+-            }
+-        }
+-        if in_match_arm {
+-            // Don't consume any terminator - let the match_statement handle it
+-        } else {
+-            // Accept only semicolon as terminator
+-            self.consume(Token::Semicolon, "Expect ';' after value.")?;
+-        }
+-        if exprs.len() == 1 {
+-            Ok(Stmt::Print(exprs.remove(0)))
+-        } else {
+-            Ok(Stmt::Block(exprs.into_iter().map(Stmt::Print).collect()))
+-        }
+-    }
+-
+     fn if_statement(&mut self) -> PulseResult<Stmt> {

@@ -1,0 +1,13 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -1318,10 +1318,6 @@
+             }
+             // Pop Subject (failed match for this arm)
+             self.emit_byte(Op::Pop as u8);
+-
+-            if self.check(Token::Comma) {
+-                self.advance()?;
+-            }
+
+             // Loop continues to next arm
+         }

@@ -1,0 +1,12 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -1082,10 +1082,8 @@
+                 let _ = self.expression()?;
+             }
+
+-            if !self.matches(Token::Comma)? && !self.check(Token::RightBrace) {
+-                return Err(self.error("Expect ',' or '}' after match arm."));
++            if self.check(Token::Comma) {
++                self.advance()?;
+             }
+         }

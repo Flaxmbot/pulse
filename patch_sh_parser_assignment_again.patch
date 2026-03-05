@@ -1,0 +1,31 @@
+--- self-hosted/parser.pulse
++++ self-hosted/parser.pulse
+@@ -338,6 +338,26 @@
+     return a_mod["get_expr"](left, name, line);
+ }
+
++fn parse_assignment(p, left) {
++    let line = p["previous"]["line"];
++    let operator = p["previous"]["type"];
++    let value = expression(p);
++
++    let is_compound = false;
++    let op_str = "";
++    if (operator == "PLUS_EQUAL") { is_compound = true; op_str = "+"; }
++    else if (operator == "MINUS_EQUAL") { is_compound = true; op_str = "-"; }
++    else if (operator == "STAR_EQUAL") { is_compound = true; op_str = "*"; }
++    else if (operator == "SLASH_EQUAL") { is_compound = true; op_str = "/"; }
++    else if (operator == "PERCENT_EQUAL") { is_compound = true; op_str = "%"; }
++
++    if (is_compound) {
++        value = a_mod["binary_expr"](left, op_str, value, line);
++    }
++
++    if (left["kind"] == "variable") return a_mod["assignment_expr"](left["name"], value, line);
++    if (left["kind"] == "get") return a_mod["set_expr"](left["object"], left["name"], value, line);
++    if (left["kind"] == "index") return a_mod["index_set_expr"](left["object"], left["index"], value, line);
++    error(p, "Invalid assignment target.");
++    return nil;
++}
++
+ // --- Statement Parsing ---

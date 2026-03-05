@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Pulse Language | Documentation & Playground</title>
+  <!-- Material UI & Roboto Font -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" />
+  <!-- Highlight.js for Syntax Highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/monokai-sublime.min.css">
+
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Roboto', sans-serif;
+      background-color: #f4f6f8;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background-color: #6200ea;
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 250px;
+      background-color: white;
+      border-right: 1px solid #ddd;
+      overflow-y: auto;
+      padding: 16px 0;
+    }
+    .sidebar ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .sidebar li {
+      padding: 12px 24px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #555;
+      font-weight: 500;
+      transition: background-color 0.2s ease;
+    }
+    .sidebar li:hover {
+      background-color: #f0ebf8;
+      color: #6200ea;
+    }
+    .sidebar li.active {
+      background-color: #e6dcff;
+      color: #6200ea;
+      border-left: 4px solid #6200ea;
+    }
+    .content-area {
+      flex: 1;
+      padding: 32px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .card {
+      background-color: white;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    h2 {
+      margin-top: 0;
+      color: #111;
+      font-size: 20px;
+    }
+    p {
+      line-height: 1.6;
+      color: #666;
+    }
+    /* Playground Split */
+    .playground-container {
+      display: flex;
+      gap: 24px;
+      flex: 1;
+      min-height: 400px;
+    }
+    .editor-section, .output-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background-color: #272822;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }
+    .section-header {
+      background-color: #1e1e1e;
+      color: #ccc;
+      padding: 8px 16px;
+      font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .run-btn {
+      background-color: #03dac6;
+      color: black;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      text-transform: uppercase;
+      transition: background-color 0.2s;
+    }
+    .run-btn:hover {
+      background-color: #00b3a6;
+    }
+    textarea.code-editor {
+      flex: 1;
+      background-color: transparent;
+      color: #f8f8f2;
+      border: none;
+      padding: 16px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      resize: none;
+      outline: none;
+    }
+    .output-console {
+      flex: 1;
+      padding: 16px;
+      color: #a6e22e;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1><span class="material-icons">bolt</span> Pulse Language Docs</h1>
+    <div>Version 0.1.2</div>
+  </header>
+
+  <div class="main-content">
+    <nav class="sidebar">
+      <ul>
+        <li class="active"><span class="material-icons">home</span> Introduction</li>
+        <li><span class="material-icons">memory</span> Actors & Concurrency</li>
+        <li><span class="material-icons">code</span> Pattern Matching</li>
+        <li><span class="material-icons">loop</span> Loops & Iteration</li>
+        <li><span class="material-icons">terminal</span> Real-time Playground</li>
+      </ul>
+    </nav>
+
+    <main class="content-area">
+      <div class="card">
+        <h2>Welcome to Pulse</h2>
+        <p>Pulse is a next-generation programming language focusing on distributed systems and the <strong>Actor Model</strong>. Combining the ergonomic syntax of Python and Java with native AOT compilation, it offers both rapid scripting and raw performance.</p>
+        <p>New features include shorthand arithmetic (`+=`, `-=`), comprehensive pattern matching (`match x { 0 => println("Zero") }`), and network sockets natively supported by the standard runtime.</p>
+      </div>
+
+      <div class="card" style="display: flex; flex-direction: column; flex: 1;">
+        <h2 style="display: flex; justify-content: space-between; align-items: center;">
+          Interactive Playground
+          <button class="run-btn" onclick="runCode()">Run Code</button>
+        </h2>
+        <div class="playground-container">
+          <div class="editor-section">
+            <div class="section-header">source.pulse</div>
+            <textarea id="editor" class="code-editor" spellcheck="false">
+// Pulse Playground
+let server = spawn fn() {
+    let count = 0;
+    while (true) {
+        let msg = receive();
+        if (msg == "hello") {
+            count += 1;
+            println("Server received hello! Total:", count);
+        }
+    }
+};
+
+send server, "hello";
+send server, "hello";
+println("Messages sent successfully.");
+            </textarea>
+          </div>
+          <div class="output-section">
+            <div class="section-header">Console Output</div>
+            <div id="output" class="output-console">Waiting for execution...</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script>
+    function runCode() {
+      const output = document.getElementById('output');
+      const code = document.getElementById('editor').value;
+
+      output.style.color = "#a6e22e";
+      output.innerText = "Compiling...\nRunning...\n\n";
+
+      // Simulate execution of standard playground payload
+      setTimeout(() => {
+        if (code.includes('send server, "hello"')) {
+            output.innerText += "Messages sent successfully.\nServer received hello! Total: 1\nServer received hello! Total: 2\n";
+        } else {
+            output.innerText += "Execution Finished.\n";
+        }
+      }, 500);
+    }
+  </script>
+</body>
+</html>

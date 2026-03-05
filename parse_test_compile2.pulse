@@ -1,0 +1,5 @@
+let parser = import "./self-hosted/parser.pulse";
+let lexer = import "./self-hosted/lexer.pulse";
+let source = "let x = 10; x += 5;";
+let ast = parser["parse"](source);
+print(ast);

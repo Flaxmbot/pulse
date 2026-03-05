@@ -1,0 +1,9 @@
+--- self-hosted/parser.pulse
++++ self-hosted/parser.pulse
+@@ -194,6 +194,7 @@
+     if (fn_name == "call") return parse_call(p, left);
+     if (fn_name == "index") return parse_index(p, left);
+     if (fn_name == "dot") return parse_dot(p, left, can_assign);
++    if (fn_name == "assignment") return parse_assignment(p, left);
+     return nil;
+ }

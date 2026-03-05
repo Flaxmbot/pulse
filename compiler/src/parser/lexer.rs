@@ -68,6 +68,7 @@ pub enum Token {
     In,
     Return,
     Print,
+    Println,
     True,
     False,
     Nil,
@@ -618,8 +619,10 @@ impl<'a> Lexer<'a> {
             "let" => Ok(Token::Let),
             "if" => Ok(Token::If),
             "else" => Ok(Token::Else),
+            "elif" => Ok(Token::Else), // map Python's elif to Else, it will require an if afterwards in block
             "while" => Ok(Token::While),
             "print" => Ok(Token::Print),
+            "println" => Ok(Token::Println),
             "for" => Ok(Token::For),
             "break" => Ok(Token::Break),
             "continue" => Ok(Token::Continue),

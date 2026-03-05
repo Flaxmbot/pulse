@@ -1,0 +1,10 @@
+--- self-hosted/lexer.pulse
++++ self-hosted/lexer.pulse
+@@ -276,7 +276,6 @@
+     if (c == "{") return { "type": TOKEN_TYPES["LEFT_BRACE"], "lexeme": "{", "line": lexer["line"] };
+     if (c == "}") return { "type": TOKEN_TYPES["RIGHT_BRACE"], "lexeme": "}", "line": lexer["line"] };
+     if (c == ",") return { "type": TOKEN_TYPES["COMMA"], "lexeme": ",", "line": lexer["line"] };
+-    if (c == ".") return { "type": TOKEN_TYPES["DOT"], "lexeme": ".", "line": lexer["line"] };
+     if (c == ";") return { "type": TOKEN_TYPES["SEMICOLON"], "lexeme": ";", "line": lexer["line"] };
+     if (c == "+") {
+         if (lexer["current"] == "=") {

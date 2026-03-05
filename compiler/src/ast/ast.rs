@@ -71,6 +71,7 @@ pub enum UnOp {
 pub enum Stmt {
     Expression(Expr),
     Print(Expr),
+    Println(Expr),
     Let(String, Option<Type>, Option<Expr>),
     /// Const declaration (immutable)
     Const(String, Option<Type>, Expr),

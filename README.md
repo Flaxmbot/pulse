@@ -24,7 +24,7 @@
 
 ## ⚡ What is Pulse?
 
-Pulse is a compiled and interpreted language that fuses the ergonomic syntax of modern scripting languages with the raw performance and deterministic concurrency of Rust and Erlang.
+Pulse is a compiled and interpreted language that fuses the ergonomic syntax of Python and Java with the raw performance and deterministic concurrency of Rust and Erlang.
 
 Instead of struggling with Mutexes, Locks, and Race Conditions, Pulse uses the **Actor Model**. Every unit of execution is an isolated `Actor` with its own private memory and garbage collector.
 
@@ -39,19 +39,31 @@ Instead of struggling with Mutexes, Locks, and Race Conditions, Pulse uses the *
 ### 🎭 Native Actor Concurrency
 Spawn millions of lightweight actors. They communicate solely through asynchronous, non-blocking message queues. If one actor crashes, it doesn't take down your system.
 
-```pulse
-let worker = spawn {
+```javascript
+let worker = spawn fn() {
     let state = 0;
     while (true) {
-        let msg = receive;
+        let msg = receive();
         if (msg == "ping") {
-            state = state + 1;
-            print("Pongs sent: " + to_string(state));
+            state += 1;
+            println("Pongs sent: " + to_string(state));
         }
     }
 };
 
 send worker, "ping";
+```
+
+### 🧠 Fused Syntax (Python + Java)
+Enjoy the safety of block scoping `{}` and proper module boundaries, with the speed of concise loop syntaxes (`for item in map`) and expressive pattern matching.
+
+```javascript
+let response = receive();
+match response {
+    "success" => { println("Ok!"); },
+    "error" => { println("Failed!"); },
+    _ => { println("Unknown"); }
+}
 ```
 
 ### 🏎️ Dual Execution Engines
@@ -91,6 +103,9 @@ cargo build --release
 # Run a file
 ./target/release/pulse_cli run examples/comprehensive.pulse
 ```
+
+### Future Enhancements
+We are currently focusing on expanding our Networking stack. We recently introduced asynchronous support for natively handling `tcp` and `ws` connections within Pulse actors. Moving forward, the `Pulse Package Manager (ppm)` and the full implementation of the *Self-hosted Pulse Compiler* will be our core engineering goals!
 
 ### The Book
 Want to learn how to master the Actor Model and build distributed systems?

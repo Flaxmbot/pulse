@@ -8,12 +8,12 @@ let isFalse = false;
 let nullValue = nil;
 
 // Type checking
-print("Type checking test:");
-print("Type of integerNumber:", type_of(integerNumber));
-print("Type of floatNumber:", type_of(floatNumber));
-print("Type of doubleQuoteString:", type_of(doubleQuoteString));
-print("Type of isTrue:", type_of(isTrue));
-print("Type of nullValue:", type_of(nullValue));
+println("Type checking test:");
+println("Type of integerNumber:", type_of(integerNumber));
+println("Type of floatNumber:", type_of(floatNumber));
+println("Type of doubleQuoteString:", type_of(doubleQuoteString));
+println("Type of isTrue:", type_of(isTrue));
+println("Type of nullValue:", type_of(nullValue));
 
 // Arrays and objects
 let numbersArray = [1, 2, 3, 4, 5];
@@ -130,18 +130,18 @@ binaryTree.insert(20);
 binaryTree.insert(40);
 
 // Pattern matching
-print("Pattern matching:");
+println("Pattern matching:");
 let value = 42;
 match value {
-    0 => print("Value is zero"),
-    1..10 => print("Value is between 1 and 10"),
-    10..100 => print("Value is between 10 and 100"),
-    _ => print("Value is 100 or greater")
-};
-print("");
+    0 => { println("Value is zero"); },
+    5 => { println("Value is between 1 and 10"); },
+    50 => { println("Value is between 10 and 100"); },
+    _ => { println("Value is 100 or greater"); }
+}
+println("");
 
 // Error handling
-print("Error handling:");
+println("Error handling:");
 fn divide(a, b) {
     if (b == 0) {
         throw "Division by zero";
@@ -151,32 +151,32 @@ fn divide(a, b) {
 
 try {
     let result = divide(10, 0);
-    print("Result:", result);
+    println("Result:", result);
 } catch error {
-    print("Error:", error);
-};
-print("");
+    println("Error:", error);
+}
+println("");
 
 // Actors
-print("Actors:");
-fn actor_task(message) {
-    print("Actor received message:", message);
-    return "Processed: " + message;
+println("Actors:");
+fn actor_task(msg_text) {
+    println("Actor received message:", msg_text);
+    return "Processed: " + msg_text;
 }
 
 // Spawn an actor
-let myActor = spawn(fn() {
+let myActor = spawn {
     let count = 0;
     while (true) {
         let msg = receive();
         if (msg == "stop") {
-            print("Actor stopping");
+            println("Actor stopping");
             break;
         }
         count = count + 1;
-        print("Actor received message #", count, ":", msg);
+        println("Actor received message #", count, ":", msg);
     }
-});
+};
 
 // Send messages to the actor
 send(myActor, "Hello from Pulse!");
@@ -188,20 +188,56 @@ send(myActor, "stop");
 sleep(100);
 
 // Print binary tree traversal
-print("");
-print("Binary tree in-order traversal:");
+println("");
+println("Binary tree in-order traversal:");
 let traversalResult = binaryTree.inOrderTraversal();
-for (let i = 0; i < length(traversalResult); i = i + 1) {
-    print(traversalResult[i]);
+for (let i = 0; i < len(traversalResult); i = i + 1) {
+    println(traversalResult[i]);
 }
 
 // Test linked list
-print("");
-print("Linked list:");
+println("");
+println("Linked list:");
 for (let i = 0; i < linkedList.size; i = i + 1) {
-    print("Index", i, ":", linkedList.get(i));
+    println("Index", i, ":", linkedList.get(i));
 }
 
 // Print final message
-print("");
-print("=== All major language features demonstrated! ===");
+println("");
+println("=== All major language features demonstrated! ===");
+// ---- Extended Syntax and Shorthands ----
+println("");
+println("Extended Syntax and Shorthands:");
+let counter = 0;
+counter += 5;
+counter -= 2;
+counter *= 2;
+counter /= 2;
+println("Counter should be 3:", counter);
+
+// ---- Unary Operators ----
+println("");
+println("Unary Operators:");
+let my_bool = true;
+println("Not true:", !my_bool);
+let my_num = 10;
+println("Negative 10:", -my_num);
+
+// ---- For In Loop ----
+println("");
+println("For In Loop:");
+let iterableArray = [100, 200, 300];
+for (let item in iterableArray) {
+    println("Item:", item);
+}
+
+// ---- Hashmaps (Maps) ----
+println("");
+println("Hashmaps:");
+let myMap = {"key1": "value1", "key2": 42};
+println("Map value for key1:", myMap["key1"]);
+myMap["key3"] = "new value";
+println("Map value for key3:", myMap["key3"]);
+
+println("");
+println("=== Extended Pulse Features Demonstrated ===");
