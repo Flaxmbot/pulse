@@ -38,7 +38,7 @@ jobs:
             echo "VS Code extension packaging emitted metadata warnings."
             exit 1
           fi
-        working-directory: pulse_lang/vscode-pulse
+        working-directory: vscode-pulse
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
@@ -121,7 +121,7 @@ jobs:
       - name: Install LLVM
         shell: powershell
         run: |
-          choco install llvm --version=18.1.8 -y
+          choco install llvm --version=18.1.8 -y --allow-downgrade --force
           Add-Content $env:GITHUB_ENV "LLVM_SYS_180_PREFIX=C:\Program Files\LLVM"
 
       - name: Build MSI

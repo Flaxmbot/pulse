@@ -106,6 +106,10 @@ impl<'a> ParserV2<'a> {
 
     fn render_source_excerpt(&self, line: usize, column: usize) -> Option<String> {
         let source_line = self.source.lines().nth(line.saturating_sub(1))?;
+        if source_line.trim().is_empty() {
+            return None;
+        }
+
         let caret_col = column.saturating_sub(1);
         let mut pointer = String::new();
         pointer.push_str(&" ".repeat(caret_col));
@@ -1187,6 +1191,11 @@ impl<'a> ParserV2<'a> {
 
     fn spawn_expression(&mut self) -> PulseResult<Expr> {
         // spawn ActorName(args) or spawn fn() { ... }
+        if self.matches(Token::Fn)? {
+            let expr = self.lambda_literal()?;
+            return Ok(Expr::Spawn(Box::new(expr)));
+        }
+
         let expr = if self.check(Token::LeftBrace) {
             self.advance()?;
             let body = self.block()?;

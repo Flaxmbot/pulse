@@ -1,0 +1,21 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -608,12 +608,14 @@
+             self.consume(Token::RightParen, "Expect ')' after 'receive'.")?;
+             return Ok(Expr::Receive(vec![]));
+         } else if !self.check(Token::LeftBrace) {
+             return Ok(Expr::Receive(vec![]));
+-        }
+-
+-        self.consume(Token::LeftBrace, "Expect '{' after 'receive'.")?;
+-        let mut arms = Vec::new();
+-        while !self.check(Token::RightBrace) && !self.is_at_end() {
++        } else {
++            // If we hit `{`, it might be the start of a receive match block OR the start of a block after `let msg = receive;`.
++            // Since `{` is a valid match block start for receive, let's lookahead slightly if possible, or just try to parse the block.
++            // Wait! The issue is `test_receive.pulse` says `let msg = receive();`.
++            // `matches(Token::LeftParen)` is TRUE!
++            // Then `consume(Token::RightParen)` runs!
++            // Then it returns `Ok(Expr::Receive)`.
++            // THEN WHY does it say `Found LeftBrace instead of Semicolon. (at 1:19) let msg = receive {  };`?!
++        }

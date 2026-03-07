@@ -1,0 +1,43 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -608,12 +608,7 @@
+             self.consume(Token::RightParen, "Expect ')' after 'receive'.")?;
+             return Ok(Expr::Receive(vec![]));
+         } else if !self.check(Token::LeftBrace) {
+             return Ok(Expr::Receive(vec![]));
+-        }
+-
+-        // Wait! What if we are in `let msg = receive;` and the NEXT token on the next line is `{`?
+-        // E.g., `let msg = receive` (no semicolon) but wait, we already require semicolon.
+-        // Actually, the error `Found LeftBrace instead of Semicolon. (at 1:19) let msg = receive {  };` occurs because `receive` didn't consume `()`.
+-        // Why didn't it? Oh, `receive` is a token. If the lexer sees `receive()`, it tokenizes `Receive`, `LeftParen`, `RightParen`.
+-        // If we are in `receive_expr`, `matches(Token::LeftParen)` will consume `LeftParen`.
+-        // BUT IN THE LEXER: `receive` is NOT a keyword in the new Lexer?
+-        // Let me check Lexer keywords. `receive` is a keyword.
+-        // Ah! `test_receive.pulse` is: `let msg = receive();`
+-        // Why is it failing?
+-        // Ah, in `prefix_rule`, `Token::Receive => self.receive_expr()`.
+-        // If it parses `receive_expr`, `self.matches(Token::LeftParen)` is TRUE!
+-        // Then it consumes `RightParen`. It returns `Expr::Receive`.
+-        // Then `expression()` returns.
+-        // Then `var_declaration` expects `;`.
+-        // BUT it says `Found LeftBrace instead of Semicolon`? There is NO LeftBrace in `let msg = receive();`!
+-        // Wait, where did `LeftBrace` come from?
+-        // Could it be that the Lexer is returning `LeftBrace` for `()`? NO!
+-        // Is `concurrency_test3.pulse` actually the one failing? `concurrency_test3.pulse` has:
+-        // let actor1 = spawn fn() { let msg = receive(); print("Actor 1 received:", msg); };
+-        // Wait, `spawn fn() { ... }` parses via `spawn_expression`.
+-        // `spawn_expression` calls `self.lambda_literal()` which parses `fn() { ... }`.
+-        // But what about the `;`? `let actor1 = spawn fn() { ... };`
+-        // `spawn fn() { ... }` is an expression. The `spawn_expression` returns `Expr::Spawn(closure)`.
+-        // Then `var_declaration` requires `;`! And there IS a `;` in `concurrency_test3.pulse`.
+-        // So why `Found LeftBrace instead of Semicolon`?
+-        // Let's print out the exact string being parsed.
+-
++        } else if self.matches(Token::LeftBrace)? {
++            // Try to handle it properly below
++        }
++
+-        self.consume(Token::LeftBrace, "Expect '{' after 'receive'.")?;
+         let mut arms = Vec::new();
+         while !self.check(Token::RightBrace) && !self.is_at_end() {

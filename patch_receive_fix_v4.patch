@@ -1,0 +1,19 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -608,12 +608,8 @@
+             self.consume(Token::RightParen, "Expect ')' after 'receive'.")?;
+             return Ok(Expr::Receive(vec![]));
+         } else if !self.check(Token::LeftBrace) {
+             return Ok(Expr::Receive(vec![]));
+-        } else {
+-            // Check if the next token is a brace but wait, `receive()` might just be empty in an assignment like `let msg = receive;` where the next token is `;`.
+-            // In the parser loop `self.check(Token::LeftBrace)` just says a brace is next. But we are in `receive_expr`. If we are parsing an assignment `let msg = receive; { ... }` we have to determine if `{` belongs to receive.
+-            // If it's a match block, it's followed by a fat arrow `=>` or `}`.
+-            // Otherwise, it might be an open brace for something else.
+-            // For now, if the user wants an empty receive, they should just use `receive()`.
+-            // We will return `Expr::Receive(vec![])` if `()` is not present but the block has no `=>`.
+-            // Let's just parse the block. If we find no `=>`, it was just an empty receive.
+         }
++
++        // The previous approach broke `let actor1 = spawn fn() { let msg = receive(); print(); };` because it choked on the next line or braces... Wait, `receive()` uses LeftParen, so it enters the first `if` and returns.
++        // Oh wait, `concurrency_test3.pulse` had `let msg = receive();`. Why did that fail with `Found LeftBrace instead of Semicolon. (at 1:45) let actor1 = spawn fn() { let msg = receive {  }; print("Actor 1 received:", msg); };`?

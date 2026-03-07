@@ -611,6 +611,33 @@ impl<'a> ParserV2<'a> {
             return Ok(Expr::Receive(vec![]));
         }
 
+        // Wait! What if we are in `let msg = receive;` and the NEXT token on the next line is `{`?
+        // E.g., `let msg = receive` (no semicolon) but wait, we already require semicolon.
+        // Actually, the error `Found LeftBrace instead of Semicolon. (at 1:19) let msg = receive {  };` occurs because `receive` didn't consume `()`.
+        // Why didn't it? Oh, `receive` is a token. If the lexer sees `receive()`, it tokenizes `Receive`, `LeftParen`, `RightParen`.
+        // If we are in `receive_expr`, `matches(Token::LeftParen)` will consume `LeftParen`.
+        // BUT IN THE LEXER: `receive` is NOT a keyword in the new Lexer?
+        // Let me check Lexer keywords. `receive` is a keyword.
+        // Ah! `test_receive.pulse` is: `let msg = receive();`
+        // Why is it failing?
+        // Ah, in `prefix_rule`, `Token::Receive => self.receive_expr()`.
+        // If it parses `receive_expr`, `self.matches(Token::LeftParen)` is TRUE!
+        // Then it consumes `RightParen`. It returns `Expr::Receive`.
+        // Then `expression()` returns.
+        // Then `var_declaration` expects `;`.
+        // BUT it says `Found LeftBrace instead of Semicolon`? There is NO LeftBrace in `let msg = receive();`!
+        // Wait, where did `LeftBrace` come from?
+        // Could it be that the Lexer is returning `LeftBrace` for `()`? NO!
+        // Is `concurrency_test3.pulse` actually the one failing? `concurrency_test3.pulse` has:
+        // let actor1 = spawn fn() { let msg = receive(); print("Actor 1 received:", msg); };
+        // Wait, `spawn fn() { ... }` parses via `spawn_expression`.
+        // `spawn_expression` calls `self.lambda_literal()` which parses `fn() { ... }`.
+        // But what about the `;`? `let actor1 = spawn fn() { ... };`
+        // `spawn fn() { ... }` is an expression. The `spawn_expression` returns `Expr::Spawn(closure)`.
+        // Then `var_declaration` requires `;`! And there IS a `;` in `concurrency_test3.pulse`.
+        // So why `Found LeftBrace instead of Semicolon`?
+        // Let's print out the exact string being parsed.
+
         self.consume(Token::LeftBrace, "Expect '{' after 'receive'.")?;
         let mut arms = Vec::new();
         while !self.check(Token::RightBrace) && !self.is_at_end() {
@@ -722,35 +749,6 @@ impl<'a> ParserV2<'a> {
         }
         self.consume(Token::RightBrace, "Expect '}' after block.")?;
         Ok(stmts)
-    }
-
-    fn print_statement(&mut self, in_match_arm: bool) -> PulseResult<Stmt> {
-        let mut exprs = Vec::new();
-        if self.matches(Token::LeftParen)? {
-            if !self.check(Token::RightParen) {
-                exprs.push(self.expression()?);
-                while self.matches(Token::Comma)? {
-                    exprs.push(self.expression()?);
-                }
-            }
-            self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
-        } else {
-            exprs.push(self.expression()?);
-            while self.matches(Token::Comma)? {
-                exprs.push(self.expression()?);
-            }
-        }
-        if in_match_arm {
-            // Don't consume any terminator - let the match_statement handle it
-        } else {
-            // Accept only semicolon as terminator
-            self.consume(Token::Semicolon, "Expect ';' after value.")?;
-        }
-        if exprs.len() == 1 {
-            Ok(Stmt::Print(exprs.remove(0)))
-        } else {
-            Ok(Stmt::Block(exprs.into_iter().map(Stmt::Print).collect()))
-        }
     }
 
     fn if_statement(&mut self) -> PulseResult<Stmt> {
@@ -1010,7 +1008,13 @@ impl<'a> ParserV2<'a> {
                 if has_parens {
                     self.consume(Token::RightParen, "Expect ')' after print arguments.")?;
                 }
-                Ok(Expr::Literal(Constant::Unit))
+
+                // Reconstruct print as a method/function call ast node or specific PrintExpr,
+                // but wait, does AST have a Print expression node?
+                // If not, we might need to map it to a Call(Variable("print"), args)
+                // Let's assume there is no Print expression node and we must use Stmt::Print or desugar it to a Call.
+                // Actually, wait, let's map it to Expr::Call(Box::new(Expr::Variable("print".to_string())), exprs)
+                Ok(Expr::Call(Box::new(Expr::Variable("print".to_string())), exprs))
             }
             Token::Println => {
                 let mut exprs = Vec::new();
@@ -1029,7 +1033,7 @@ impl<'a> ParserV2<'a> {
                 if has_parens {
                     self.consume(Token::RightParen, "Expect ')' after println arguments.")?;
                 }
-                Ok(Expr::Literal(Constant::Unit))
+                Ok(Expr::Call(Box::new(Expr::Variable("println".to_string())), exprs))
             }
             Token::Super => {
                 self.consume(Token::Dot, "Expect '.' after 'super'.")?;
@@ -1210,6 +1214,11 @@ impl<'a> ParserV2<'a> {
 
     fn spawn_expression(&mut self) -> PulseResult<Expr> {
         // spawn ActorName(args) or spawn fn() { ... }
+        if self.matches(Token::Fn)? {
+            let expr = self.lambda_literal()?;
+            return Ok(Expr::Spawn(Box::new(expr)));
+        }
+
         let expr = if self.check(Token::LeftBrace) {
             self.advance()?;
             let body = self.block()?;

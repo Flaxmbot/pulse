@@ -1,0 +1,14 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -1198,6 +1198,11 @@
+
+     fn spawn_expression(&mut self) -> PulseResult<Expr> {
+         // spawn ActorName(args) or spawn fn() { ... }
++        if self.matches(Token::Fn)? {
++            let expr = self.lambda_literal()?;
++            return Ok(Expr::Spawn(Box::new(expr)));
++        }
++
+         let expr = if self.check(Token::LeftBrace) {
+             self.advance()?;
+             let body = self.block()?;

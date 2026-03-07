@@ -1,0 +1,14 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -1345,6 +1345,11 @@
+
+                 match callee_ty {
+                     Type::Fn(params, ret) => {
++                        // If the function is a builtin like `print` or `println` which takes variable arguments,
++                        // it is currently inferred as `Type::Any` from standard library, or we skip arity check for it.
++                        // A proper fix is checking if the callee is "print" or "println".
++                        // Actually, if it's `print`/`println`, it's not a standard function but we changed the AST earlier.
++
+                         if params.len() != arg_types.len() {
+                             return Err(TypeError::WrongArgumentCount {
+                                 expected: params.len(),

@@ -1,0 +1,17 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -617,6 +617,14 @@
+             // We will return `Expr::Receive(vec![])` if `()` is not present but the block has no `=>`.
+             // Let's just parse the block. If we find no `=>`, it was just an empty receive.
+         }
++
++        // Add lookahead for `=>` inside the block to detect if it's actually a match block.
++        // A cleaner fix: just require `receive()` or `receive { ... }`.
++        // If the user writes `let msg = receive { ... }` it's confusing.
++        // If they write `let msg = receive(); { ... }` it's fine.
++        // We will just do a quick check if `receive` is followed by a left brace, we will assume it's part of a block IF it's in a block context.
++        // For now, let's just make `receive` return `Receive(vec![])` immediately if it doesn't match `receive {` or `receive()`. Wait, we already did that above.
++        // But wait, `!self.check(Token::LeftBrace)` handles `let msg = receive;`.
+
+         self.consume(Token::LeftBrace, "Expect '{' after 'receive'.")?;
+         let mut arms = Vec::new();
