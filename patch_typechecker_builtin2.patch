@@ -1,0 +1,21 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -1345,6 +1345,18 @@
+
+                 match callee_ty {
+                     Type::Fn(params, ret) => {
++                        let mut is_variadic_builtin = false;
++                        if let Expr::Variable(name) = &**callee {
++                            if name == "print" || name == "println" {
++                                is_variadic_builtin = true;
++                            }
++                        }
++
++                        if is_variadic_builtin {
++                            // Variadic builtins accept any number of arguments of any type
++                            return Ok(*ret);
++                        }
++
+                         if params.len() != arg_types.len() {
+                             return Err(TypeError::WrongArgumentCount {
+                                 expected: params.len(),

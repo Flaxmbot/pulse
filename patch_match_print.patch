@@ -1,0 +1,12 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -1292,8 +1292,9 @@
+                 self.block()?;
+                 self.emit_byte(Op::Unit as u8); // block doesn't leave a value, we push Unit as expression result
+             } else if self.check(Token::Print) {
+-                // Print statement body
++                self.advance()?;
+                 self.print_statement()?;
+                 self.emit_byte(Op::Unit as u8); // statement doesn't leave a value
+             } else {
+                 // Expression body

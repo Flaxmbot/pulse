@@ -1,0 +1,7 @@
+let actor1 = spawn fn() {
+    let msg = receive();
+    print("Actor 1 received:", msg);
+};
+send actor1, "Hello from main to 1";
+sleep(100);
+print("Finished test.");

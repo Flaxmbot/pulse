@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          choco install llvm --version=18.1.8 -y
+          choco install llvm --version=18.1.8 -y --allow-downgrade --force
           Add-Content $env:GITHUB_ENV "LLVM_SYS_180_PREFIX=C:\Program Files\LLVM"
 
       - name: Cargo fmt
@@ -93,7 +93,7 @@ jobs:
           node-version: 20
 
       - name: Build and package VS Code extension
-        working-directory: pulse_lang/vscode-pulse
+        working-directory: vscode-pulse
         shell: bash
         run: |
           npm ci
@@ -142,7 +142,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          choco install llvm --version=18.1.8 -y
+          choco install llvm --version=18.1.8 -y --allow-downgrade --force
           Add-Content $env:GITHUB_ENV "LLVM_SYS_180_PREFIX=C:\Program Files\LLVM"
 
       - name: Build unix package (Linux)

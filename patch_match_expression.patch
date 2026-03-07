@@ -1,0 +1,13 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -1289,8 +1289,10 @@
+             if self.check(Token::LeftBrace) {
+                 self.consume(Token::LeftBrace, "Expect '{' start of arm body.")?;
+                 self.block()?;
++                self.emit_byte(Op::Unit as u8); // block doesn't leave a value, we push Unit as expression result
+             } else if self.check(Token::Print) {
+                 // Print statement body
+                 self.print_statement()?;
++                self.emit_byte(Op::Unit as u8); // statement doesn't leave a value
+             } else {
+                 // Expression body

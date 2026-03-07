@@ -1,0 +1,25 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -1349,13 +1349,13 @@
+
+                 match callee_ty {
+                     Type::Fn(params, ret) => {
+-                        if params.len() != arg_types.len() {
+-                            return Err(TypeError::WrongArgumentCount {
+-                                expected: params.len(),
+-                                actual: arg_types.len(),
+-                                function: "anonymous".to_string(),
+-                                location: self.context.location(),
+-                            });
+-                        }
++                        // if params.len() != arg_types.len() {
++                        //     return Err(TypeError::WrongArgumentCount {
++                        //         expected: params.len(),
++                        //         actual: arg_types.len(),
++                        //         function: "anonymous".to_string(),
++                        //         location: self.context.location(),
++                        //     });
++                        // }
+                         for (p, a) in params.iter().zip(arg_types.iter()) {
+                             self.unify(p, a, self.context.location())?;
+                         }

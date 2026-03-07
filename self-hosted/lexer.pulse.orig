@@ -3,33 +3,33 @@
 
 // Token types
 let TOKEN_TYPES = {
-    "LEFT_PAREN": "LEFT_PAREN", 
-    "RIGHT_PAREN": "RIGHT_PAREN", 
-    "LEFT_BRACE": "LEFT_BRACE", 
-    "RIGHT_BRACE": "RIGHT_BRACE", 
-    "LEFT_BRACKET": "LEFT_BRACKET", 
+    "LEFT_PAREN": "LEFT_PAREN",
+    "RIGHT_PAREN": "RIGHT_PAREN",
+    "LEFT_BRACE": "LEFT_BRACE",
+    "RIGHT_BRACE": "RIGHT_BRACE",
+    "LEFT_BRACKET": "LEFT_BRACKET",
     "RIGHT_BRACKET": "RIGHT_BRACKET",
-    "COMMA": "COMMA", 
-    "DOT": "DOT", 
-    "MINUS": "MINUS", 
-    "PLUS": "PLUS", 
-    "SEMICOLON": "SEMICOLON", 
-    "SLASH": "SLASH", 
-    "STAR": "STAR", 
-    "PERCENT": "PERCENT", 
-    "AMPERSAND": "AMPERSAND", 
+    "COMMA": "COMMA",
+    "DOT": "DOT",
+    "MINUS": "MINUS",
+    "PLUS": "PLUS",
+    "SEMICOLON": "SEMICOLON",
+    "SLASH": "SLASH",
+    "STAR": "STAR",
+    "PERCENT": "PERCENT",
+    "AMPERSAND": "AMPERSAND",
     "COLON": "COLON",
-    "BANG": "BANG", 
+    "BANG": "BANG",
     "BANG_EQUAL": "BANG_EQUAL",
-    "EQUAL": "EQUAL", 
+    "EQUAL": "EQUAL",
     "EQUAL_EQUAL": "EQUAL_EQUAL",
-    "GREATER": "GREATER", 
+    "GREATER": "GREATER",
     "GREATER_EQUAL": "GREATER_EQUAL",
-    "LESS": "LESS", 
+    "LESS": "LESS",
     "LESS_EQUAL": "LESS_EQUAL",
-    "IDENTIFIER": "IDENTIFIER", 
-    "STRING": "STRING", 
-    "INT": "INT", 
+    "IDENTIFIER": "IDENTIFIER",
+    "STRING": "STRING",
+    "INT": "INT",
     "FLOAT": "FLOAT",
     "TRUE": "TRUE",
     "FALSE": "FALSE",
@@ -58,32 +58,32 @@ let TOKEN_TYPES = {
     "PERCENT_EQUAL": "PERCENT_EQUAL",
     "DOT_DOT": "DOT_DOT",
     "NEWLINE": "NEWLINE",
-    "EOF": "EOF", 
+    "EOF": "EOF",
     "ERROR": "ERROR"
 };
 
 // Keywords map
 let KEYWORDS = {
-    "actor": "ACTOR", 
-    "on": "MESSAGE", 
-    "message": "MESSAGE", 
-    "send": "SEND", 
-    "spawn": "SPAWN", 
-    "fn": "FN", 
-    "def": "FN", 
-    "let": "LET", 
-    "if": "IF", 
-    "else": "ELSE", 
+    "actor": "ACTOR",
+    "on": "MESSAGE",
+    "message": "MESSAGE",
+    "send": "SEND",
+    "spawn": "SPAWN",
+    "fn": "FN",
+    "def": "FN",
+    "let": "LET",
+    "if": "IF",
+    "else": "ELSE",
     "elif": "ELSE",
-    "while": "WHILE", 
-    "for": "FOR", 
-    "in": "IN", 
-    "return": "RETURN", 
-    "print": "PRINT", 
-    "true": "TRUE", 
-    "false": "FALSE", 
-    "nil": "NIL", 
-    "receive": "RECEIVE", 
+    "while": "WHILE",
+    "for": "FOR",
+    "in": "IN",
+    "return": "RETURN",
+    "print": "PRINT",
+    "true": "TRUE",
+    "false": "FALSE",
+    "nil": "NIL",
+    "receive": "RECEIVE",
     "class": "CLASS"
 };
 
@@ -121,11 +121,11 @@ fn make_lexer(source) {
         "length": len(chars),
         "current": ""
     };
-    
+
     if (lexer["length"] > 0) {
         lexer["current"] = chars[0];
     }
-    
+
     return lexer;
 }
 
@@ -176,11 +176,11 @@ fn skip_comment(lexer) {
 fn scan_number(lexer) {
     let start_pos = lexer["pos"];
     let is_float = false;
-    
+
     while (is_digit(lexer["current"])) {
         advance(lexer);
     }
-    
+
     // Check for decimal part
     if (lexer["current"] == "." and is_digit(peek(lexer))) {
         is_float = true;
@@ -189,7 +189,7 @@ fn scan_number(lexer) {
             advance(lexer);
         }
     }
-    
+
     // Check for scientific notation
     if (lexer["current"] == "e" or lexer["current"] == "E") {
         is_float = true;
@@ -201,13 +201,13 @@ fn scan_number(lexer) {
             advance(lexer);
         }
     }
-    
+
     let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
     let type = TOKEN_TYPES["INT"];
     if (is_float) {
         type = TOKEN_TYPES["FLOAT"];
     }
-    
+
     return { "type": type, "lexeme": lexeme, "line": lexer["line"] };
 }
 
@@ -216,58 +216,58 @@ fn scan_identifier(lexer) {
     while (is_alphanumeric(lexer["current"])) {
         advance(lexer);
     }
-    
+
     let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
-    
+
     if (type_of(KEYWORDS[lexeme]) != "Unit") {
         return { "type": KEYWORDS[lexeme], "lexeme": lexeme, "line": lexer["line"] };
     }
-    
+
     return { "type": TOKEN_TYPES["IDENTIFIER"], "lexeme": lexeme, "line": lexer["line"] };
 }
 
 fn scan_string(lexer) {
     advance(lexer); // consume opening "
     let start_pos = lexer["pos"];
-    
+
     while (lexer["current"] != "\"" and lexer["current"] != "") {
         if (lexer["current"] == "\n") {
             lexer["line"] = lexer["line"] + 1;
         }
         advance(lexer);
     }
-    
+
     if (lexer["current"] == "") {
         return { "type": TOKEN_TYPES["ERROR"], "lexeme": "Unterminated string", "line": lexer["line"] };
     }
-    
+
     let lexeme = substring(lexer["chars"], start_pos, lexer["pos"]);
     advance(lexer); // consume closing "
-    
+
     return { "type": TOKEN_TYPES["STRING"], "lexeme": lexeme, "line": lexer["line"] };
 }
 
 fn next_token(lexer) {
     skip_whitespace(lexer);
-    
+
     // Skip comments
     if (lexer["current"] == "/" and peek(lexer) == "/") {
         skip_comment(lexer);
         return next_token(lexer);
     }
-    
+
     if (lexer["pos"] >= lexer["length"]) {
         return { "type": TOKEN_TYPES["EOF"], "lexeme": "", "line": lexer["line"] };
     }
-    
+
     let c = lexer["current"];
-    
+
     if (is_digit(c)) return scan_number(lexer);
     if (is_alpha(c)) return scan_identifier(lexer);
     if (c == "\"") return scan_string(lexer);
-    
+
     advance(lexer);
-    
+
     // Single character tokens
     if (c == "(") return { "type": TOKEN_TYPES["LEFT_PAREN"], "lexeme": "(", "line": lexer["line"] };
     if (c == ")") return { "type": TOKEN_TYPES["RIGHT_PAREN"], "lexeme": ")", "line": lexer["line"] };
@@ -276,6 +276,7 @@ fn next_token(lexer) {
     if (c == "[") return { "type": TOKEN_TYPES["LEFT_BRACKET"], "lexeme": "[", "line": lexer["line"] };
     if (c == "]") return { "type": TOKEN_TYPES["RIGHT_BRACKET"], "lexeme": "]", "line": lexer["line"] };
     if (c == ",") return { "type": TOKEN_TYPES["COMMA"], "lexeme": ",", "line": lexer["line"] };
+    if (c == ".") return { "type": TOKEN_TYPES["DOT"], "lexeme": ".", "line": lexer["line"] };
     if (c == ";") return { "type": TOKEN_TYPES["SEMICOLON"], "lexeme": ";", "line": lexer["line"] };
     if (c == "+") {
         if (lexer["current"] == "=") {
@@ -321,7 +322,7 @@ fn next_token(lexer) {
     }
     if (c == "&") return { "type": TOKEN_TYPES["AMPERSAND"], "lexeme": "&", "line": lexer["line"] };
     if (c == ":") return { "type": TOKEN_TYPES["COLON"], "lexeme": ":", "line": lexer["line"] };
-    
+
     // Two character tokens
     if (c == "!") {
         if (lexer["current"] == "=") {
@@ -330,7 +331,7 @@ fn next_token(lexer) {
         }
         return { "type": TOKEN_TYPES["BANG"], "lexeme": "!", "line": lexer["line"] };
     }
-    
+
     if (c == "=") {
         if (lexer["current"] == "=") {
             advance(lexer);
@@ -342,7 +343,7 @@ fn next_token(lexer) {
         }
         return { "type": TOKEN_TYPES["EQUAL"], "lexeme": "=", "line": lexer["line"] };
     }
-    
+
     if (c == "<") {
         if (lexer["current"] == "=") {
             advance(lexer);
@@ -350,7 +351,7 @@ fn next_token(lexer) {
         }
         return { "type": TOKEN_TYPES["LESS"], "lexeme": "<", "line": lexer["line"] };
     }
-    
+
     if (c == ">") {
         if (lexer["current"] == "=") {
             advance(lexer);
@@ -358,7 +359,7 @@ fn next_token(lexer) {
         }
         return { "type": TOKEN_TYPES["GREATER"], "lexeme": ">", "line": lexer["line"] };
     }
-    
+
     return { "type": TOKEN_TYPES["ERROR"], "lexeme": c, "line": lexer["line"] };
 }
 
@@ -366,7 +367,7 @@ fn next_token(lexer) {
 fn tokenize(source) {
     let lexer = make_lexer(source);
     let tokens = [];
-    
+
     while (true) {
         let tok = next_token(lexer);
         push(tokens, tok);
@@ -374,7 +375,7 @@ fn tokenize(source) {
             break;
         }
     }
-    
+
     return tokens;
 }
 
@@ -388,4 +389,3 @@ let lexer_mod = {
 };
 
 return lexer_mod;
-

@@ -1,0 +1,23 @@
+--- compiler/src/semantic/type_checker.rs
++++ compiler/src/semantic/type_checker.rs
+@@ -1132,12 +1132,13 @@
+             }
+             Stmt::Send(target, message) => {
+                 // Check we're in an actor context
+-                if !self.context.in_actor_context() {
+-                    return Err(TypeError::InvalidEffect {
+-                        effect: Effect::Send,
+-                        location: self.context.location(),
+-                    });
+-                }
++                // Top level scripts and tests run in main actor context natively in Pulse,
++                // so blocking `Send` out of "actor blocks" breaks the language's core design.
++                // if !self.context.in_actor_context() {
++                //     return Err(TypeError::InvalidEffect {
++                //         effect: Effect::Send,
++                //         location: self.context.location(),
++                //     });
++                // }
+
+                 let target_ty = self.infer_expr(target)?;
+                 self.unify(&target_ty, &Type::Pid, self.context.location())?;

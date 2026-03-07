@@ -1,0 +1,13 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -611,6 +611,10 @@
+             return Ok(Expr::Receive(vec![]));
+         } else if !self.check(Token::LeftBrace) {
+             return Ok(Expr::Receive(vec![]));
++        } else {
++            // Try checking if it looks like a pattern block.
++            // If we are evaluating `let msg = receive();` the lexer actually output `receive` `(` `)`.
++            // Wait, `test_receive.pulse` failed on line 1 column 19, which is the `{` ? But there is no `{`!
+         }
+
+         self.consume(Token::LeftBrace, "Expect '{' after 'receive'.")?;

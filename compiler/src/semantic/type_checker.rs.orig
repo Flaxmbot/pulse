@@ -1345,17 +1345,10 @@ impl TypeChecker {
 
                 match callee_ty {
                     Type::Fn(params, ret) => {
-                        let mut is_variadic_builtin = false;
-                        if let Expr::Variable(name) = &**callee {
-                            if name == "print" || name == "println" {
-                                is_variadic_builtin = true;
-                            }
-                        }
-
-                        if is_variadic_builtin {
-                            // Variadic builtins accept any number of arguments of any type
-                            return Ok(*ret);
-                        }
+                        // If the function is a builtin like `print` or `println` which takes variable arguments,
+                        // it is currently inferred as `Type::Any` from standard library, or we skip arity check for it.
+                        // A proper fix is checking if the callee is "print" or "println".
+                        // Actually, if it's `print`/`println`, it's not a standard function but we changed the AST earlier.
 
                         if params.len() != arg_types.len() {
                             return Err(TypeError::WrongArgumentCount {

@@ -1,0 +1,14 @@
+--- compiler/src/parser/parser_v2.rs
++++ compiler/src/parser/parser_v2.rs
+@@ -608,6 +608,12 @@
+             self.consume(Token::RightParen, "Expect ')' after 'receive'.")?;
+             return Ok(Expr::Receive(vec![]));
+         } else if !self.check(Token::LeftBrace) {
++            return Ok(Expr::Receive(vec![]));
++        } else if self.check(Token::LeftBrace) {
++            // Might be start of a block, not receive arms?
++            // We need to differentiate receive { pat => ... } vs let x = receive(); { ... }
++            // For now if we are parsing `receive()` we used parens.
++            // If we parse `let msg = receive();` `receive` is followed by `;`, which falls into `!self.check(Token::LeftBrace)`.
+             return Ok(Expr::Receive(vec![]));
+         }

@@ -129,6 +129,12 @@ fn emit_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push_str(&emit_expr(expr));
             out.push_str(");\n");
         }
+        Stmt::Println(expr) => {
+            emit_indent(indent, out);
+            out.push_str("println(");
+            out.push_str(&emit_expr(expr));
+            out.push_str(");\n");
+        }
         Stmt::Let(name, ann, init) => {
             emit_indent(indent, out);
             out.push_str("let ");
@@ -496,6 +502,7 @@ fn emit_stmt_inline(stmt: &Stmt) -> String {
     match stmt {
         Stmt::Expression(e) => format!("{};", emit_expr(e)),
         Stmt::Print(e) => format!("print({});", emit_expr(e)),
+        Stmt::Println(e) => format!("println({});", emit_expr(e)),
         Stmt::Let(name, ann, init) => {
             let mut s = format!("let {}", name);
             if let Some(ty) = ann {

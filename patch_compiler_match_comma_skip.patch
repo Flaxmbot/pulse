@@ -1,0 +1,11 @@
+--- compiler/src/codegen/compiler.rs
++++ compiler/src/codegen/compiler.rs
+@@ -1245,6 +1245,8 @@
+         let mut end_jumps = Vec::new();
+
+         while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
++            while self.matches(Token::Comma)? {} // skip commas between arms
++            if self.check(Token::RightBrace) { break; }
+             // Match Arm
+             self.begin_scope(); // Scope for pattern variables
+             self.emit_byte(Op::Dup as u8); // Dup Subject for this arm

@@ -1,0 +1,14 @@
+--- self-hosted/parser.pulse
++++ self-hosted/parser.pulse
+@@ -99,6 +99,12 @@
+     if (token_type == "LESS_EQUAL") return PREC_COMPARISON;
+     if (token_type == "AND") return PREC_AND;
+     if (token_type == "OR") return PREC_OR;
++    if (token_type == "EQUAL") return PREC_ASSIGNMENT;
++    if (token_type == "PLUS_EQUAL") return PREC_ASSIGNMENT;
++    if (token_type == "MINUS_EQUAL") return PREC_ASSIGNMENT;
++    if (token_type == "STAR_EQUAL") return PREC_ASSIGNMENT;
++    if (token_type == "SLASH_EQUAL") return PREC_ASSIGNMENT;
++    if (token_type == "PERCENT_EQUAL") return PREC_ASSIGNMENT;
+     return PREC_NONE;
+ }
